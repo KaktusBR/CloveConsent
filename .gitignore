@@ -1,0 +1,11 @@
+.superpowers
+node_modules
+dist
+fixtures/astro-site/dist
+fixtures/astro-site/.astro
+fixtures/astro-site-bad-src/dist
+fixtures/astro-site-bad-src/.astro
+fixtures/astro-site-bad-service/dist
+fixtures/astro-site-bad-service/.astro
+fixtures/astro-site-unvalidated/dist
+fixtures/astro-site-unvalidated/.astro

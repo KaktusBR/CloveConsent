@@ -1,0 +1,28 @@
+---
+import { assertValidatedConfig, buildView } from 'cloveconsent'
+import type { ConsentConfig, Locale } from 'cloveconsent'
+interface Props { config: ConsentConfig; locale: Locale }
+const { config, locale } = Astro.props
+assertValidatedConfig(config, 'ConsentPreferences')
+const view = buildView(config, locale)
+---
+<section class="consent-preferences">
+  {view.categories.map((c) => (
+    <div class="consent-category" data-category={c.id}>
+      <h3>{c.title}</h3>
+      <p>{c.description}</p>
+      {c.services.map((s) => (
+        <div class="consent-service" data-service={s.id}>
+          <h4>{s.title}{s.provider ? ` (${s.provider})` : ''}</h4>
+          <p>{s.description}</p>
+          {s.storage.length > 0 && (
+            <table>
+              <thead><tr><th>{view.m.tableName}</th><th>{view.m.tableType}</th><th>{view.m.tableExpiry}</th><th>{view.m.tablePurpose}</th></tr></thead>
+              <tbody>{s.storage.map((r) => (<tr><td>{r.name}</td><td>{r.type}</td><td>{r.expiry}</td><td>{r.purpose}</td></tr>))}</tbody>
+            </table>
+          )}
+        </div>
+      ))}
+    </div>
+  ))}
+</section>

@@ -1,0 +1,14 @@
+---
+import { assertValidatedConfig, toPublicJson } from 'cloveconsent'
+import type { ConsentConfig, Locale } from 'cloveconsent'
+import 'vanilla-cookieconsent/dist/cookieconsent.css'
+interface Props { config: ConsentConfig; locale: Locale }
+const { config, locale } = Astro.props
+assertValidatedConfig(config, 'ConsentBanner')
+const json = toPublicJson(config)
+---
+<script type="application/json" id="consent-config" data-locale={locale} set:html={json} is:inline></script>
+<script>
+  import { bootFromDom } from 'cloveconsent'
+  bootFromDom()
+</script>

@@ -1,0 +1,16 @@
+---
+import config from '../consent.config'
+import ConsentBanner from '../../../../src/astro/ConsentBanner.astro'
+import ConsentPreferences from '../../../../src/astro/ConsentPreferences.astro'
+import GatedEmbed from '../../../../src/astro/GatedEmbed.astro'
+import ConsentReopen from '../../../../src/astro/ConsentReopen.astro'
+import ProcessorList from '../../../../src/astro/ProcessorList.astro'
+---
+<html lang="sk"><head><meta charset="utf-8" /><title>Fixture</title></head>
+<body>
+  <ConsentBanner config={config} locale="sk" />
+  <GatedEmbed config={config} locale="sk" serviceId="youtube" src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" />
+  <ConsentPreferences config={config} locale="sk" />
+  <ProcessorList config={config} locale="sk" />
+  <ConsentReopen config={config} locale="sk" />
+</body></html>

@@ -1,0 +1,23 @@
+---
+import { assertValidatedConfig, buildView } from 'cloveconsent'
+import type { ConsentConfig, Locale } from 'cloveconsent'
+interface Props { config: ConsentConfig; locale: Locale }
+const { config, locale } = Astro.props
+assertValidatedConfig(config, 'ProcessorList')
+const view = buildView(config, locale)
+---
+<section class="consent-processors">
+  <h3>{view.m.processorsHeading}</h3>
+  <ul>
+    {view.processors.map((p) => (
+      <li data-processor={p.id}>
+        <strong><a href={p.privacyUrl} rel="noopener noreferrer">{p.provider}</a></strong>
+        <p>{p.purpose}</p>
+        <p>{view.m.processorData}: {p.dataCategories.join(', ')}</p>
+        <p>{view.m.processorLocation}: {p.location}</p>
+        {p.transfers && <p>{view.m.processorTransfers}: {p.transfers}</p>}
+        {p.dpaUrl && <p><a href={p.dpaUrl} rel="noopener noreferrer">{view.m.processorDpa}</a></p>}
+      </li>
+    ))}
+  </ul>
+</section>

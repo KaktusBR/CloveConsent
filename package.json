@@ -1,0 +1,74 @@
+{
+  "name": "cloveconsent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src/astro"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js"
+    },
+    "./messages": {
+      "types": "./dist/messages.d.ts",
+      "import": "./dist/messages.js"
+    },
+    "./astro/ConsentBanner.astro": "./src/astro/ConsentBanner.astro",
+    "./astro/ConsentPreferences.astro": "./src/astro/ConsentPreferences.astro",
+    "./astro/GatedEmbed.astro": "./src/astro/GatedEmbed.astro",
+    "./astro/ConsentReopen.astro": "./src/astro/ConsentReopen.astro",
+    "./astro/ProcessorList.astro": "./src/astro/ProcessorList.astro"
+  },
+  "peerDependencies": {
+    "astro": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --exclude test/astro-smoke.test.ts",
+    "test:astro": "npm run build && vitest run test/astro-smoke.test.ts",
+    "build": "tsup"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "vanilla-cookieconsent": "3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "astro": "7.3.8",
+    "jsdom": "30.1.2",
+    "tsup": "9.0.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  },
+  "description": "Cookie and third-party consent for Astro (Next.js adapter planned): a verified service catalog, gated embeds, any language, safe by default.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KaktusBR/CloveConsent.git"
+  },
+  "homepage": "https://github.com/KaktusBR/CloveConsent#readme",
+  "bugs": {
+    "url": "https://github.com/KaktusBR/CloveConsent/issues"
+  },
+  "author": "KaktusBR",
+  "keywords": [
+    "astro",
+    "cookie-consent",
+    "gdpr",
+    "consent-management",
+    "privacy",
+    "typescript"
+  ]
+}

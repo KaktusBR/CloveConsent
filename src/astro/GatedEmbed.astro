@@ -1,0 +1,20 @@
+---
+import { assertValidatedConfig, buildView, format, hostAllowed } from 'cloveconsent'
+import type { ClientEntry, ConsentConfig, Locale } from 'cloveconsent'
+interface Props { config: ConsentConfig; locale: Locale; serviceId: string; src: string; title?: string }
+const { config, locale, serviceId, src, title } = Astro.props
+assertValidatedConfig(config, 'GatedEmbed')
+const entry = config.services.find((s) => s.id === serviceId)
+if (!entry || entry.kind !== 'client') throw new Error(`[consent] GatedEmbed: "${serviceId}" is not a selected client service`)
+if (!hostAllowed(entry as ClientEntry, src)) throw new Error(`[consent] GatedEmbed: src host not allowed for ${serviceId}: ${src}`)
+const view = buildView(config, locale)
+const m = view.m
+const label = title ?? entry.messages.title[view.locale]
+---
+<div data-consent-embed data-consent-service={serviceId} data-consent-src={src} data-consent-title={label}>
+  <div data-consent-placeholder class="consent-placeholder">
+    <p>{format(m.embedBlocked, { provider: (entry as ClientEntry).provider.name })}</p>
+    <button type="button" data-consent-action="once">{m.embedLoadOnce}</button>
+    <button type="button" data-consent-action="accept">{m.embedAccept}</button>
+  </div>
+</div>

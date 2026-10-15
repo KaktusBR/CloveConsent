@@ -1,0 +1,52 @@
+name: release
+# Every push to main (a merged PR) publishes the next minor version as a tag that carries dist/.
+# Docs-only merges are skipped. main itself never contains dist/.
+on: { push: { branches: [main] } }
+permissions: { contents: read }
+concurrency: { group: release, cancel-in-progress: false }
+jobs:
+  release:
+    if: github.repository == 'KaktusBR/CloveConsent'
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22, cache: npm }
+      - name: Decide whether and what to release
+        id: decide
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          SKIP=$(node scripts/version.mjs skip "$BEFORE" "$AFTER")
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+          if [ "$SKIP" = "false" ]; then
+            echo "version=$(node scripts/version.mjs next)" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and tag
+        if: steps.decide.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B main "$GITHUB_SHA"
+          node scripts/release.mjs "$VERSION"
+      - name: Verify the tag in a fresh clone
+        if: steps.decide.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          git clone --quiet --branch "v$VERSION" --depth 1 "file://$PWD" /tmp/verify
+          cd /tmp/verify
+          cp -r dist /tmp/committed-dist
+          npm ci --ignore-scripts
+          npm run build
+          diff -r /tmp/committed-dist dist
+      - name: Push the tag
+        if: steps.decide.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: git push origin "refs/tags/v$VERSION"

@@ -1,0 +1,11 @@
+---
+import type { ConsentConfig } from 'cloveconsent'
+import config from '../consent.config'
+import ProcessorList from '../../../../src/astro/ProcessorList.astro'
+// a hand-built object typed as ConsentConfig that bypassed defineConsent()
+const forged = { ...config, processors: config.processors.map((p) => ({ ...p, privacyUrl: 'javascript:alert(1)' })) } as ConsentConfig
+---
+<html lang="sk"><head><meta charset="utf-8" /><title>Fixture</title></head>
+<body>
+  <ProcessorList config={forged} locale="sk" />
+</body></html>
