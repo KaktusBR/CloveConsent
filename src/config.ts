@@ -32,8 +32,9 @@ function define(input: ConsentConfigInput, warn: boolean): ConsentConfig {
   const locales = input.locales as readonly Locale[]
   const seen = new Set<string>()
   const processors = input.processors ?? []
-  input.services.forEach((s, i) => validateService(s, locales, `services[${i}](${s.id})`))
-  processors.forEach((p, i) => validateProcessor(p, locales, `processors[${i}](${p.id})`))
+  const idOf = (e: unknown): string => (typeof e === 'object' && e !== null && typeof (e as { id?: unknown }).id === 'string' ? (e as { id: string }).id : '?')
+  input.services.forEach((s, i) => validateService(s, locales, `services[${i}](${idOf(s)})`))
+  processors.forEach((p, i) => validateProcessor(p, locales, `processors[${i}](${idOf(p)})`))
   for (const e of [...input.services, ...processors]) {
     if (seen.has(e.id)) throw new ConsentConfigError('services', `duplicate id ${e.id}`)
     seen.add(e.id)

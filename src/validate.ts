@@ -11,7 +11,7 @@ export class ConsentConfigError extends Error {
 const FORBIDDEN_TEXT = /[<>\u0000-\u001F\u007F]/
 export const ID_PATTERN = /^[a-z0-9-]{1,48}$/
 export const STORAGE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/
-const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/
+const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$/
 
 export function assertText(v: unknown, path: string, opts: { max?: number } = {}): asserts v is string {
   const max = opts.max ?? 600
@@ -54,11 +54,20 @@ function assertStorage(items: unknown, locales: readonly Locale[], path: string)
   })
 }
 
+function isRealDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return false
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const dt = new Date(Date.UTC(y, mo - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
+}
+
 function assertCommon(e: any, path: string): void {
+  if (typeof e !== 'object' || e === null) throw new ConsentConfigError(path, 'must be an object')
   if (typeof e?.id !== 'string' || !ID_PATTERN.test(e.id)) throw new ConsentConfigError(`${path}.id`, 'id must match ^[a-z0-9-]{1,48}$')
   if (!Number.isInteger(e.catalogRevision) || e.catalogRevision < 1) throw new ConsentConfigError(`${path}.catalogRevision`, 'must be an integer >= 1')
-  if (e.lastVerified !== null && !(typeof e.lastVerified === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.lastVerified))) {
-    throw new ConsentConfigError(`${path}.lastVerified`, 'must be null or YYYY-MM-DD')
+  if (e.lastVerified !== null && !(typeof e.lastVerified === 'string' && isRealDate(e.lastVerified))) {
+    throw new ConsentConfigError(`${path}.lastVerified`, 'must be null or a real date written YYYY-MM-DD')
   }
   if (e.unreviewed !== undefined) {
     if (!Array.isArray(e.unreviewed) || !e.unreviewed.every((l: unknown) => (LOCALES as readonly unknown[]).includes(l))) {
@@ -91,6 +100,9 @@ export function validateService(e: ServiceEntry, locales: readonly Locale[], pat
   }
   const g = e.gating
   if (!g || !['none', 'script', 'iframe'].includes(g.type)) throw new ConsentConfigError(`${path}.gating`, 'invalid gating')
+  if (g.type !== 'iframe' && Object.hasOwn(g, 'sandbox')) {
+    throw new ConsentConfigError(`${path}.gating.sandbox`, 'sandbox only applies to iframe gating')
+  }
   if (g.type === 'script') {
     assertUrl(g.src, `${path}.gating.src`)
     let u: URL

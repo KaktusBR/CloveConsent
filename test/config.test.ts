@@ -143,3 +143,9 @@ describe('public json escaping', () => {
     expect((fromPublicJson(json).services[0] as any).messages.title.sk).toBe('A & B')
   })
 })
+
+test.each([null, 5, 'x', []])('a %j entry gives a ConsentConfigError, not a TypeError', (bad) => {
+  const mk = (over: object) => () => defineConsent({ ...(input() as any), ...over })
+  expect(mk({ services: [bad] })).toThrow(ConsentConfigError)
+  expect(mk({ processors: [bad] })).toThrow(ConsentConfigError)
+})

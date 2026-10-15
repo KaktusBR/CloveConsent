@@ -140,3 +140,36 @@ describe('validateProcessor', () => {
     expect(() => validateProcessor(e, ['sk'], 'p')).toThrow(/dpaUrl/)
   })
 })
+
+describe('hardening', () => {
+  const L = (v: string) => ({ sk: v, en: v, fr: v, de: v })
+  const base = {
+    kind: 'first-party', id: 'branch-choice', catalogRevision: 1, lastVerified: null, category: 'functional',
+    storage: [{ name: 'branch', type: 'sessionStorage', expiry: L('session'), purpose: L('Remembers branch') }],
+    messages: { title: L('Branch'), description: L('Remembers your branch choice') },
+  } as const
+  test.each(['2026-13-45', '2026-02-30', '2026-00-10', '2025-02-29'])('rejects the non-date %s', (d) => {
+    const e: any = structuredClone(base); e.lastVerified = d
+    expect(() => validateService(e, ['sk', 'en'], 'e')).toThrow(/lastVerified/)
+  })
+  test.each(['2026-02-28', '2024-02-29'])('accepts the real date %s', (d) => {
+    const e: any = structuredClone(base); e.lastVerified = d
+    expect(() => validateService(e, ['sk', 'en'], 'e')).not.toThrow()
+  })
+  test('accepts punycode top-level domains', () => {
+    expect(() => assertHost('example.xn--p1ai', 'h')).not.toThrow()
+    expect(() => assertHost('shop.xn--vermgensberatung-pwb', 'h')).not.toThrow()
+  })
+  test('still rejects bad hosts', () => {
+    for (const h of ['xn--p1ai', 'example.', 'example.c', 'Example.com', 'a b.com']) expect(() => assertHost(h, 'h')).toThrow()
+  })
+  test('rejects sandbox on non-iframe gating', () => {
+    const e: any = {
+      kind: 'client', id: 'x', catalogRevision: 1, lastVerified: null, category: 'analytics',
+      provider: { name: 'X', privacyUrl: 'https://x.com/p' }, storage: [],
+      gating: { type: 'none', sandbox: 'allow-scripts' }, origins: ['cdn.x.com'],
+      messages: { title: L('X'), description: L('X') },
+    }
+    expect(() => validateService(e, ['sk'], 'e')).toThrow(/sandbox/)
+  })
+})
