@@ -4,6 +4,7 @@ import { createConsent } from '../src/client'
 import { bindDom, bootFromDom } from '../src/ui'
 import { toPublicJson } from '../src/config'
 import { youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const driver = (raw: string | null = null) => {
@@ -11,7 +12,7 @@ const driver = (raw: string | null = null) => {
   return { init: (_v: any, h: any) => { hooks = h }, readRaw: () => r, writeData() {}, showBanner() {}, open: vi.fn(), acceptAll() {}, rejectAll() {}, acceptCategories: vi.fn(),
     set: (x: string | null) => { r = x }, hooks: () => hooks }
 }
-const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [youtube()] })
+const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [youtube()] })
 const page = `
 <button data-consent-open>Settings</button>
 <div data-consent-embed data-consent-service="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc" data-consent-title="Video">
@@ -69,7 +70,7 @@ test('a tampered embed src is not loaded', () => {
 const freshBoot = async () => { vi.resetModules(); return (await import('../src/ui')).bootFromDom }
 test('bootFromDom reads the json block and validates it', async () => {
   const err = vi.spyOn(console, 'error').mockImplementation(() => {})
-  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(config)}</script>`
+  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(config, 'sk')}</script>`
   expect((await freshBoot())(document, driver() as any)).not.toBeNull()
   document.body.innerHTML = `<script type="application/json" id="consent-config">{"locales":["xx"]}</script>`
   const bootFromDom = await freshBoot()
@@ -80,7 +81,7 @@ test('bootFromDom reads the json block and validates it', async () => {
   expect(bootFromDom(document, driver() as any)).toBeNull()
 })
 test('bootFromDom twice returns the existing client instead of starting a second one', async () => {
-  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(config)}</script>`
+  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(config, 'sk')}</script>`
   const bootFromDom = await freshBoot()
   const d1 = driver(); const init1 = vi.spyOn(d1, 'init')
   const first = bootFromDom(document, d1 as any)

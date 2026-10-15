@@ -1,12 +1,15 @@
 import { expect, test } from 'vitest'
 import { defineConsent } from '../src/config'
 import { buildView } from '../src/view'
-import { hosting, L, resend, theme, turnstile, youtube } from '../src/catalog'
+import { hosting, resend, theme, turnstile, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
+import fr from '../src/locales/fr'
+import de from '../src/locales/de'
 
 const config = defineConsent({
-  locales: ['sk', 'en', 'fr', 'de'], defaultLocale: 'sk', revision: 1, privacyHref: '/ochrana-udajov/',
+  locales: ['sk', 'en', 'fr', 'de'], defaultLocale: 'sk', revision: 1, packs: [sk, fr, de], privacyHref: '/ochrana-udajov/',
   services: [turnstile(), theme(), youtube()],
-  processors: [resend(), hosting({ name: 'H', privacyUrl: 'https://h.example/p', location: L('Nemecko', 'Germany', 'Allemagne', 'Deutschland') })],
+  processors: [resend(), hosting({ name: 'H', privacyUrl: 'https://h.example/p', location: { sk: 'Nemecko', en: 'Germany', fr: 'Allemagne', de: 'Deutschland' } })],
 })
 
 test('only categories with selected entries appear, necessary first', () => {

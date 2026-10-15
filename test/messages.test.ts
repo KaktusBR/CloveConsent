@@ -1,15 +1,14 @@
 import { expect, test } from 'vitest'
-import { LOCALES } from '../src/schema'
-import { format, messages } from '../src/messages'
+import { MESSAGE_KEYS, en, format } from '../src/messages'
 
-test('every locale has every key, non-empty, plain text', () => {
-  const keys = Object.keys(messages.en).sort()
-  for (const l of LOCALES) {
-    expect(Object.keys(messages[l]).sort()).toEqual(keys)
-    for (const v of Object.values(messages[l])) {
-      expect(typeof v === 'string' && v.trim().length > 0).toBe(true)
-      expect(/[<>]/.test(v as string)).toBe(false)
-    }
+test('English has every key, non-empty, plain text without control characters', () => {
+  expect(Object.keys(en).sort()).toEqual([...MESSAGE_KEYS].sort())
+  expect(MESSAGE_KEYS.length).toBeGreaterThan(0)
+  for (const k of MESSAGE_KEYS) {
+    const v = en[k]
+    expect(typeof v === 'string' && v.trim().length > 0, k).toBe(true)
+    expect(/[<>]/.test(v), k).toBe(false)
+    expect(/[\u0000-\u001F\u007F]/.test(v), k).toBe(false)
   }
 })
 test('format replaces named placeholders and leaves unknown ones', () => {

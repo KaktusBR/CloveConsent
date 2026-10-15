@@ -1,10 +1,11 @@
-import { CATEGORIES, type Category, type ConsentConfig, type Locale } from './schema'
-import { messages, type Messages } from './messages'
+import { CATEGORIES, type Category, type ConsentConfig, type Locale, type Localised } from './schema'
+import type { Messages } from './messages'
+import { isRtl } from './i18n/rtl'
 
 export interface ViewService { id: string; title: string; description: string; provider: string | null; storage: { name: string; type: string; expiry: string; purpose: string }[] }
 export interface ViewCategory { id: Category; title: string; description: string; readOnly: boolean; services: ViewService[] }
 export interface ViewProcessor { id: string; provider: string; privacyUrl: string; purpose: string; dataCategories: string[]; location: string; dpaUrl: string | null; transfers: string | null }
-export interface View { locale: Locale; m: Messages; cookieName: string; darkMode: boolean; privacyHref: string | null; categories: ViewCategory[]; processors: ViewProcessor[] }
+export interface View { locale: Locale; dir: 'ltr' | 'rtl'; m: Messages; cookieName: string; darkMode: boolean; privacyHref: string | null; categories: ViewCategory[]; processors: ViewProcessor[] }
 
 const CAT_TEXT: Record<Category, [keyof Messages, keyof Messages]> = {
   necessary: ['catNecessary', 'catNecessaryText'], functional: ['catFunctional', 'catFunctionalText'],
@@ -14,7 +15,9 @@ const CAT_TEXT: Record<Category, [keyof Messages, keyof Messages]> = {
 
 export function buildView(config: ConsentConfig, requested: Locale): View {
   const locale: Locale = config.locales.includes(requested) ? requested : config.defaultLocale
-  const m = messages[locale]
+  const m = config.messages[locale] as Messages
+  // defineConsent fills every text for every enabled locale; `en` only satisfies the type
+  const text = (v: Localised): string => v[locale] ?? v.en
   const categories: ViewCategory[] = []
   for (const id of CATEGORIES) {
     const entries = config.services.filter((s) => s.category === id)
@@ -23,18 +26,18 @@ export function buildView(config: ConsentConfig, requested: Locale): View {
     categories.push({
       id, title: m[t], description: m[d], readOnly: id === 'necessary',
       services: entries.map((s) => ({
-        id: s.id, title: s.messages.title[locale], description: s.messages.description[locale],
+        id: s.id, title: text(s.messages.title), description: text(s.messages.description),
         provider: s.kind === 'client' ? s.provider.name : null,
-        storage: s.storage.map((x) => ({ name: x.name, type: x.type, expiry: x.expiry[locale], purpose: x.purpose[locale] })),
+        storage: s.storage.map((x) => ({ name: x.name, type: x.type, expiry: text(x.expiry), purpose: text(x.purpose) })),
       })),
     })
   }
   return {
-    locale, m, cookieName: config.cookieName, darkMode: config.darkMode, privacyHref: config.privacyHref, categories,
+    locale, dir: isRtl(locale) ? 'rtl' : 'ltr', m, cookieName: config.cookieName, darkMode: config.darkMode, privacyHref: config.privacyHref, categories,
     processors: config.processors.map((p) => ({
-      id: p.id, provider: p.provider.name, privacyUrl: p.provider.privacyUrl, purpose: p.purpose[locale],
-      dataCategories: p.dataCategories.map((d) => d[locale]), location: p.location[locale],
-      dpaUrl: p.dpaUrl ?? null, transfers: p.transfers ? p.transfers[locale] : null,
+      id: p.id, provider: p.provider.name, privacyUrl: p.provider.privacyUrl, purpose: text(p.purpose),
+      dataCategories: p.dataCategories.map((d) => text(d)), location: text(p.location),
+      dpaUrl: p.dpaUrl ?? null, transfers: p.transfers ? text(p.transfers) : null,
     })),
   }
 }

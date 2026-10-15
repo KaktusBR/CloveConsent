@@ -15,7 +15,7 @@ function syncEmbeds(consent: Consent, doc: Document): void {
     const hasFrame = box.querySelector('iframe') !== null
     if (consent.isAllowed(id) && !hasFrame) {
       try {
-        const frame = createEmbed(doc, entry as ClientEntry, box.dataset.consentSrc ?? '', box.dataset.consentTitle ?? entry.messages.title[consent.locale])
+        const frame = createEmbed(doc, entry as ClientEntry, box.dataset.consentSrc ?? '', box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en)
         const ph = box.querySelector('[data-consent-placeholder]')
         if (ph) placeholders.set(box, ph)
         box.replaceChildren(frame)

@@ -1,32 +1,36 @@
 import { describe, expect, test } from 'vitest'
 import * as catalog from '../src/catalog'
-import { LOCALES } from '../src/schema'
+import { defineConsent } from '../src/config'
+import { theme } from '../src/catalog'
 import { validateProcessor, validateService } from '../src/validate'
-import { L } from '../src/catalog/helpers'
 
 const services = [catalog.turnstile(), catalog.youtube(), catalog.theme()]
 const processors = [catalog.resend(), catalog.cloudflareCdn(), catalog.facebookGraph(),
-  catalog.hosting({ name: 'Test host', privacyUrl: 'https://example.com/privacy', location: L('Nemecko', 'Germany', 'Allemagne', 'Deutschland') })]
+  catalog.hosting({ name: 'Test host', privacyUrl: 'https://example.com/privacy', location: { en: 'Germany' } })]
 
-describe('catalog (all four locales, valid, flagged)', () => {
+describe('catalog (English sources, valid, flagged)', () => {
   test.each(services.map((s) => [s.id, s] as const))('service %s', (_id, s) => {
-    expect(() => validateService(s, LOCALES, s.id)).not.toThrow()
+    expect(() => validateService(s, s.id)).not.toThrow()
     expect(s.fromCatalog).toBe(true)
   })
   test.each(processors.map((p) => [p.id, p] as const))('processor %s', (_id, p) => {
-    expect(() => validateProcessor(p, LOCALES, p.id)).not.toThrow()
+    expect(() => validateProcessor(p, p.id)).not.toThrow()
   })
   test('ids are unique', () => {
     const ids = [...services, ...processors].map((e) => e.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
-  test('fr and de are flagged unreviewed', () => {
-    for (const e of [...services, ...processors]) expect(e.unreviewed).toEqual(['fr', 'de'])
+  test('catalog entries are English-only sources', () => {
+    for (const e of [...services, ...processors]) expect(JSON.stringify(e)).not.toMatch(/"(sk|fr|de)":/)
+  })
+  test('theme takes a custom storage key', () => {
+    expect(theme({ key: 'color-scheme' }).storage[0]!.name).toBe('color-scheme')
+    expect(() => defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [theme({ key: 'a;b' })] })).toThrow(/storage name/)
   })
   // Verification status as recorded in docs/catalog-verification.md. Changing a row here means re-checking the provider docs.
   const VERIFIED = '2026-10-14'
   const expected: Record<string, string | null> = {
-    'cloudflare-turnstile': null, youtube: null, theme: VERIFIED,
+    'cloudflare-turnstile': null, youtube: null, theme: null,
     resend: VERIFIED, 'cloudflare-cdn': VERIFIED, 'facebook-graph': null, hosting: null,
   }
   test('lastVerified matches the recorded verification status for every entry', () => {
@@ -58,7 +62,6 @@ describe('catalog (all four locales, valid, flagged)', () => {
     for (const e of [...services, ...processors]) {
       if (e.lastVerified === null) console.warn(`[catalog] ${e.id}: not verified against provider docs`)
       else if (now - Date.parse(e.lastVerified) > 183 * 864e5) console.warn(`[catalog] ${e.id}: lastVerified older than 6 months`)
-      if (e.unreviewed?.length) console.warn(`[catalog] ${e.id}: unreviewed locales ${e.unreviewed.join(',')}`)
     }
   })
 })

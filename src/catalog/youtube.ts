@@ -1,5 +1,5 @@
 import type { Category, ClientEntry } from '../schema'
-import { CATALOG, L } from './helpers'
+import { CATALOG } from './helpers'
 
 export function youtube(o: { category?: Category } = {}): ClientEntry {
   return {
@@ -11,9 +11,9 @@ export function youtube(o: { category?: Category } = {}): ClientEntry {
     origins: ['www.youtube-nocookie.com'],
     csp: { 'frame-src': ['www.youtube-nocookie.com'] },
     messages: {
-      title: L('Videá YouTube', 'YouTube videos', 'Vidéos YouTube', 'YouTube-Videos'),
-      description: L('Vložené videá z YouTube v rozšírenom režime ochrany súkromia (youtube-nocookie.com).', 'Embedded YouTube videos in Privacy Enhanced Mode (youtube-nocookie.com).', 'Vidéos YouTube intégrées en mode de confidentialité renforcée (youtube-nocookie.com).', 'Eingebettete YouTube-Videos im erweiterten Datenschutzmodus (youtube-nocookie.com).'),
+      title: { en: 'YouTube videos' },
+      description: { en: 'Embedded YouTube videos in Privacy Enhanced Mode (youtube-nocookie.com).' },
     },
-    notes: 'UNVERIFIED: YouTube documents Privacy Enhanced Mode only as not personalising viewing or ads; it does not list what youtube-nocookie.com stores in the browser, so storage is empty here because it is unknown, not because it is none. The iframe sandbox value is also not confirmed against YouTube docs. See docs/catalog-verification.md.',
+    notes: 'UNVERIFIED: YouTube documents Privacy Enhanced Mode only as not personalising viewing or ads; it does not list what youtube-nocookie.com stores in the browser, so storage is empty here because it is unknown, not because it is none. The iframe sandbox value is also not confirmed against YouTube docs. See docs/concepts/the-catalog.md.',
   }
 }

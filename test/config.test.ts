@@ -2,8 +2,11 @@ import { describe, expect, test, vi } from 'vitest'
 import { assertValidatedConfig, defineConsent, fromPublicJson, isValidatedConfig, toPublicJson } from '../src/config'
 import { ConsentConfigError } from '../src/validate'
 import { theme, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 
-const input = () => ({ locales: ['sk', 'en'] as const, defaultLocale: 'sk' as const, revision: 1, services: [theme()] })
+// review status is not what these tests are about: a reviewed copy keeps the dev warnings to the ones under test
+const skPack = { ...sk, reviewed: true }
+const input = () => ({ locales: ['sk', 'en'] as const, defaultLocale: 'sk' as const, revision: 1, services: [theme()], packs: [skPack] })
 
 describe('defineConsent', () => {
   test('applies defaults and freezes', () => {
@@ -14,7 +17,8 @@ describe('defineConsent', () => {
     expect(Object.isFrozen(c)).toBe(true)
   })
   test.each([
-    ['unknown locale', { locales: ['sk', 'xx'] }],
+    ['invalid locale tag', { locales: ['sk', 'xx_yy'] }],
+    ['enabled locale without translations', { locales: ['sk', 'xx'] }],
     ['default not enabled', { defaultLocale: 'de' }],
     ['bad revision', { revision: 0 }],
     ['bad cookie name', { cookieName: 'a;b' }],
@@ -30,6 +34,7 @@ describe('defineConsent', () => {
       kind: 'first-party', id: 'branch-choice', catalogRevision: 1, lastVerified: null, category: 'functional',
       storage: [], messages: { title: L('B'), description: L('B') } }] })
     expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]![0])).toMatch(/not in the catalog/)
     warn.mockRestore()
   })
   const custom = () => {
@@ -40,7 +45,7 @@ describe('defineConsent', () => {
   }
   test('does not warn when re-validating the public json at browser boot', () => {
     const quiet = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const json = toPublicJson(defineConsent(custom()))
+    const json = toPublicJson(defineConsent(custom()), 'sk')
     quiet.mockClear()
     fromPublicJson(json)
     expect(quiet).not.toHaveBeenCalled()
@@ -57,7 +62,7 @@ describe('defineConsent', () => {
   test('isValidatedConfig accepts only defineConsent/fromPublicJson results', () => {
     const c = defineConsent(input() as any)
     expect(isValidatedConfig(c)).toBe(true)
-    expect(isValidatedConfig(fromPublicJson(toPublicJson(c)))).toBe(true)
+    expect(isValidatedConfig(fromPublicJson(toPublicJson(c, 'sk')))).toBe(true)
     expect(isValidatedConfig({ ...c })).toBe(false)
     expect(isValidatedConfig(structuredClone(c))).toBe(false)
     expect(isValidatedConfig(null)).toBe(false)
@@ -73,7 +78,7 @@ describe('defineConsent', () => {
 describe('public json', () => {
   test('round-trips without hooks and escapes <', () => {
     const c = defineConsent({ ...(input() as any), hooks: { onConsent() {} } })
-    const json = toPublicJson(c)
+    const json = toPublicJson(c, 'sk')
     expect(json).not.toContain('<')
     expect(json).not.toContain('onConsent')
     expect(fromPublicJson(json).services[0]!.id).toBe('theme')
@@ -81,13 +86,13 @@ describe('public json', () => {
   test('config without privacyHref round-trips (null stored)', () => {
     const c = defineConsent(input() as any)
     expect(c.privacyHref).toBeNull()
-    const back = fromPublicJson(toPublicJson(c))
+    const back = fromPublicJson(toPublicJson(c, 'sk'))
     expect(back.privacyHref).toBeNull()
     expect(back.services[0]!.id).toBe('theme')
   })
   test('fromPublicJson re-validates tampered input', () => {
     const c = defineConsent(input() as any)
-    const tampered = JSON.parse(toPublicJson(c))
+    const tampered = JSON.parse(toPublicJson(c, 'sk'))
     tampered.services[0].messages.title.sk = '<script>'
     expect(() => fromPublicJson(JSON.stringify(tampered))).toThrow(ConsentConfigError)
   })
@@ -137,8 +142,12 @@ describe('public json escaping', () => {
   test('no raw <, > or & (& via text; < > rejected by validator)', () => {
     const t = { ...theme(), id: 'amp-test', fromCatalog: false as const }
     ;(t.messages.title as any).sk = 'A & B'
+    // a custom id is not in the sk pack, so it carries its own Slovak texts
+    ;(t.messages.description as any).sk = 'Popis'
+    ;(t.storage[0]!.expiry as any).sk = 'Trvalo'
+    ;(t.storage[0]!.purpose as any).sk = 'Účel'
     const c = defineConsent({ ...(input() as any), services: [t] })
-    const json = toPublicJson(c)
+    const json = toPublicJson(c, 'sk')
     expect(json).not.toMatch(/[<>&]/)
     expect((fromPublicJson(json).services[0] as any).messages.title.sk).toBe('A & B')
   })

@@ -1,0 +1,100 @@
+import type { LocalePack } from '../i18n/pack'
+
+// Draft translation: not reviewed by a native speaker (reviewed: false).
+const pack: LocalePack = {
+  "locale": "fr",
+  "reviewed": false,
+  "messages": {
+    "bannerTitle": "Nous utilisons des cookies",
+    "bannerText": "Nous utilisons toujours les cookies strictement nécessaires. Les autres uniquement avec votre accord, modifiable à tout moment.",
+    "acceptAll": "Tout accepter",
+    "rejectAll": "Refuser",
+    "manage": "Paramètres",
+    "savePrefs": "Enregistrer",
+    "close": "Fermer",
+    "prefsTitle": "Paramètres de confidentialité",
+    "prefsIntro": "Choisissez les catégories que vous autorisez.",
+    "alwaysActive": "toujours actif",
+    "privacyLink": "Politique de confidentialité",
+    "reopen": "Paramètres des cookies",
+    "tableName": "Nom",
+    "tableType": "Type",
+    "tableExpiry": "Durée",
+    "tablePurpose": "Finalité",
+    "catNecessary": "Nécessaires",
+    "catNecessaryText": "Indispensables à la sécurité et au fonctionnement de base du site. Ils ne peuvent pas être désactivés.",
+    "catFunctional": "Fonctionnels",
+    "catFunctionalText": "Mémorisent vos propres choix, par exemple le thème du site.",
+    "catMedia": "Médias",
+    "catMediaText": "Vidéos et cartes intégrées de tiers.",
+    "catSocial": "Réseaux sociaux",
+    "catSocialText": "Contenu intégré provenant de réseaux sociaux.",
+    "catAnalytics": "Statistiques",
+    "catAnalyticsText": "Nous aident à comprendre l’utilisation du site.",
+    "catMarketing": "Marketing",
+    "catMarketingText": "Servent à mesurer et cibler la publicité.",
+    "embedBlocked": "Le contenu de {provider} est bloqué tant que vous ne l’autorisez pas.",
+    "embedLoadOnce": "Charger une fois",
+    "embedAccept": "Autoriser la catégorie",
+    "clearWarning": "Certains fichiers de tiers ne peuvent pas être supprimés depuis ce site. Supprimez-les dans les paramètres de votre navigateur.",
+    "processorsHeading": "Prestataires de services",
+    "processorLocation": "Localisation",
+    "processorData": "Catégories de données",
+    "processorDpa": "Accord de traitement des données",
+    "processorTransfers": "Transferts"
+  },
+  "catalog": {
+    "cloudflare-turnstile": {
+      "title": "Cloudflare Turnstile",
+      "description": "Protège les formulaires contre les robots."
+    },
+    "theme": {
+      "title": "Thème du site",
+      "description": "Enregistre votre choix de thème clair ou sombre.",
+      "storage": {
+        "theme": {
+          "expiry": "Permanent (jusqu’à suppression)",
+          "purpose": "Mémorise l’apparence claire ou sombre."
+        }
+      }
+    },
+    "youtube": {
+      "title": "Vidéos YouTube",
+      "description": "Vidéos YouTube intégrées en mode de confidentialité renforcée (youtube-nocookie.com)."
+    },
+    "resend": {
+      "purpose": "Envoi d’e-mails depuis les formulaires.",
+      "location": "États-Unis (données stockées). La région d’envoi (par exemple l’Irlande) détermine seulement d’où les e-mails sont envoyés, pas où les données sont stockées.",
+      "transfers": "Transferts vers les États-Unis : clauses contractuelles types et cadre de protection des données UE-États-Unis.",
+      "dataCategories": [
+        "Adresse e-mail",
+        "Contenu du message",
+        "Métadonnées de l’e-mail"
+      ]
+    },
+    "cloudflare-cdn": {
+      "purpose": "Diffusion et protection du site (CDN, protection contre les attaques).",
+      "location": "Réseau mondial de Cloudflare (données stockées principalement aux États-Unis et dans l’EEE)",
+      "dataCategories": [
+        "Adresse IP",
+        "Données techniques de la requête"
+      ]
+    },
+    "facebook-graph": {
+      "purpose": "Récupération des publications de notre page Facebook. Les images se chargent depuis l’adresse renvoyée par l’API Graph (serveurs de Meta), et Meta reçoit donc l’adresse IP du visiteur.",
+      "location": "Selon Meta : États-Unis, Irlande, Danemark, Suède et d’autres pays",
+      "dataCategories": [
+        "Adresse IP (au chargement des images)"
+      ]
+    },
+    "hosting": {
+      "purpose": "Hébergement du site web.",
+      "dataCategories": [
+        "Adresse IP",
+        "Journaux du serveur"
+      ]
+    }
+  }
+}
+
+export default pack

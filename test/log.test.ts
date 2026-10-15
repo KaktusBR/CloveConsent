@@ -2,9 +2,10 @@ import { describe, expect, test, vi } from 'vitest'
 import { createConsentLogger } from '../src/log'
 import { defineConsent } from '../src/config'
 import { theme } from '../src/catalog'
+import sk from '../src/locales/sk'
 import { parseConsent } from '../src/state'
 
-const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [theme()] })
+const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [theme()] })
 const state = parseConsent(encodeURIComponent(JSON.stringify({ consentId: 'abc-12345678', categories: ['necessary', 'functional'], data: { siteRevision: 1, revisions: { theme: 1 } } })))!
 const loc = { origin: 'https://example.com', hostname: 'example.com' }
 

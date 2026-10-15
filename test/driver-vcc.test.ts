@@ -3,9 +3,10 @@ import { defineConsent } from '../src/config'
 import { buildView } from '../src/view'
 import { buildVccConfig } from '../src/driver-vcc'
 import { theme, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 
 const hooks = { onFirstConsent() {}, onConsent() {}, onChange() {}, onDecision() {} }
-const view = buildView(defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, privacyHref: '/p/', services: [theme(), youtube()] }), 'sk')
+const view = buildView(defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, privacyHref: '/p/', services: [theme(), youtube()] }), 'sk')
 
 test('cookie options follow the spec', () => {
   const c: any = buildVccConfig(view, hooks, false)

@@ -3,6 +3,7 @@ import { defineConsent } from '../src/config'
 import { createConsent } from '../src/client'
 import type { ConsentDriver, DriverHooks } from '../src/driver'
 import { theme, turnstile, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 function fakeDriver(initial: string | null = null) {
@@ -19,7 +20,7 @@ function fakeDriver(initial: string | null = null) {
   return d
 }
 const drv = (d: ReturnType<typeof fakeDriver>) => d as unknown as ConsentDriver
-const cfg = (hooks = {}) => defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [turnstile(), theme(), youtube()], hooks })
+const cfg = (hooks = {}) => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), youtube()], hooks })
 const cookie = (categories: string[], data: object = { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1 } }) =>
   enc({ consentId: 'abc-12345678', categories, lastConsentTimestamp: '2026-10-14T10:00:00.000Z', data })
 
@@ -64,13 +65,13 @@ describe('re-consent gates optional services until a decision (spec section 6)',
   })
   test('a service whose catalogRevision increased is not allowed', () => {
     const y = youtube(); y.catalogRevision = 2
-    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [turnstile(), theme(), y] })
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), y] })
     const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all))) }); c.init()
     expect(c.isAllowed('youtube')).toBe(false)
     expect(c.isAllowed('theme')).toBe(true)
   })
   test('a site revision bump blocks every optional service; necessary and allowOnce still work', () => {
-    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 2, services: [turnstile(), theme(), youtube()] })
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 2, services: [turnstile(), theme(), youtube()] })
     const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all))) }); c.init()
     expect(c.isAllowed('theme')).toBe(false)
     expect(c.isAllowed('youtube')).toBe(false)
@@ -81,7 +82,7 @@ describe('re-consent gates optional services until a decision (spec section 6)',
   test('a newly added script service in an accepted category is not loaded until a decision', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const plausible = { ...youtube(), id: 'plausible', origins: ['plausible.io'], gating: { type: 'script' as const, src: 'https://plausible.io/js/s.js' } }
-    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [turnstile(), theme(), youtube(), plausible] })
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), youtube(), plausible], allowFallback: true })
     warn.mockRestore()
     const d = fakeDriver(cookie(all))
     d.writeData.mockImplementation((x: any) => { d.written.push(x); d.set(cookie(all, x)) })
@@ -107,7 +108,7 @@ describe('re-consent gates optional services until a decision (spec section 6)',
     expect(c.isAllowed('youtube')).toBe(true)
   })
   test('a service id equal to an Object.prototype key is not treated as known', () => {
-    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services: [{ ...theme(), id: 'constructor' }] })
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [{ ...theme(), id: 'constructor' }], allowFallback: true })
     const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all, { siteRevision: 1, revisions: {} }))) }); c.init()
     expect(c.isAllowed('constructor')).toBe(false)
   })

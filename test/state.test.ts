@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { defineConsent } from '../src/config'
 import { theme, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 import { buildStoredData, needsPrompt, parseConsent, readCookieValue } from '../src/state'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
@@ -9,7 +10,7 @@ const good = (extra: object = {}) => enc({
   data: { siteRevision: 1, revisions: { youtube: 1, theme: 1 } }, ...extra,
 })
 const config = (over: object = {}, services = [youtube(), theme()]) =>
-  defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision: 1, services, ...over } as any)
+  defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services, ...over } as any)
 
 describe('readCookieValue', () => {
   test('finds a named cookie among others', () => {

@@ -6,10 +6,11 @@ import { createConsent, type Consent } from '../src/client'
 import { createVccDriver } from '../src/driver-vcc'
 import { parseConsent, readCookieValue } from '../src/state'
 import { theme, youtube } from '../src/catalog'
+import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)) }
-const cfg = (revision = 2) => defineConsent({ locales: ['sk'], defaultLocale: 'sk', revision, services: [theme(), youtube()] })
+const cfg = (revision = 2) => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision, services: [theme(), youtube()] })
 const stored = () => parseConsent(readCookieValue(document.cookie, 'cc_cookie'))
 const setStale = (categories: string[]) => {
   document.cookie = `cc_cookie=${enc({

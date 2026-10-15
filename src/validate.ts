@@ -1,5 +1,5 @@
+import { CATEGORIES, type ProcessorEntry, type ServiceEntry } from './schema'
 import { canonicalLocale } from './i18n/locale'
-import { CATEGORIES, LOCALES, type Locale, type ProcessorEntry, type ServiceEntry } from './schema'
 
 export class ConsentConfigError extends Error {
   constructor(path: string, message: string) {
@@ -22,7 +22,7 @@ export function assertText(v: unknown, path: string, opts: { max?: number } = {}
 
 export function assertUrl(v: unknown, path: string): asserts v is string {
   assertText(v, path, { max: 2000 })
-  if (/[\u0000-\u0020\u007F]/.test(v)) throw new ConsentConfigError(path, 'must not contain spaces or control characters')
+  if (/[\u0000- \u007F]/.test(v)) throw new ConsentConfigError(path, 'must not contain spaces or control characters')
   if (v.startsWith('/')) {
     if (v.startsWith('//') || v.includes('\\')) throw new ConsentConfigError(path, 'path must start with a single /')
     return
@@ -38,19 +38,35 @@ export function assertHost(v: unknown, path: string): asserts v is string {
   if (typeof v !== 'string' || !HOST.test(v)) throw new ConsentConfigError(path, 'must be a lowercase hostname such as www.example.com')
 }
 
-export function assertLocalised(v: unknown, path: string, locales: readonly Locale[]): void {
-  if (typeof v !== 'object' || v === null) throw new ConsentConfigError(path, 'must be an object with one string per locale')
-  for (const l of locales) assertText((v as Record<string, unknown>)[l], `${path}.${l}`)
+export function assertLocaleTag(v: unknown, path: string): asserts v is string {
+  if (canonicalLocale(v) === null) {
+    throw new ConsentConfigError(path, `${JSON.stringify(v)} is not a valid language tag (examples: en, sk, pt-BR)`)
+  }
 }
 
-function assertStorage(items: unknown, locales: readonly Locale[], path: string): void {
+/** A text in several languages: `en` is required, every other key must be a canonical language tag with plain text. */
+export function assertLocalised(v: unknown, path: string): void {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    throw new ConsentConfigError(path, 'must be an object with an "en" text and optional other languages')
+  }
+  const o = v as Record<string, unknown>
+  assertText(Object.hasOwn(o, 'en') ? o.en : undefined, `${path}.en`)
+  for (const key of Object.keys(o)) {
+    if (key === 'en') continue
+    assertLocaleTag(key, `${path}.${key}`)
+    if (canonicalLocale(key) !== key) throw new ConsentConfigError(`${path}.${key}`, `write the language tag in canonical form (${canonicalLocale(key)})`)
+    assertText(o[key], `${path}.${key}`)
+  }
+}
+
+function assertStorage(items: unknown, path: string): void {
   if (!Array.isArray(items)) throw new ConsentConfigError(path, 'must be an array')
   items.forEach((s, i) => {
     const p = `${path}[${i}]`
     if (typeof s?.name !== 'string' || !STORAGE_NAME_PATTERN.test(s.name)) throw new ConsentConfigError(`${p}.name`, 'invalid storage name')
     if (!['cookie', 'localStorage', 'sessionStorage'].includes(s.type)) throw new ConsentConfigError(`${p}.type`, 'invalid storage type')
-    assertLocalised(s.expiry, `${p}.expiry`, locales)
-    assertLocalised(s.purpose, `${p}.purpose`, locales)
+    assertLocalised(s.expiry, `${p}.expiry`)
+    assertLocalised(s.purpose, `${p}.purpose`)
   })
 }
 
@@ -64,25 +80,20 @@ function isRealDate(s: string): boolean {
 
 function assertCommon(e: any, path: string): void {
   if (typeof e !== 'object' || e === null) throw new ConsentConfigError(path, 'must be an object')
-  if (typeof e?.id !== 'string' || !ID_PATTERN.test(e.id)) throw new ConsentConfigError(`${path}.id`, 'id must match ^[a-z0-9-]{1,48}$')
+  if (typeof e.id !== 'string' || !ID_PATTERN.test(e.id)) throw new ConsentConfigError(`${path}.id`, 'id must match ^[a-z0-9-]{1,48}$')
   if (!Number.isInteger(e.catalogRevision) || e.catalogRevision < 1) throw new ConsentConfigError(`${path}.catalogRevision`, 'must be an integer >= 1')
   if (e.lastVerified !== null && !(typeof e.lastVerified === 'string' && isRealDate(e.lastVerified))) {
     throw new ConsentConfigError(`${path}.lastVerified`, 'must be null or a real date written YYYY-MM-DD')
   }
-  if (e.unreviewed !== undefined) {
-    if (!Array.isArray(e.unreviewed) || !e.unreviewed.every((l: unknown) => (LOCALES as readonly unknown[]).includes(l))) {
-      throw new ConsentConfigError(`${path}.unreviewed`, 'must be an array of known locales')
-    }
-  }
 }
 
-export function validateService(e: ServiceEntry, locales: readonly Locale[], path: string): void {
+export function validateService(e: ServiceEntry, path: string): void {
   assertCommon(e, path)
   if (e.kind !== 'client' && e.kind !== 'first-party') throw new ConsentConfigError(`${path}.kind`, 'must be client or first-party')
   if (!(CATEGORIES as readonly string[]).includes(e.category)) throw new ConsentConfigError(`${path}.category`, 'unknown category')
-  assertLocalised(e.messages?.title, `${path}.messages.title`, locales)
-  assertLocalised(e.messages?.description, `${path}.messages.description`, locales)
-  assertStorage(e.storage, locales, `${path}.storage`)
+  assertLocalised(e.messages?.title, `${path}.messages.title`)
+  assertLocalised(e.messages?.description, `${path}.messages.description`)
+  assertStorage(e.storage, `${path}.storage`)
   if (e.kind === 'first-party') return
 
   assertText(e.provider?.name, `${path}.provider.name`, { max: 100 })
@@ -118,21 +129,15 @@ export function validateService(e: ServiceEntry, locales: readonly Locale[], pat
   }
 }
 
-export function validateProcessor(e: ProcessorEntry, locales: readonly Locale[], path: string): void {
+export function validateProcessor(e: ProcessorEntry, path: string): void {
   assertCommon(e, path)
   if (e.kind !== 'processor') throw new ConsentConfigError(`${path}.kind`, 'must be processor')
   assertText(e.provider?.name, `${path}.provider.name`, { max: 100 })
   assertUrl(e.provider?.privacyUrl, `${path}.provider.privacyUrl`)
-  assertLocalised(e.purpose, `${path}.purpose`, locales)
-  assertLocalised(e.location, `${path}.location`, locales)
+  assertLocalised(e.purpose, `${path}.purpose`)
+  assertLocalised(e.location, `${path}.location`)
   if (!Array.isArray(e.dataCategories)) throw new ConsentConfigError(`${path}.dataCategories`, 'must be an array')
-  e.dataCategories.forEach((d, i) => assertLocalised(d, `${path}.dataCategories[${i}]`, locales))
+  e.dataCategories.forEach((d, i) => assertLocalised(d, `${path}.dataCategories[${i}]`))
   if (e.dpaUrl !== undefined) assertUrl(e.dpaUrl, `${path}.dpaUrl`)
-  if (e.transfers !== undefined) assertLocalised(e.transfers, `${path}.transfers`, locales)
-}
-
-export function assertLocaleTag(v: unknown, path: string): asserts v is string {
-  if (canonicalLocale(v) === null) {
-    throw new ConsentConfigError(path, `${JSON.stringify(v)} is not a valid language tag (examples: en, sk, pt-BR)`)
-  }
+  if (e.transfers !== undefined) assertLocalised(e.transfers, `${path}.transfers`)
 }

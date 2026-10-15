@@ -1,18 +1,19 @@
 import type { Category, FirstPartyEntry } from '../schema'
-import { CATALOG, L } from './helpers'
+import { CATALOG } from './helpers'
 
-export function theme(o: { category?: Category } = {}): FirstPartyEntry {
+/** A site's own light/dark choice. The storage key is whatever your site uses; the default `theme` is only a convention. */
+export function theme(o: { category?: Category; key?: string } = {}): FirstPartyEntry {
   return {
-    ...CATALOG, kind: 'first-party', id: 'theme', catalogRevision: 1, lastVerified: '2026-10-14',
+    ...CATALOG, kind: 'first-party', id: 'theme', catalogRevision: 1, lastVerified: null,
     category: o.category ?? 'functional',
     storage: [{
-      name: 'theme', type: 'localStorage',
-      expiry: L('Trvalo (kým ho nezmažete)', 'Persistent (until you delete it)', 'Permanent (jusqu’à suppression)', 'Dauerhaft (bis zum Löschen)'),
-      purpose: L('Pamätá si svetlý alebo tmavý vzhľad.', 'Remembers light or dark appearance.', 'Mémorise l’apparence claire ou sombre.', 'Merkt sich das helle oder dunkle Design.'),
+      name: o.key ?? 'theme', type: 'localStorage',
+      expiry: { en: 'Persistent (until you delete it)' },
+      purpose: { en: 'Remembers light or dark appearance.' },
     }],
     messages: {
-      title: L('Vzhľad stránky', 'Site theme', 'Thème du site', 'Seitendesign'),
-      description: L('Uloží vašu voľbu svetlého alebo tmavého vzhľadu.', 'Saves your light or dark theme choice.', 'Enregistre votre choix de thème clair ou sombre.', 'Speichert Ihre Wahl des hellen oder dunklen Designs.'),
+      title: { en: 'Site theme' },
+      description: { en: 'Saves your light or dark theme choice.' },
     },
   }
 }

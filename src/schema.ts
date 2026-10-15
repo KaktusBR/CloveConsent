@@ -1,6 +1,10 @@
-export const LOCALES = ['sk', 'en', 'fr', 'de'] as const
-export type Locale = (typeof LOCALES)[number]
-export type Localised = Record<Locale, string>
+import type { LocalePack } from './i18n/pack'
+import type { Messages } from './messages'
+
+/** Any BCP 47 language tag in canonical form, for example `en`, `sk`, `pt-BR`. */
+export type Locale = string
+/** A text in several languages. `en` (the source language) is required; other languages are optional. */
+export interface Localised { en: string; [locale: string]: string | undefined }
 
 export const CATEGORIES = ['necessary', 'functional', 'media', 'social', 'analytics', 'marketing'] as const
 export type Category = (typeof CATEGORIES)[number]
@@ -20,7 +24,6 @@ interface EntryBase {
   id: string
   catalogRevision: number
   lastVerified: string | null
-  unreviewed?: Locale[]
   fromCatalog?: true
 }
 export interface EntryMessages { title: Localised; description: Localised }
@@ -76,6 +79,12 @@ export interface ConsentConfigInput {
   services: ServiceEntry[]
   processors?: ProcessorEntry[]
   hooks?: ConsentHooks
+  /** Language packs for every enabled language except English (`en` is built in). */
+  packs?: LocalePack[]
+  /** Per-language overrides of individual banner texts. Highest priority. */
+  messages?: Record<Locale, Partial<Messages>>
+  /** Show the fallback language for missing translations (with a dev warning) instead of failing the build. Default false. */
+  allowFallback?: boolean
 }
 export interface ConsentConfig {
   readonly locales: readonly Locale[]
@@ -87,4 +96,8 @@ export interface ConsentConfig {
   readonly services: readonly ServiceEntry[]
   readonly processors: readonly ProcessorEntry[]
   readonly hooks: ConsentHooks
+  /** Resolved banner texts for every enabled language. */
+  readonly messages: Readonly<Record<Locale, Messages>>
+  /** Enabled languages whose pack is flagged `reviewed: false`. */
+  readonly unreviewed: readonly Locale[]
 }
