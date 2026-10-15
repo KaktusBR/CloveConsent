@@ -1,11 +1,11 @@
-import type { Category, ClientEntry, ConsentConfig, ConsentState, Locale, ServiceEntry, StorageItem } from './schema'
+import type { Category, ClientEntry, ConsentConfig, ConsentState, DecisionInfo, Locale, ServiceEntry, StorageItem } from './schema'
 import type { ConsentDriver } from './driver'
 import { loadScript, unloadService } from './gating'
 import { buildStoredData, needsPrompt, parseConsent } from './state'
 import { buildView } from './view'
 import { isDev } from './dev'
 
-export type ConsentEvent = 'first-consent' | 'consent' | 'change' | 'once'
+export type ConsentEvent = 'ready' | 'decision' | 'once'
 export interface Consent {
   readonly config: ConsentConfig
   readonly locale: Locale
@@ -17,8 +17,13 @@ export interface Consent {
   rejectAll(): void
   open(): void
   acceptCategory(c: Category): void
+  /** Allow one embed for this page view only. Not available for scripts: their side effects cannot be undone. */
   allowOnce(id: string): void
-  on(event: ConsentEvent, fn: (arg?: unknown) => void): () => void
+  /** Fires on every page load that has a stored decision, and after each decision. */
+  on(event: 'ready', fn: (state: ConsentState | null) => void): () => void
+  /** Fires exactly once per decision the visitor makes. */
+  on(event: 'decision', fn: (info: DecisionInfo) => void): () => void
+  on(event: 'once', fn: (id: string) => void): () => void
 }
 
 let current: Consent | null = null
@@ -32,9 +37,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   const doc = deps.doc ?? document
   const locale: Locale = deps.locale && config.locales.includes(deps.locale) ? deps.locale : config.defaultLocale
   const { driver } = deps
-  const listeners: Record<ConsentEvent, Set<(arg?: unknown) => void>> = {
-    'first-consent': new Set(), consent: new Set(), change: new Set(), once: new Set(),
-  }
+  const listeners: Record<ConsentEvent, Set<(arg: any) => void>> = { ready: new Set(), decision: new Set(), once: new Set() }
   const once = new Set<string>()
   const leftovers: StorageItem[] = []
   let started = false
@@ -46,9 +49,16 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   const state = (): ConsentState | null => { try { return parseConsent(driver.readRaw()) } catch { return null } }
   const find = (id: string): ServiceEntry | undefined => config.services.find((s) => s.id === id)
   const persist = () => { try { driver.writeData(buildStoredData(config)) } catch (err) { dev('could not store revisions', err) } }
+  const noteLeftovers = (items: StorageItem[]) => {
+    for (const it of items) if (!leftovers.some((l) => l.type === it.type && l.name === it.name)) leftovers.push(it)
+  }
 
-  // spec section 6: an optional service whose revision the visitor has not seen (new service, bumped
-  // catalogRevision, or bumped site revision) stays blocked until the visitor answers the re-consent banner
+  const ready = () => { const s = state(); emit('ready', s); if (s) hook(() => config.hooks.onReady?.(s)) }
+  const decided = (info: DecisionInfo) => { emit('decision', info); const s = state(); if (s) hook(() => config.hooks.onDecision?.(s, info)) }
+  const accepted = (): Category[] => (state()?.categories ?? []).filter((c) => c !== 'necessary')
+
+  // an optional service whose revision the visitor has not seen (new service, bumped catalogRevision, or bumped
+  // site revision) stays blocked until the visitor answers the re-consent banner
   const isAllowed = (id: string): boolean => {
     const s = find(id)
     if (!s) return false
@@ -68,7 +78,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   }
   const withdraw = (changed: Category[]) => {
     for (const s of config.services) {
-      if (changed.includes(s.category) && !isAllowed(s.id)) leftovers.push(...unloadService(doc, s))
+      if (changed.includes(s.category) && !isAllowed(s.id)) noteLeftovers(unloadService(doc, s))
     }
   }
 
@@ -81,15 +91,15 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
       const prompt = needsPrompt(st, config)
       try {
         driver.init(buildView(config, locale), {
-          onFirstConsent: () => { once.clear(); persist(); applyScripts(); const s = state(); emit('first-consent', s); if (s) hook(() => config.hooks.onFirstConsent?.(s)) },
-          onConsent: () => { applyScripts(); const s = state(); emit('consent', s); if (s) hook(() => config.hooks.onConsent?.(s)) },
-          onChange: (changed) => { once.clear(); persist(); withdraw(changed); applyScripts(); const s = state(); emit('change', changed); if (s) hook(() => config.hooks.onChange?.(s, changed)) },
-          // the visitor answered the banner without changing categories: record the revisions they have now
-          // seen and load what the re-consent gate was holding back
+          onFirstConsent: () => { once.clear(); persist(); applyScripts(); decided({ kind: 'first', changed: accepted() }) },
+          onConsent: () => { applyScripts(); ready() },
+          onChange: (changed) => { once.clear(); persist(); withdraw(changed); applyScripts(); decided({ kind: 'change', changed }) },
+          // the visitor answered the re-consent banner without changing categories: record the revisions they have
+          // now seen and load what the re-consent gate was holding back
           onDecision: () => {
             const before = state()
             if (!before || !needsPrompt(before, config)) return
-            persist(); applyScripts(); emit('consent', state())
+            persist(); applyScripts(); decided({ kind: 'reconfirm', changed: [] }); ready()
           },
         })
         if (st && prompt) driver.showBanner()
@@ -110,10 +120,14 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
       driver.acceptCategories([...new Set<Category>([...have, c])])
     },
     allowOnce(id) {
-      if (!find(id)) throw new Error(`[consent] unknown service ${id}`)
+      const s = find(id)
+      if (!s) throw new Error(`[consent] unknown service ${id}`)
+      if (s.kind !== 'client' || s.gating.type !== 'iframe') {
+        throw new Error(`[consent] allowOnce only works for embeds; "${id}" is not an iframe service`)
+      }
       once.add(id); emit('once', id)
     },
-    on(event, fn) { listeners[event].add(fn); return () => { listeners[event].delete(fn) } },
+    on(event: ConsentEvent, fn: (arg: any) => void) { listeners[event].add(fn); return () => { listeners[event].delete(fn) } },
   }
   return api
 }

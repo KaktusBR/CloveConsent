@@ -96,11 +96,13 @@ describe('re-consent gates optional services until a decision (spec section 6)',
     d.writeData.mockImplementation((x: any) => { d.written.push(x); d.set(cookie(all, x)) })
     const c = createConsent(cfg(), { driver: drv(d) }); c.init()
     expect(c.isAllowed('youtube')).toBe(false)
-    const fn = vi.fn(); c.on('consent', fn)
+    const fn = vi.fn(); const dec = vi.fn(); c.on('ready', fn); c.on('decision', dec)
     d.hooks.onDecision()
     expect(d.writeData).toHaveBeenCalledTimes(1)
     expect(c.isAllowed('youtube')).toBe(true)
     expect(fn).toHaveBeenCalledTimes(1)
+    expect(dec).toHaveBeenCalledTimes(1)
+    expect(dec).toHaveBeenCalledWith({ kind: 'reconfirm', changed: [] })
   })
   test('unchanged revisions allow per category', () => {
     const c = createConsent(cfg(), { driver: drv(fakeDriver(cookie(all))) }); c.init()
@@ -117,10 +119,10 @@ describe('re-consent gates optional services until a decision (spec section 6)',
 describe('once supersession and idempotent init', () => {
   test('a persisted decision supersedes one-time allowance and clears storage', () => {
     const d = fakeDriver(cookie(['necessary'])); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
-    c.allowOnce('theme'); localStorage.setItem('theme', 'dark')
-    expect(c.isAllowed('theme')).toBe(true)
+    c.allowOnce('youtube'); localStorage.setItem('theme', 'dark')
+    expect(c.isAllowed('youtube')).toBe(true)
     d.set(cookie(['necessary'])); d.hooks.onChange(['functional'])
-    expect(c.isAllowed('theme')).toBe(false)
+    expect(c.isAllowed('youtube')).toBe(false)
     expect(localStorage.getItem('theme')).toBeNull()
   })
   test('first consent also clears one-time allowances', () => {
@@ -147,19 +149,20 @@ describe('prompting', () => {
 
 describe('events and persistence', () => {
   test('first consent writes revisions and emits events and hooks', () => {
-    const hook = { onFirstConsent: vi.fn(), onConsent: vi.fn() }
+    const hook = { onDecision: vi.fn(), onReady: vi.fn() }
     const d = fakeDriver(); const c = createConsent(cfg(hook), { driver: drv(d) }); c.init()
-    const seen: string[] = []; c.on('first-consent', () => seen.push('first')); c.on('consent', () => seen.push('consent'))
+    const seen: string[] = []; c.on('decision', (i) => { if (i.kind === 'first') seen.push('first') }); c.on('ready', () => seen.push('consent'))
     d.set(cookie(['necessary', 'functional'], {})); d.hooks.onFirstConsent(); d.hooks.onConsent()
     expect(d.written.at(-1)).toEqual({ siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1 } })
     expect(seen).toEqual(['first', 'consent'])
-    expect(hook.onFirstConsent).toHaveBeenCalledTimes(1)
-    expect(hook.onConsent).toHaveBeenCalledTimes(1)
+    expect(hook.onDecision).toHaveBeenCalledTimes(1)
+    expect(hook.onDecision.mock.calls[0]![1].kind).toBe('first')
+    expect(hook.onReady).toHaveBeenCalledTimes(1)
   })
   test('change emits changed categories and unloads withdrawn services', () => {
     const d = fakeDriver(cookie(['necessary', 'functional'])); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
     localStorage.setItem('theme', 'dark')
-    const fn = vi.fn(); c.on('change', fn)
+    const fn = vi.fn(); c.on('decision', (i) => { if (i.kind === 'change') fn(i.changed) })
     d.set(cookie(['necessary'])); d.hooks.onChange(['functional'])
     expect(fn).toHaveBeenCalledWith(['functional'])
     expect(localStorage.getItem('theme')).toBeNull()
@@ -172,8 +175,8 @@ describe('events and persistence', () => {
   })
   test('throwing hook does not break other listeners', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const d = fakeDriver(); const c = createConsent(cfg({ onConsent() { throw new Error('boom') } }), { driver: drv(d) }); c.init()
-    const fn = vi.fn(); c.on('consent', fn)
+    const d = fakeDriver(); const c = createConsent(cfg({ onReady() { throw new Error('boom') } }), { driver: drv(d) }); c.init()
+    const fn = vi.fn(); c.on('ready', fn)
     d.set(cookie(['necessary'])); expect(() => d.hooks.onConsent()).not.toThrow()
     expect(fn).toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()

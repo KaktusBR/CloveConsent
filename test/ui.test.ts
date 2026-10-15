@@ -116,4 +116,13 @@ test('a click dispatched on document does not throw', () => {
   const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   expect(() => document.dispatchEvent(new MouseEvent('click', { bubbles: true }))).not.toThrow()
 })
+test('embeds on a page swapped in by Astro view transitions are synced (astro:page-load)', () => {
+  const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
+  document.body.innerHTML = ''
+  const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  document.body.innerHTML = page            // the new page arrives
+  expect(document.querySelector('iframe')).toBeNull()
+  document.dispatchEvent(new Event('astro:page-load'))
+  expect(document.querySelector('iframe')!.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
+})
 })

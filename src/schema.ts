@@ -63,11 +63,16 @@ export interface ConsentState {
   revisions: Record<string, number>
   timestamp: string | null
 }
+export interface DecisionInfo {
+  /** `first`: the first answer ever. `change`: categories changed. `reconfirm`: the visitor re-confirmed after a re-consent prompt without changing categories. */
+  kind: 'first' | 'change' | 'reconfirm'
+  changed: Category[]
+}
 export interface ConsentHooks {
-  onFirstConsent?(state: ConsentState): void
-  onChange?(state: ConsentState, changed: Category[]): void
-  /** Fires on every page load that has a stored decision (and with onFirstConsent on a first decision). Not suitable for writing consent records. */
-  onConsent?(state: ConsentState): void
+  /** Fires on every page load that has a stored decision, and after each decision. Not suitable for writing consent records. */
+  onReady?(state: ConsentState): void
+  /** Fires exactly once per decision the visitor makes. Use this for consent records. */
+  onDecision?(state: ConsentState, info: DecisionInfo): void
 }
 export interface ConsentConfigInput {
   locales: Locale[]

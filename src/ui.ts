@@ -50,7 +50,9 @@ export function bindDom(consent: Consent, doc: Document = document): void {
     else if (t.dataset.consentAction === 'accept') consent.acceptCategory(entry.category)
   })
   const sync = () => syncEmbeds(consent, doc)
-  consent.on('consent', sync); consent.on('change', sync); consent.on('once', sync)
+  consent.on('ready', sync); consent.on('decision', sync); consent.on('once', sync)
+  // Astro view transitions swap the page without a reload: embeds on the new page must be checked again
+  doc.addEventListener('astro:page-load', sync)
   sync()
 }
 
