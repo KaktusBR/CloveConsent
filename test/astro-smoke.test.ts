@@ -32,7 +32,8 @@ test('banner blob has the expected services, locales, locale attribute and no ho
   const cfg = JSON.parse(body)
   expect(attrs).toContain('data-locale="sk"')
   expect(cfg.services.map((s: { id: string }) => s.id)).toEqual(['cloudflare-turnstile', 'theme', 'youtube'])
-  expect(cfg.locales).toEqual(['sk', 'en'])
+  expect(cfg.locales).toEqual(['sk'])
+  expect(Object.keys(cfg.messages)).toEqual(['sk'])
   expect(cfg).not.toHaveProperty('hooks')
 })
 test('embed renders as a placeholder, not an iframe, with the exact src', () => {
@@ -72,4 +73,11 @@ test('GatedEmbed fails the build for a service that is not a selected client ser
   const r = build(join(fixtures, 'astro-site-bad-service'))
   expect(r.status).not.toBe(0)
   expect(`${r.stdout}${r.stderr}`).toContain('not a selected client service')
+}, 120_000)
+test('a language without a pack fails the site build and names the missing strings', () => {
+  const r = build(join(fixtures, 'astro-site-missing-translation'))
+  const output = `${r.stdout}${r.stderr}`
+  expect(r.status).not.toBe(0)
+  expect(output).toMatch(/missing translations/)
+  expect(output).toMatch(/pl: youtube title/)
 }, 120_000)

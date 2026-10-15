@@ -1,9 +1,9 @@
 ---
-import { assertValidatedConfig, messages } from 'cloveconsent'
+import { assertValidatedConfig } from 'cloveconsent'
 import type { ConsentConfig, Locale } from 'cloveconsent'
 interface Props { config: ConsentConfig; locale: Locale; class?: string }
 const { config, locale, class: cls } = Astro.props
 assertValidatedConfig(config, 'ConsentReopen')
 const l = config.locales.includes(locale) ? locale : config.defaultLocale
 ---
-<button type="button" data-consent-open class={cls}>{messages[l].reopen}</button>
+<button type="button" data-consent-open class={cls}>{config.messages[l]!.reopen}</button>

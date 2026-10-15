@@ -9,3 +9,5 @@ fixtures/astro-site-bad-service/dist
 fixtures/astro-site-bad-service/.astro
 fixtures/astro-site-unvalidated/dist
 fixtures/astro-site-unvalidated/.astro
+fixtures/astro-site-missing-translation/dist
+fixtures/astro-site-missing-translation/.astro

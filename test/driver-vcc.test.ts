@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { defineConsent } from '../src/config'
 import { buildView } from '../src/view'
 import { buildVccConfig } from '../src/driver-vcc'
@@ -40,4 +40,14 @@ test('cookie autoClear lists declared cookies of optional categories only', () =
   const c: any = buildVccConfig(v, hooks, false)
   expect(c.categories.media.autoClear.cookies).toEqual([{ name: '_ytc' }])
   expect(c.categories.necessary.autoClear).toBeUndefined()
+})
+test('right-to-left languages are passed to the library', () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const c = defineConsent({ locales: ['ar'], defaultLocale: 'ar', revision: 1, services: [theme()], allowFallback: true })
+  const cfg: any = buildVccConfig(buildView(c, 'ar'), hooks, false)
+  expect(cfg.language.rtl).toBe('ar')
+})
+test('left-to-right languages do not set rtl', () => {
+  const cfg: any = buildVccConfig(view, hooks, false)
+  expect(cfg.language.rtl).toBeUndefined()
 })

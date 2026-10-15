@@ -39,6 +39,7 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
     categories,
     language: {
       default: view.locale,
+      ...(view.dir === 'rtl' ? { rtl: view.locale } : {}),
       translations: {
         [view.locale]: {
           consentModal: {

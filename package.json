@@ -17,9 +17,17 @@
       "types": "./dist/catalog.d.ts",
       "import": "./dist/catalog.js"
     },
-    "./messages": {
-      "types": "./dist/messages.d.ts",
-      "import": "./dist/messages.js"
+    "./locales/sk": {
+      "types": "./dist/locales/sk.d.ts",
+      "import": "./dist/locales/sk.js"
+    },
+    "./locales/fr": {
+      "types": "./dist/locales/fr.d.ts",
+      "import": "./dist/locales/fr.js"
+    },
+    "./locales/de": {
+      "types": "./dist/locales/de.d.ts",
+      "import": "./dist/locales/de.js"
     },
     "./astro/ConsentBanner.astro": "./src/astro/ConsentBanner.astro",
     "./astro/ConsentPreferences.astro": "./src/astro/ConsentPreferences.astro",
