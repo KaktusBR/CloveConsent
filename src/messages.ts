@@ -84,3 +84,7 @@ export const unreviewedMessageLocales: Locale[] = ['fr', 'de']
 export function format(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (m, k: string) => (Object.prototype.hasOwnProperty.call(vars, k) ? (vars[k] as string) : m))
 }
+
+/** English is the source language of every banner text. Other languages arrive as packs. */
+export const en: Messages = messages.en
+export const MESSAGE_KEYS = Object.keys(en) as (keyof Messages)[]

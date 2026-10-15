@@ -1,3 +1,4 @@
+import { canonicalLocale } from './i18n/locale'
 import { CATEGORIES, LOCALES, type Locale, type ProcessorEntry, type ServiceEntry } from './schema'
 
 export class ConsentConfigError extends Error {
@@ -8,8 +9,8 @@ export class ConsentConfigError extends Error {
 }
 
 const FORBIDDEN_TEXT = /[<>\u0000-\u001F\u007F]/
-const ID = /^[a-z0-9-]{1,48}$/
-const STORAGE_NAME = /^[A-Za-z0-9_.-]{1,128}$/
+export const ID_PATTERN = /^[a-z0-9-]{1,48}$/
+export const STORAGE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/
 const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/
 
 export function assertText(v: unknown, path: string, opts: { max?: number } = {}): asserts v is string {
@@ -46,7 +47,7 @@ function assertStorage(items: unknown, locales: readonly Locale[], path: string)
   if (!Array.isArray(items)) throw new ConsentConfigError(path, 'must be an array')
   items.forEach((s, i) => {
     const p = `${path}[${i}]`
-    if (typeof s?.name !== 'string' || !STORAGE_NAME.test(s.name)) throw new ConsentConfigError(`${p}.name`, 'invalid storage name')
+    if (typeof s?.name !== 'string' || !STORAGE_NAME_PATTERN.test(s.name)) throw new ConsentConfigError(`${p}.name`, 'invalid storage name')
     if (!['cookie', 'localStorage', 'sessionStorage'].includes(s.type)) throw new ConsentConfigError(`${p}.type`, 'invalid storage type')
     assertLocalised(s.expiry, `${p}.expiry`, locales)
     assertLocalised(s.purpose, `${p}.purpose`, locales)
@@ -54,7 +55,7 @@ function assertStorage(items: unknown, locales: readonly Locale[], path: string)
 }
 
 function assertCommon(e: any, path: string): void {
-  if (typeof e?.id !== 'string' || !ID.test(e.id)) throw new ConsentConfigError(`${path}.id`, 'id must match ^[a-z0-9-]{1,48}$')
+  if (typeof e?.id !== 'string' || !ID_PATTERN.test(e.id)) throw new ConsentConfigError(`${path}.id`, 'id must match ^[a-z0-9-]{1,48}$')
   if (!Number.isInteger(e.catalogRevision) || e.catalogRevision < 1) throw new ConsentConfigError(`${path}.catalogRevision`, 'must be an integer >= 1')
   if (e.lastVerified !== null && !(typeof e.lastVerified === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.lastVerified))) {
     throw new ConsentConfigError(`${path}.lastVerified`, 'must be null or YYYY-MM-DD')
@@ -116,4 +117,10 @@ export function validateProcessor(e: ProcessorEntry, locales: readonly Locale[],
   e.dataCategories.forEach((d, i) => assertLocalised(d, `${path}.dataCategories[${i}]`, locales))
   if (e.dpaUrl !== undefined) assertUrl(e.dpaUrl, `${path}.dpaUrl`)
   if (e.transfers !== undefined) assertLocalised(e.transfers, `${path}.transfers`, locales)
+}
+
+export function assertLocaleTag(v: unknown, path: string): asserts v is string {
+  if (canonicalLocale(v) === null) {
+    throw new ConsentConfigError(path, `${JSON.stringify(v)} is not a valid language tag (examples: en, sk, pt-BR)`)
+  }
 }
