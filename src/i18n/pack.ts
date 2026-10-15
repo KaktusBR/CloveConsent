@@ -38,14 +38,14 @@ export function validatePack(p: unknown, path: string): asserts p is LocalePack 
   }
   if (typeof p.reviewed !== 'boolean') throw new ConsentConfigError(`${path}.reviewed`, 'must be true or false')
 
-  const messages = p.messages ?? {}
+  const messages = p.messages === undefined ? {} : p.messages
   if (!isObject(messages)) throw new ConsentConfigError(`${path}.messages`, 'must be an object')
   for (const key of Object.keys(messages)) {
     if (!(MESSAGE_KEYS as readonly string[]).includes(key)) throw new ConsentConfigError(`${path}.messages.${key}`, 'unknown message key')
     assertText(messages[key], `${path}.messages.${key}`)
   }
 
-  const catalog = p.catalog ?? {}
+  const catalog = p.catalog === undefined ? {} : p.catalog
   if (!isObject(catalog)) throw new ConsentConfigError(`${path}.catalog`, 'must be an object')
   for (const id of Object.keys(catalog)) {
     const cp = `${path}.catalog.${id}`

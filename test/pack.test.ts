@@ -22,6 +22,8 @@ describe('validatePack', () => {
     ['locale not a tag', { ...good(), locale: 'en_US' }],
     ['locale not canonical', { ...good(), locale: 'pt-br' }],
     ['reviewed not boolean', { ...good(), reviewed: 'yes' }],
+    ['messages null', { ...good(), messages: null }],
+    ['catalog null', { ...good(), catalog: null }],
     ['unknown top-level key', { ...good(), extra: 1 }],
     ['unknown message key', { ...good(), messages: { nope: 'x' } }],
     ['html in a message', { ...good(), messages: { acceptAll: '<b>x</b>' } }],
