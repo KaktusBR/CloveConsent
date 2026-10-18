@@ -1,6 +1,89 @@
 ---
 import Admin from '../layouts/Admin.astro'
+import { SAMPLE_ARGS, listCatalog } from '../lib/catalog'
+import { loadPacks } from '../lib/languages'
+import { buildConfig, parseState, toQuery } from '../lib/playground'
+
+export const prerender = false
+
+const catalog = listCatalog()
+const packs = loadPacks().flatMap((p) => (p.pack ? [p.pack] : []))
+const state = parseState(Astro.url.searchParams)
+const { error, warnings } = buildConfig(state, catalog, packs)
+
+const known = ['en', ...packs.map((p) => p.locale), 'ar']
+const label = (l: string) => (l === 'ar' ? 'ar (right-to-left test - needs allowFallback, shows English)' : l)
+// unknown locales from the URL stay listed so a bad value is visible rather than silently dropped
+const extra = state.locales.filter((l) => !known.includes(l))
+const localeOptions = [...known, ...extra]
+const services = catalog.filter((c) => c.entry && c.entry.kind !== 'processor')
+const processors = catalog.filter((c) => c.entry?.kind === 'processor')
+const argsValue = (name: string) => state.args[name] ?? (name in SAMPLE_ARGS ? JSON.stringify(SAMPLE_ARGS[name]) : '')
 ---
 <Admin title="Playground" tab="playground">
   <h1>Playground</h1>
+  <p class="hint">Pick a configuration; the real defineConsent and the real components render it below. Nothing is saved.</p>
+  <form method="get" id="pg" class="pg">
+    <input type="hidden" name="s" value="1" />
+    <fieldset>
+      <legend>Languages</legend>
+      {localeOptions.map((l) => (
+        <label><input type="checkbox" name="locales" value={l} checked={state.locales.includes(l)} /> {label(l)}</label>
+      ))}
+      <label>Default language
+        <select name="defaultLocale">
+          {state.locales.map((l) => <option value={l} selected={l === state.defaultLocale}>{l}</option>)}
+        </select>
+      </label>
+      <label>Preview language
+        <select name="previewLocale">
+          {state.locales.map((l) => <option value={l} selected={l === state.previewLocale}>{l}</option>)}
+        </select>
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Services</legend>
+      {services.map((c) => (
+        <div class="row">
+          <label><input type="checkbox" name="services" value={c.name} checked={state.services.includes(c.name)} /> {c.name} <code>{c.entry!.id}</code>{c.sample && <span class="badge sample">sample args</span>}</label>
+          <input type="text" name={'args.' + c.name} value={argsValue(c.name)} placeholder="options (JSON, optional)" aria-label={'options for ' + c.name} />
+        </div>
+      ))}
+    </fieldset>
+    <fieldset>
+      <legend>Processors</legend>
+      {processors.map((c) => (
+        <div class="row">
+          <label><input type="checkbox" name="processors" value={c.name} checked={state.processors.includes(c.name)} /> {c.name} <code>{c.entry!.id}</code>{c.sample && <span class="badge sample">sample args</span>}</label>
+          {c.sample && <input type="text" name={'args.' + c.name} value={argsValue(c.name)} placeholder="options (JSON)" aria-label={'options for ' + c.name} />}
+        </div>
+      ))}
+    </fieldset>
+    <fieldset>
+      <legend>Settings</legend>
+      <label>Revision <input type="text" name="revision" value={state.revision} size="4" /></label>
+      <label>Privacy URL <input type="text" name="privacyHref" value={state.privacyHref} placeholder="https://..." /></label>
+      <label><input type="checkbox" name="darkMode" value="1" checked={state.darkMode} /> darkMode</label>
+      <label><input type="checkbox" name="allowFallback" value="1" checked={state.allowFallback} /> allowFallback</label>
+      <label><input type="radio" name="theme" value="light" checked={state.theme === 'light'} /> light page</label>
+      <label><input type="radio" name="theme" value="dark" checked={state.theme === 'dark'} /> dark page</label>
+    </fieldset>
+    <noscript><button type="submit">Update preview</button></noscript>
+  </form>
+  {error && <pre class="err">{error}</pre>}
+  {warnings.length > 0 && <pre class="warn">{warnings.join('\n')}</pre>}
+  <iframe src={'/preview?' + toQuery(state)} title="Consent preview" class="frame"></iframe>
+  <script>
+    const form = document.getElementById('pg') as HTMLFormElement
+    form.addEventListener('change', () => form.requestSubmit())
+  </script>
 </Admin>
+<style is:global>
+  .pg { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 0.75rem; }
+  .pg fieldset { border: 1px solid #ddd; border-radius: 4px; display: flex; flex-direction: column; gap: 0.35rem; }
+  .pg .row { display: flex; flex-direction: column; gap: 0.15rem; }
+  .pg .row input[type='text'] { font: 0.8rem monospace; width: 100%; box-sizing: border-box; }
+  .err { color: #b91c1c; white-space: pre-wrap; }
+  .warn { color: #b45309; white-space: pre-wrap; }
+  .frame { width: 100%; height: 700px; border: 1px solid #ddd; margin-top: 0.75rem; }
+</style>

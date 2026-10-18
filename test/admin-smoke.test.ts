@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
+import { DEFAULT_STATE, toQuery } from '../admin/src/lib/playground'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 const root = join(__dirname, '..')
@@ -65,4 +66,24 @@ test('/languages shows the text grid with packs and review state', async () => {
 
 test('/ shows where each entry is translated', async () => {
   expect(await get('/')).toContain('Translated in:')
+})
+
+test('/playground has the form, the cloudflareCdn checkbox and the preview iframe', async () => {
+  const html = await get('/playground')
+  for (const s of ['<iframe', 'cloudflareCdn', 'right-to-left test']) expect(html).toContain(s)
+})
+
+test('/preview renders the real banner config and the reset button', async () => {
+  const html = await get('/preview')
+  expect(html).toContain('id="consent-config"')
+  expect(html).toContain('Reset consent')
+})
+
+test('/preview shows a bad config as an error', async () => {
+  const html = await get('/preview?s=1&services=nope&locales=en&defaultLocale=en&previewLocale=en&revision=1')
+  expect(html).toContain('unknown catalog entry: nope')
+})
+
+test('/preview honours the page theme', async () => {
+  expect(await get('/preview?' + toQuery({ ...DEFAULT_STATE, theme: 'dark' }))).toContain('class="dark"')
 })

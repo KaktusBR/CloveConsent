@@ -1,0 +1,48 @@
+---
+import ConsentBanner from '../../../src/astro/ConsentBanner.astro'
+import ConsentPreferences from '../../../src/astro/ConsentPreferences.astro'
+import ProcessorList from '../../../src/astro/ProcessorList.astro'
+import ConsentReopen from '../../../src/astro/ConsentReopen.astro'
+import { listCatalog } from '../lib/catalog'
+import { loadPacks } from '../lib/languages'
+import { buildConfig, parseState } from '../lib/playground'
+
+export const prerender = false
+
+const state = parseState(Astro.url.searchParams)
+const packs = loadPacks().flatMap((p) => (p.pack ? [p.pack] : []))
+const { config, error } = buildConfig(state, listCatalog(), packs)
+---
+{config === null ? (
+  <html lang="en">
+    <head><meta charset="utf-8" /><title>Preview error</title></head>
+    <body><pre style="color:#b91c1c;white-space:pre-wrap;font:14px/1.4 monospace;padding:1rem">{error}</pre></body>
+  </html>
+) : (
+  <html lang={state.previewLocale} class={state.theme === 'dark' ? 'dark' : undefined}>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Preview</title>
+      <style is:global>
+        body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
+        html.dark body { background: #111; color: #eee; }
+        #reset-consent { position: fixed; top: 0.5rem; right: 0.5rem; z-index: 1; }
+      </style>
+    </head>
+    <body>
+      <p>Preview page. <ConsentReopen config={config} locale={state.previewLocale} /></p>
+      <ConsentPreferences config={config} locale={state.previewLocale} />
+      <ProcessorList config={config} locale={state.previewLocale} />
+      <ConsentBanner config={config} locale={state.previewLocale} />
+      <button type="button" id="reset-consent" data-cookie={config.cookieName}>Reset consent</button>
+      <script>
+        const btn = document.getElementById('reset-consent')
+        btn?.addEventListener('click', () => {
+          document.cookie = `${btn.dataset.cookie}=; Max-Age=0; path=/`
+          location.reload()
+        })
+      </script>
+    </body>
+  </html>
+)}
