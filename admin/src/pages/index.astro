@@ -1,8 +1,19 @@
 ---
 import Admin from '../layouts/Admin.astro'
 import { listCatalog, type Entry } from '../lib/catalog'
+import { loadPacks, textGrid } from '../lib/languages'
 
 const items = listCatalog()
+const packs = loadPacks().flatMap((p) => (p.pack ? [p.pack] : []))
+const grid = textGrid(items.flatMap((i) => (i.entry ? [i.entry] : [])), packs)
+// per locale: all rows of the entry translated -> full, some -> partial
+const translatedIn = (id: string) => {
+  const rows = grid.filter((r) => r.group === id)
+  return packs.flatMap((p) => {
+    const n = rows.filter((r) => r.translations[p.locale] !== null).length
+    return n === 0 ? [] : [{ locale: p.locale, partial: n < rows.length }]
+  })
+}
 // Entry kinds differ; read optional fields without narrowing each time
 const f = (e: Entry) => e as Partial<Record<string, any>>
 const gatingText = (e: Entry) => {
@@ -45,6 +56,7 @@ const gatingText = (e: Entry) => {
                 <td colspan="10">
                   <details>
                     <summary>Full entry: {e.id}</summary>
+                    <p><strong>Translated in:</strong> {translatedIn(e.id).map((t, i) => <>{i > 0 && ', '}{t.locale}{t.partial && ' (partial)'}</>)}{translatedIn(e.id).length === 0 && 'none'}</p>
                     {f(e).notes && <div class="notes"><strong>Notes</strong> {f(e).notes}</div>}
                     {f(e).messages && (
                       <>
@@ -116,15 +128,8 @@ const gatingText = (e: Entry) => {
 </Admin>
 
 <style is:global>
-  .hint { color: #666; }
-  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
-  th, td { text-align: left; vertical-align: top; padding: 0.35rem 0.5rem; border-bottom: 1px solid #e5e5e5; }
-  th { background: #f6f6f6; }
   tr.detail td { border-bottom: 1px solid #ccc; padding-top: 0; }
   details > summary { cursor: pointer; color: #555; }
-  h3 { font-size: 0.95rem; margin: 0.75rem 0 0.25rem; }
-  .badge { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
-  .badge.sample { background: #e0ecff; color: #1d4ed8; }
   .badge.unverified { background: #fff1cc; color: #8a5a00; }
   td.error { background: #fde2e2; color: #a40000; font-weight: 600; }
   .notes { background: #fff8e1; border-left: 4px solid #f0b400; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }

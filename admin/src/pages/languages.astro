@@ -1,6 +1,90 @@
 ---
 import Admin from '../layouts/Admin.astro'
+import { listCatalog } from '../lib/catalog'
+import { loadPacks, orphanTranslations, textGrid } from '../lib/languages'
+
+const items = listCatalog()
+const entries = items.flatMap((i) => (i.entry ? [i.entry] : []))
+const infos = loadPacks()
+const packs = infos.flatMap((p) => (p.pack ? [p.pack] : []))
+const rows = textGrid(entries, packs)
+const orphans = orphanTranslations(entries, packs)
+const sampleIds = new Set(items.filter((i) => i.sample && i.entry).map((i) => i.entry!.id))
+
+// consecutive rows share a group; remember which groups have a gap so "only gaps" can hide the rest
+const hasGap = (r: (typeof rows)[number]) => Object.values(r.translations).some((v) => v === null)
+const groups: { name: string; rows: typeof rows; gap: boolean }[] = []
+for (const r of rows) {
+  const last = groups[groups.length - 1]
+  if (last && last.name === r.group) last.rows.push(r)
+  else groups.push({ name: r.group, rows: [r], gap: false })
+}
+for (const g of groups) g.gap = g.rows.some(hasGap)
+const cols = infos.length + 2
 ---
 <Admin title="Languages" tab="languages">
   <h1>Languages</h1>
+  <p class="hint">English source texts against every pack in <code>src/locales</code>. Read-only.</p>
+  <label class="gaps"><input type="checkbox" id="gaps" /> Show only gaps</label>
+  <table class="grid" id="grid">
+    <thead>
+      <tr>
+        <th>key</th>
+        <th>en (source)</th>
+        {infos.map((i) => (
+          i.pack ? (
+            <th>
+              {i.pack.locale}
+              <span class:list={['badge', i.pack.reviewed ? 'reviewed' : 'unreviewed']}>{i.pack.reviewed ? 'reviewed' : 'unreviewed'}</span>
+            </th>
+          ) : (
+            <th class="error"><code>{i.file}</code>: {i.error}</th>
+          )
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {groups.map((g) => (
+        <>
+          <tr class:list={['group', { gap: g.gap }]}>
+            <th colspan={cols}>{g.name}{sampleIds.has(g.name) && <span class="badge sample">sample args</span>}</th>
+          </tr>
+          {g.rows.map((r) => (
+            <tr class:list={['row', { gap: hasGap(r) }]}>
+              <td><code>{r.key}</code></td>
+              <td>{r.en}</td>
+              {infos.map((i) => {
+                const v = i.pack ? r.translations[i.pack.locale] : undefined
+                return v === undefined ? <td class="empty"></td> : v === null ? <td class="missing">missing</td> : <td>{v}</td>
+              })}
+            </tr>
+          ))}
+        </>
+      ))}
+    </tbody>
+  </table>
+  {orphans.length > 0 && (
+    <>
+      <h2>Orphan translations</h2>
+      <p class="hint">Pack entries whose id matches no catalog entry.</p>
+      <ul>{orphans.map((o) => <li><code>{o.locale}</code>: {o.id}</li>)}</ul>
+    </>
+  )}
 </Admin>
+
+<script is:inline>
+  document.getElementById('gaps').addEventListener('change', (e) => {
+    document.getElementById('grid').classList.toggle('gaps-only', e.target.checked)
+  })
+</script>
+
+<style>
+  .gaps { display: inline-block; margin: 0.5rem 0; }
+  tr.group th { background: #ececec; font-size: 0.9rem; }
+  td.missing { background: #fde2e2; color: #a40000; }
+  th.error { background: #fde2e2; color: #a40000; font-weight: 600; }
+  .badge.reviewed { background: #dff5e1; color: #1b6e2c; }
+  .badge.unreviewed { background: #fff1cc; color: #8a5a00; }
+  .gaps-only tr.group:not(.gap), .gaps-only tr.row:not(.gap) { display: none; }
+  .gaps-only tr.row.gap td:not(.missing) { opacity: 0.6; }
+</style>

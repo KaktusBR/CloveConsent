@@ -57,3 +57,12 @@ test('/ lists the catalog entries, sample args and unverified notes', async () =
   const html = await get('/')
   for (const s of ['cloudflare-turnstile', 'cloudflare-cdn', 'Example Host (sample)', 'UNVERIFIED']) expect(html).toContain(s)
 })
+
+test('/languages shows the text grid with packs and review state', async () => {
+  const html = await get('/languages')
+  for (const s of ['bannerTitle', 'Používame cookies', 'unreviewed']) expect(html).toContain(s)
+})
+
+test('/ shows where each entry is translated', async () => {
+  expect(await get('/')).toContain('Translated in:')
+})
