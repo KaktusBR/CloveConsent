@@ -1,0 +1,38 @@
+---
+interface Props { title: string; tab: 'catalog' | 'languages' | 'playground' }
+const { title, tab } = Astro.props
+const tabs = [
+  { id: 'catalog', label: 'Catalog', href: '/' },
+  { id: 'languages', label: 'Languages', href: '/languages' },
+  { id: 'playground', label: 'Playground', href: '/playground' },
+] as const
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} - CloveConsent admin</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #1a1a1a; background: #fff; }
+      header { border-bottom: 1px solid #ddd; padding: 0.75rem 1.5rem; display: flex; gap: 1.5rem; align-items: center; }
+      header strong { font-size: 1.1rem; }
+      nav { display: flex; gap: 0.5rem; }
+      nav a { padding: 0.35rem 0.75rem; border-radius: 4px; color: #1a1a1a; text-decoration: none; }
+      nav a:hover { background: #f0f0f0; }
+      nav a[aria-current='page'] { background: #1a1a1a; color: #fff; }
+      main { padding: 1.5rem; max-width: 72rem; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>CloveConsent admin</strong>
+      <nav aria-label="Sections">
+        {tabs.map((t) => (
+          <a href={t.href} aria-current={t.id === tab ? 'page' : undefined}>{t.label}</a>
+        ))}
+      </nav>
+    </header>
+    <main><slot /></main>
+  </body>
+</html>

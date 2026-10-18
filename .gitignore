@@ -11,3 +11,5 @@ fixtures/astro-site-unvalidated/dist
 fixtures/astro-site-unvalidated/.astro
 fixtures/astro-site-missing-translation/dist
 fixtures/astro-site-missing-translation/.astro
+admin/.astro
+admin/dist

@@ -12,4 +12,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:astro
+      - run: npm run test:admin
       - run: npm audit --omit=dev --audit-level=high

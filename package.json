@@ -45,8 +45,10 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --exclude test/astro-smoke.test.ts",
+    "test": "vitest run --exclude test/astro-smoke.test.ts --exclude test/admin-smoke.test.ts",
     "test:astro": "npm run build && vitest run test/astro-smoke.test.ts",
+    "test:admin": "vitest run test/admin-smoke.test.ts",
+    "admin": "astro dev --root admin",
     "build": "tsup"
   },
   "license": "MIT",
