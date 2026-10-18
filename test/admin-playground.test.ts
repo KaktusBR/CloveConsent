@@ -51,6 +51,12 @@ test.each<[string, Partial<PlaygroundState>, string]>([
   expect(r.error).toContain(message)
 })
 
+test('no language ticked asks for at least one', () => {
+  const r = build({ locales: [] })
+  expect(r.config).toBeNull()
+  expect(r.error).toBe('enable at least one language')
+})
+
 test('missing pack with allowFallback warns, without it fails', () => {
   const ar = { locales: ['en', 'ar'], previewLocale: 'ar' }
   const ok = build({ ...ar, allowFallback: true })

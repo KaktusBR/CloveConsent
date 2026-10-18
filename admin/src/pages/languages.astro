@@ -70,13 +70,13 @@ const cols = infos.length + 2
       <ul>{orphans.map((o) => <li><code>{o.locale}</code>: {o.id}</li>)}</ul>
     </>
   )}
+  <script is:inline>
+    const gaps = document.getElementById('gaps')
+    const toggle = () => document.getElementById('grid').classList.toggle('gaps-only', gaps.checked)
+    gaps.addEventListener('change', toggle)
+    toggle() // browsers may restore a ticked box on reload without firing change
+  </script>
 </Admin>
-
-<script is:inline>
-  document.getElementById('gaps').addEventListener('change', (e) => {
-    document.getElementById('grid').classList.toggle('gaps-only', e.target.checked)
-  })
-</script>
 
 <style>
   .gaps { display: inline-block; margin: 0.5rem 0; }

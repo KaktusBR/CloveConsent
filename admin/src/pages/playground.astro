@@ -16,6 +16,11 @@ const label = (l: string) => (l === 'ar' ? 'ar (right-to-left test - needs allow
 // unknown locales from the URL stay listed so a bad value is visible rather than silently dropped
 const extra = state.locales.filter((l) => !known.includes(l))
 const localeOptions = [...known, ...extra]
+// a saved choice that is no longer enabled stays listed (and selected) so the select shows the value actually in use
+const selectOptions = (saved: string) => [
+  ...state.locales.map((l) => ({ value: l, text: l })),
+  ...(state.locales.includes(saved) ? [] : [{ value: saved, text: saved + ' (not enabled)' }]),
+]
 const services = catalog.filter((c) => c.entry && c.entry.kind !== 'processor')
 const processors = catalog.filter((c) => c.entry?.kind === 'processor')
 const argsValue = (name: string) => state.args[name] ?? (name in SAMPLE_ARGS ? JSON.stringify(SAMPLE_ARGS[name]) : '')
@@ -32,12 +37,12 @@ const argsValue = (name: string) => state.args[name] ?? (name in SAMPLE_ARGS ? J
       ))}
       <label>Default language
         <select name="defaultLocale">
-          {state.locales.map((l) => <option value={l} selected={l === state.defaultLocale}>{l}</option>)}
+          {selectOptions(state.defaultLocale).map((o) => <option value={o.value} selected={o.value === state.defaultLocale}>{o.text}</option>)}
         </select>
       </label>
       <label>Preview language
         <select name="previewLocale">
-          {state.locales.map((l) => <option value={l} selected={l === state.previewLocale}>{l}</option>)}
+          {selectOptions(state.previewLocale).map((o) => <option value={o.value} selected={o.value === state.previewLocale}>{o.text}</option>)}
         </select>
       </label>
     </fieldset>

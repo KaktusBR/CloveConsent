@@ -66,6 +66,7 @@ export function buildConfig(s: PlaygroundState, catalog: CatalogItem[], packs: L
   const realWarn = console.warn
   console.warn = (...a: unknown[]) => { warnings.push(a.map(String).join(' ')) }
   try {
+    if (s.locales.length === 0) return fail('enable at least one language')
     if (!/^\d+$/.test(s.revision.trim())) return fail('revision must be a whole number')
     if (!s.locales.includes(s.previewLocale)) return fail('preview language must be one of the enabled languages')
     const make = (name: string, kind: 'service' | 'processor') => {

@@ -61,7 +61,7 @@ test('/ lists the catalog entries, sample args and unverified notes', async () =
 
 test('/languages shows the text grid with packs and review state', async () => {
   const html = await get('/languages')
-  for (const s of ['bannerTitle', 'Používame cookies', 'unreviewed']) expect(html).toContain(s)
+  for (const s of ['bannerTitle', 'Používame cookies', '>unreviewed<']) expect(html).toContain(s)
 })
 
 test('/ shows where each entry is translated', async () => {
