@@ -52,3 +52,8 @@ test.each([
   for (const label of ['Catalog', 'Languages', 'Playground']) expect(html).toContain(label)
   expect(html).toMatch(new RegExp(`aria-current="page"[^>]*>${active}<`))
 })
+
+test('/ lists the catalog entries, sample args and unverified notes', async () => {
+  const html = await get('/')
+  for (const s of ['cloudflare-turnstile', 'cloudflare-cdn', 'Example Host (sample)', 'UNVERIFIED']) expect(html).toContain(s)
+})

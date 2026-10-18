@@ -1,6 +1,132 @@
 ---
 import Admin from '../layouts/Admin.astro'
+import { listCatalog, type Entry } from '../lib/catalog'
+
+const items = listCatalog()
+// Entry kinds differ; read optional fields without narrowing each time
+const f = (e: Entry) => e as Partial<Record<string, any>>
+const gatingText = (e: Entry) => {
+  const g = f(e).gating
+  return g ? g.type + (g.src ? ` (${g.src})` : '') + (g.sandbox ? ` [sandbox: ${g.sandbox}]` : '') : '—'
+}
 ---
 <Admin title="Catalog" tab="catalog">
   <h1>Catalog</h1>
+  <p class="hint">{items.length} entries from <code>src/catalog</code>, built at request time. Read-only.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th><th>id</th><th>kind</th><th>category</th><th>provider</th><th>storage</th>
+        <th>gating</th><th>origins</th><th>lastVerified</th><th>revision</th>
+      </tr>
+    </thead>
+    {items.map((item) => {
+      const e = item.entry
+      return (
+        <tbody>
+          {e ? (
+            <>
+              <tr>
+                <td>
+                  <code>{item.name}</code>
+                  {item.sample && <span class="badge sample">sample args</span>}
+                </td>
+                <td>{e.id}</td>
+                <td>{e.kind}</td>
+                <td>{f(e).category ?? '—'}</td>
+                <td>{f(e).provider?.name ?? '—'}</td>
+                <td>{f(e).storage ? f(e).storage.length : '—'}</td>
+                <td>{gatingText(e)}</td>
+                <td>{f(e).origins ? f(e).origins.join(', ') || '—' : '—'}</td>
+                <td>{e.lastVerified ?? <span class="badge unverified">unverified</span>}</td>
+                <td>{e.catalogRevision}</td>
+              </tr>
+              <tr class="detail">
+                <td colspan="10">
+                  <details>
+                    <summary>Full entry: {e.id}</summary>
+                    {f(e).notes && <div class="notes"><strong>Notes</strong> {f(e).notes}</div>}
+                    {f(e).messages && (
+                      <>
+                        <h3>Banner messages (en)</h3>
+                        <p><strong>{f(e).messages.title.en}</strong>: {f(e).messages.description.en}</p>
+                      </>
+                    )}
+                    {f(e).purpose && <p><strong>Purpose:</strong> {f(e).purpose.en}</p>}
+                    {f(e).location && <p><strong>Location:</strong> {f(e).location.en}</p>}
+                    {f(e).transfers && <p><strong>Transfers:</strong> {f(e).transfers.en}</p>}
+                    {f(e).dataCategories && (
+                      <>
+                        <h3>Data categories</h3>
+                        <ul>{f(e).dataCategories.map((d: { en: string }) => <li>{d.en}</li>)}</ul>
+                      </>
+                    )}
+                    {f(e).provider && (
+                      <p><strong>Privacy URL:</strong> {f(e).provider.privacyUrl}</p>
+                    )}
+                    {f(e).dpaUrl && <p><strong>DPA:</strong> {f(e).dpaUrl}</p>}
+                    {f(e).gating && (
+                      <p>
+                        <strong>Gating:</strong> {f(e).gating.type}
+                        {f(e).gating.src && <> / src <code>{f(e).gating.src}</code></>}
+                        {f(e).gating.sandbox && <> / sandbox <code>{f(e).gating.sandbox}</code></>}
+                      </p>
+                    )}
+                    {f(e).csp && (
+                      <>
+                        <h3>CSP extras</h3>
+                        <ul>
+                          {Object.entries(f(e).csp as Record<string, string[]>).map(([k, v]) => (
+                            <li><code>{k}</code>: {v.join(', ')}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {f(e).storage && (
+                      <>
+                        <h3>Storage</h3>
+                        {f(e).storage.length === 0 ? (
+                          <p>None listed.</p>
+                        ) : (
+                          <table class="inner">
+                            <thead><tr><th>name</th><th>type</th><th>expiry (en)</th><th>purpose (en)</th></tr></thead>
+                            <tbody>
+                              {f(e).storage.map((s: any) => (
+                                <tr><td><code>{s.name}</code></td><td>{s.type}</td><td>{s.expiry.en}</td><td>{s.purpose.en}</td></tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </>
+                    )}
+                  </details>
+                </td>
+              </tr>
+            </>
+          ) : (
+            <tr>
+              <td><code>{item.name}</code>{item.sample && <span class="badge sample">sample args</span>}</td>
+              <td colspan="9" class="error">Error: {item.error}</td>
+            </tr>
+          )}
+        </tbody>
+      )
+    })}
+  </table>
 </Admin>
+
+<style is:global>
+  .hint { color: #666; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+  th, td { text-align: left; vertical-align: top; padding: 0.35rem 0.5rem; border-bottom: 1px solid #e5e5e5; }
+  th { background: #f6f6f6; }
+  tr.detail td { border-bottom: 1px solid #ccc; padding-top: 0; }
+  details > summary { cursor: pointer; color: #555; }
+  h3 { font-size: 0.95rem; margin: 0.75rem 0 0.25rem; }
+  .badge { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
+  .badge.sample { background: #e0ecff; color: #1d4ed8; }
+  .badge.unverified { background: #fff1cc; color: #8a5a00; }
+  td.error { background: #fde2e2; color: #a40000; font-weight: 600; }
+  .notes { background: #fff8e1; border-left: 4px solid #f0b400; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+  table.inner { margin: 0.25rem 0 0.5rem; }
+</style>
