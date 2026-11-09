@@ -3,6 +3,7 @@ import { assertValidatedConfig, defineConsent, fromPublicJson, isValidatedConfig
 import { ConsentConfigError } from '../src/validate'
 import { theme, youtube } from '../src/catalog'
 import sk from '../src/locales/sk'
+import { DEFAULT_UI } from '../src/ui-settings'
 
 // review status is not what these tests are about: a reviewed copy keeps the dev warnings to the ones under test
 const skPack = { ...sk, reviewed: true }
@@ -95,6 +96,29 @@ describe('public json', () => {
     const tampered = JSON.parse(toPublicJson(c, 'sk'))
     tampered.services[0].messages.title.sk = '<script>'
     expect(() => fromPublicJson(JSON.stringify(tampered))).toThrow(ConsentConfigError)
+  })
+})
+
+describe('ui settings', () => {
+  test('defineConsent resolves ui to the defaults', () => {
+    const c = defineConsent(input() as any)
+    expect(c.ui).toEqual(DEFAULT_UI)
+    expect(Object.isFrozen(c.ui)).toBe(true)
+    expect(Object.isFrozen(c.ui.banner)).toBe(true)
+  })
+  test('a custom ui survives toPublicJson -> fromPublicJson', () => {
+    const c = defineConsent({ ...(input() as any), ui: { banner: { layout: 'box', position: 'bottom left' }, theme: { tokens: { primary: '#193637' } } } })
+    const back = fromPublicJson(toPublicJson(c, 'sk'))
+    expect(back.ui.banner.layout).toBe('box')
+    expect(back.ui.theme.tokens.primary).toBe('#193637')
+    expect(back.ui).toEqual(c.ui)
+  })
+  test('a bad ui is rejected with a ui. path', () => {
+    expect(() => defineConsent({ ...(input() as any), ui: { banner: { layout: 'popup' } } })).toThrow('[consent] ui.banner.layout:')
+    const tampered = JSON.parse(toPublicJson(defineConsent(input() as any), 'sk'))
+    tampered.ui.banner.colour = 'x'
+    expect(() => fromPublicJson(JSON.stringify(tampered))).toThrow(ConsentConfigError)
+    expect(() => fromPublicJson(JSON.stringify(tampered))).toThrow('[consent] ui.banner.colour:')
   })
 })
 

@@ -1,5 +1,6 @@
 import type { LocalePack } from './i18n/pack'
 import type { Messages } from './messages'
+import type { UiSettings, UiSettingsInput } from './ui-settings'
 
 /** Any BCP 47 language tag in canonical form, for example `en`, `sk`, `pt-BR`. */
 export type Locale = string
@@ -90,6 +91,8 @@ export interface ConsentConfigInput {
   messages?: Record<Locale, Partial<Messages>>
   /** Show the fallback language for missing translations (with a dev warning) instead of failing the build. Default false. */
   allowFallback?: boolean
+  /** Banner, dialog, manager and theme settings. Every key is optional; see DEFAULT_UI. */
+  ui?: UiSettingsInput
 }
 export interface ConsentConfig {
   readonly locales: readonly Locale[]
@@ -105,4 +108,6 @@ export interface ConsentConfig {
   readonly messages: Readonly<Record<Locale, Messages>>
   /** Enabled languages whose pack is flagged `reviewed: false`. */
   readonly unreviewed: readonly Locale[]
+  /** Resolved, validated ui settings. */
+  readonly ui: UiSettings
 }

@@ -5,6 +5,7 @@ import { createResolver, mapEntryText, slotLabel, type LocalisedText, type Slot 
 import type { ConsentConfig, ConsentConfigInput, Localised } from './schema'
 import { ConsentConfigError, assertText, assertUrl, validateProcessor, validateService } from './validate'
 import { isDev } from './dev'
+import { resolveUi } from './ui-settings'
 
 const COOKIE_NAME = /^[A-Za-z0-9_-]{1,64}$/
 const MAX_JSON = 200_000
@@ -126,7 +127,7 @@ function define(input: ConsentConfigInput, warn: boolean): ConsentConfig {
     locales, defaultLocale, revision: input.revision,
     cookieName, darkMode: input.darkMode ?? true, privacyHref: input.privacyHref ?? null,
     services, processors: resolvedProcessors, hooks: { ...input.hooks },
-    messages, unreviewed,
+    messages, unreviewed, ui: resolveUi(input.ui, 'ui'),
   })
   validated.add(config)
   return config

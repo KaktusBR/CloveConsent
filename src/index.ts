@@ -1,6 +1,7 @@
 export * from './schema'
 export { defineConsent, toPublicJson, fromPublicJson, isValidatedConfig, assertValidatedConfig } from './config'
 export { ConsentConfigError } from './validate'
+export { DEFAULT_UI, THEME_TOKENS, type UiSettings, type UiSettingsInput, type ThemeToken } from './ui-settings'
 export { format, en as englishMessages, MESSAGE_KEYS, type Messages } from './messages'
 export { type LocalePack, type EntryTranslation } from './i18n/pack'
 export { canonicalLocale } from './i18n/locale'
