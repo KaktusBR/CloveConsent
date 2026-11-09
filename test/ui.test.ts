@@ -9,7 +9,7 @@ import sk from '../src/locales/sk'
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const driver = (raw: string | null = null) => {
   let r = raw; let hooks: any
-  return { init: (_v: any, h: any) => { hooks = h }, readRaw: () => r, writeData() {}, showBanner() {}, open: vi.fn(), acceptAll() {}, rejectAll() {}, acceptCategories: vi.fn(),
+  return { init: (_v: any, h: any) => { hooks = h }, readRaw: () => r, writeData() {}, showBanner() {}, open: vi.fn(), acceptAll() {}, rejectAll() {}, acceptCategories: vi.fn(), acceptServices: vi.fn(),
     set: (x: string | null) => { r = x }, hooks: () => hooks }
 }
 const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [youtube()] })
@@ -32,18 +32,18 @@ test('embed stays a placeholder until allowed, then becomes an iframe', () => {
   document.querySelector<HTMLElement>('[data-consent-action="once"]')!.click()
   expect(document.querySelector('iframe')!.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
 })
-test('accept button accepts the service category, keeping existing ones', () => {
+test('accept button accepts that one service, keeping the existing ones', () => {
   const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary', 'functional'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   document.querySelector<HTMLElement>('[data-consent-action="accept"]')!.click()
-  expect(d.acceptCategories).toHaveBeenCalledWith(['necessary', 'functional', 'media'])
+  expect(d.acceptServices).toHaveBeenCalledWith({ media: ['youtube'] })
 })
 test('withdrawing consent restores the placeholder', () => {
   const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   expect(document.querySelector('iframe')).not.toBeNull()
   d.set(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
-  d.hooks().onChange(['media'])
+  d.hooks().onChange(['media'], [])
   expect(document.querySelector('iframe')).toBeNull()
   expect(document.querySelector('[data-consent-placeholder]')).not.toBeNull()
 })
@@ -96,7 +96,7 @@ test('load once then reject removes the iframe and restores the placeholder', ()
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   document.querySelector<HTMLElement>('[data-consent-action="once"]')!.click()
   expect(document.querySelector('iframe')).not.toBeNull()
-  d.hooks().onChange(['media'])
+  d.hooks().onChange(['media'], [])
   expect(c.isAllowed('youtube')).toBe(false)
   expect(document.querySelector('iframe')).toBeNull()
   expect(document.querySelector('[data-consent-placeholder]')).not.toBeNull()

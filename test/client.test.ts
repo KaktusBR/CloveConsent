@@ -14,7 +14,7 @@ function fakeDriver(initial: string | null = null) {
     init: vi.fn((_v: unknown, h: DriverHooks) => { hooks = h }),
     readRaw: (): string | null => raw,
     writeData: vi.fn((x: unknown) => { d.written.push(x) }),
-    showBanner: vi.fn(), open: vi.fn(), acceptAll: vi.fn(), rejectAll: vi.fn(), acceptCategories: vi.fn(),
+    showBanner: vi.fn(), open: vi.fn(), acceptAll: vi.fn(), rejectAll: vi.fn(), acceptCategories: vi.fn(), acceptServices: vi.fn(),
     set(r: string | null) { raw = r }, get hooks() { return hooks },
   }
   return d
@@ -102,7 +102,7 @@ describe('re-consent gates optional services until a decision (spec section 6)',
     expect(c.isAllowed('youtube')).toBe(true)
     expect(fn).toHaveBeenCalledTimes(1)
     expect(dec).toHaveBeenCalledTimes(1)
-    expect(dec).toHaveBeenCalledWith({ kind: 'reconfirm', changed: [] })
+    expect(dec).toHaveBeenCalledWith({ kind: 'reconfirm', changed: [], changedServices: [], locale: 'sk' })
   })
   test('unchanged revisions allow per category', () => {
     const c = createConsent(cfg(), { driver: drv(fakeDriver(cookie(all))) }); c.init()
@@ -150,7 +150,7 @@ describe('once supersession and idempotent init', () => {
     const d = fakeDriver(cookie(['necessary'])); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
     c.allowOnce('youtube'); localStorage.setItem('theme', 'dark')
     expect(c.isAllowed('youtube')).toBe(true)
-    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'])
+    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'], [])
     expect(c.isAllowed('youtube')).toBe(false)
     expect(localStorage.getItem('theme')).toBeNull()
   })
@@ -192,7 +192,7 @@ describe('events and persistence', () => {
     const d = fakeDriver(cookie(['necessary', 'functional'])); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
     localStorage.setItem('theme', 'dark')
     const fn = vi.fn(); c.on('decision', (i) => { if (i.kind === 'change') fn(i.changed) })
-    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'])
+    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'], [])
     expect(fn).toHaveBeenCalledWith(['functional'])
     expect(localStorage.getItem('theme')).toBeNull()
   })
@@ -232,5 +232,119 @@ describe('public handle', () => {
     const c = createConsent(cfg(), { driver: drv(fakeDriver()) }); c.init()
     expect(Object.keys((window as any).CookieConsent).sort()).toEqual(['acceptAll', 'getState', 'rejectAll'])
     expect(Object.isFrozen((window as any).CookieConsent)).toBe(true)
+  })
+})
+
+describe('per-service API', () => {
+  const both = ['necessary', 'functional', 'media']
+  const conf = () => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), youtube(), openStreetMap()] })
+  const rev = { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1, openstreetmap: 1 } }
+  const withServices = (services: object | undefined, categories = both) =>
+    enc({ consentId: 'abc-12345678', categories, lastConsentTimestamp: '2026-10-14T10:00:00.000Z', data: rev, ...(services ? { services } : {}) })
+
+  test('setServices selects exactly these services and empties the other optional categories', () => {
+    const d = fakeDriver(); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.setServices(['openstreetmap', 'youtube'])
+    expect(d.acceptServices).toHaveBeenCalledTimes(1)
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['openstreetmap', 'youtube'], functional: [] })
+  })
+  test('setServices throws for an unknown id and ignores necessary services', () => {
+    const d = fakeDriver(); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    expect(() => c.setServices(['nope'])).toThrow('[consent] unknown service nope')
+    expect(d.acceptServices).not.toHaveBeenCalled()
+    c.setServices(['cloudflare-turnstile', 'theme'])
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: [], functional: ['theme'] })
+  })
+  test('setServices([]) accepts no optional service', () => {
+    const d = fakeDriver(); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.setServices([])
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: [], functional: [] })
+  })
+  test('acceptService keeps the services that are already accepted', () => {
+    const d = fakeDriver(withServices({ media: ['openstreetmap'], functional: ['theme'] })); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.acceptService('youtube')
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['openstreetmap', 'youtube'], functional: ['theme'] })
+  })
+  test('acceptService on an old cookie without services keeps every service of the accepted categories', () => {
+    const d = fakeDriver(withServices(undefined, ['necessary', 'functional'])); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.acceptService('youtube')
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['youtube'], functional: ['theme'] })
+  })
+  test('acceptService before any decision selects only that service; unknown id throws', () => {
+    const d = fakeDriver(); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.acceptService('youtube')
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['youtube'], functional: [] })
+    expect(() => c.acceptService('nope')).toThrow('[consent] unknown service nope')
+  })
+})
+
+describe('withdraw', () => {
+  const both = ['necessary', 'functional', 'media']
+  test('withdraw() rejects everything and the decision is a withdraw listing what was allowed before', () => {
+    const d = fakeDriver(cookie(both)); const hook = { onDecision: vi.fn() }
+    const c = createConsent(cfg(hook), { driver: drv(d) }); c.init()
+    const fn = vi.fn(); c.on('decision', fn)
+    c.withdraw()
+    expect(d.rejectAll).toHaveBeenCalledTimes(1)
+    d.set(cookie(['necessary'])); d.hooks.onChange(['functional', 'media'], ['theme', 'youtube'])
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(fn.mock.calls[0]![0]).toMatchObject({ kind: 'withdraw', changed: ['functional', 'media'], locale: 'sk' })
+    expect(fn.mock.calls[0]![0].changedServices.sort()).toEqual(['theme', 'youtube'])
+    expect(hook.onDecision.mock.calls[0]![1].kind).toBe('withdraw')
+  })
+  test('the withdraw flag is one-shot: the next change is a plain change', () => {
+    const d = fakeDriver(cookie(both)); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
+    const fn = vi.fn(); c.on('decision', fn)
+    c.withdraw()
+    d.set(cookie(['necessary'])); d.hooks.onChange(['functional', 'media'], [])
+    d.set(cookie(both)); d.hooks.onChange(['functional'], ['theme'])
+    expect(fn.mock.calls.map((x) => x[0].kind)).toEqual(['withdraw', 'change'])
+  })
+  test('withdraw() with nothing accepted does not leave a flag behind', () => {
+    const d = fakeDriver(cookie(['necessary'])); const c = createConsent(cfg(), { driver: drv(d) }); c.init()
+    const fn = vi.fn(); c.on('decision', fn)
+    c.withdraw()
+    d.set(cookie(['necessary', 'media'])); d.hooks.onChange(['media'], ['youtube'])
+    expect(fn.mock.calls[0]![0].kind).toBe('change')
+  })
+})
+
+describe('turning a service off inside an accepted category', () => {
+  const plausible = {
+    ...youtube(), id: 'plausible', origins: ['plausible.io'], gating: { type: 'script' as const, src: 'https://plausible.io/js/s.js' },
+    storage: [{ name: 'plausible_ignore', type: 'localStorage' as const, expiry: { en: 'x' }, purpose: { en: 'y' } }],
+  }
+  const conf = () => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), youtube(), plausible], allowFallback: true })
+  const rev = { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, youtube: 1, plausible: 1 } }
+  const withMedia = (ids: string[]) =>
+    enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: rev, services: { media: ids } })
+
+  test('the service script is removed and its storage cleared while the category stays accepted', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const d = fakeDriver(withMedia(['youtube', 'plausible'])); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    expect(document.querySelector('script[data-consent-service="plausible"]')).not.toBeNull()
+    localStorage.setItem('plausible_ignore', '1')
+    d.set(withMedia(['youtube'])); d.hooks.onChange([], ['plausible'])
+    expect(document.querySelector('script[data-consent-service="plausible"]')).toBeNull()
+    expect(localStorage.getItem('plausible_ignore')).toBeNull()
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('plausible')).toBe(false)
+  })
+  test('storage that cannot be cleared is reported in leftovers', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const entry = { ...plausible, storage: [{ name: 'stubborn', type: 'cookie' as const, expiry: { en: 'x' }, purpose: { en: 'y' } }] }
+    const conf2 = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), youtube(), entry], allowFallback: true })
+    const d = fakeDriver(withMedia(['youtube', 'plausible'])); const c = createConsent(conf2, { driver: drv(d) }); c.init()
+    const spy = vi.spyOn(document, 'cookie', 'get').mockReturnValue('stubborn=1')
+    d.set(withMedia(['youtube'])); d.hooks.onChange([], ['plausible'])
+    spy.mockRestore()
+    expect(c.leftovers.map((l) => l.name)).toEqual(['stubborn'])
+  })
+  test('a service that stays accepted is not unloaded', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const d = fakeDriver(withMedia(['youtube', 'plausible'])); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    d.set(withMedia(['plausible'])); d.hooks.onChange([], ['youtube'])
+    expect(document.querySelector('script[data-consent-service="plausible"]')).not.toBeNull()
+    expect(c.isAllowed('plausible')).toBe(true)
   })
 })

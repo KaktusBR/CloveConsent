@@ -11,7 +11,7 @@ function fakeDriver(initial: string | null = null) {
   let raw = initial; let hooks!: DriverHooks
   const d = {
     init: vi.fn((_v: unknown, h: DriverHooks) => { hooks = h }),
-    readRaw: () => raw, writeData: vi.fn(), showBanner: vi.fn(), open: vi.fn(), acceptAll: vi.fn(), rejectAll: vi.fn(), acceptCategories: vi.fn(),
+    readRaw: () => raw, writeData: vi.fn(), showBanner: vi.fn(), open: vi.fn(), acceptAll: vi.fn(), rejectAll: vi.fn(), acceptCategories: vi.fn(), acceptServices: vi.fn(),
     set(r: string | null) { raw = r }, get hooks() { return hooks },
   }
   return d
@@ -30,15 +30,15 @@ describe('decision and ready', () => {
   test('a change emits decision(change) with the changed categories', () => {
     const d = fakeDriver(cookie(['necessary', 'functional'])); const c = createConsent(cfg(), { driver: d as never }); c.init()
     const fn = vi.fn(); c.on('decision', fn)
-    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'])
-    expect(fn).toHaveBeenCalledWith({ kind: 'change', changed: ['functional'] })
+    d.set(cookie(['necessary'])); d.hooks.onChange(['functional'], ['theme'])
+    expect(fn).toHaveBeenCalledWith({ kind: 'change', changed: ['functional'], changedServices: ['theme'], locale: 'en' })
   })
   test('re-confirming a stale banner emits exactly one decision(reconfirm) and a ready (Review Focus 5)', () => {
     const d = fakeDriver(cookie(['necessary'], { siteRevision: 1, revisions: { theme: 1 } })); const c = createConsent(cfg(), { driver: d as never }); c.init()
     const dec = vi.fn(); const ready = vi.fn(); c.on('decision', dec); c.on('ready', ready)
     d.hooks.onDecision()
     expect(dec).toHaveBeenCalledTimes(1)
-    expect(dec).toHaveBeenCalledWith({ kind: 'reconfirm', changed: [] })
+    expect(dec).toHaveBeenCalledWith({ kind: 'reconfirm', changed: [], changedServices: [], locale: 'en' })
     expect(ready).toHaveBeenCalledTimes(1)
   })
   test('closing without a re-prompt pending emits nothing', () => {
@@ -55,7 +55,7 @@ describe('decision and ready', () => {
     const hooks = { onReady: vi.fn(), onDecision: vi.fn() }
     const d = fakeDriver(); const c = createConsent(cfg(hooks), { driver: d as never }); c.init()
     d.set(cookie(['necessary', 'functional'])); d.hooks.onFirstConsent(); d.hooks.onConsent()
-    expect(hooks.onDecision).toHaveBeenCalledWith(expect.objectContaining({ consentId: 'abc-12345678' }), { kind: 'first', changed: ['functional'] })
+    expect(hooks.onDecision).toHaveBeenCalledWith(expect.objectContaining({ consentId: 'abc-12345678' }), { kind: 'first', changed: ['functional'], changedServices: ['theme'], locale: 'en' })
     expect(hooks.onReady).toHaveBeenCalledTimes(1)
   })
   test('a throwing listener does not stop the others', () => {
@@ -68,6 +68,21 @@ describe('decision and ready', () => {
   })
 })
 
+describe('decision info carries what a consent record needs', () => {
+  test('a first decision lists the services the visitor accepted and the language they saw', () => {
+    const d = fakeDriver(); const c = createConsent(cfg(), { driver: d as never }); c.init()
+    const fn = vi.fn(); c.on('decision', fn)
+    d.set(enc({ consentId: 'abc-12345678', categories: ['necessary', 'media', 'functional'], data: {}, services: { media: ['youtube'], functional: [] } }))
+    d.hooks.onFirstConsent()
+    expect(fn).toHaveBeenCalledWith({ kind: 'first', changed: ['media', 'functional'], changedServices: ['youtube'], locale: 'en' })
+  })
+  test('changedServices from the driver reach the decision', () => {
+    const d = fakeDriver(cookie(['necessary', 'media'])); const c = createConsent(cfg(), { driver: d as never }); c.init()
+    const fn = vi.fn(); c.on('decision', fn)
+    d.hooks.onChange([], ['youtube'])
+    expect(fn.mock.calls[0]![0]).toMatchObject({ kind: 'change', changed: [], changedServices: ['youtube'] })
+  })
+})
 describe('allowOnce', () => {
   test('works for an iframe embed and emits once', () => {
     const c = createConsent(cfg(), { driver: fakeDriver() as never }); c.init()
@@ -91,7 +106,7 @@ describe('leftovers', () => {
     const d = fakeDriver(enc({ consentId: 'abc-12345678', categories: ['necessary', 'marketing'], data: { siteRevision: 1, revisions: { tracker: 1 } } }))
     const c = createConsent(c0, { driver: d as never }); c.init()
     d.set(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { tracker: 1 } } }))
-    d.hooks.onChange(['marketing']); d.hooks.onChange(['marketing'])
+    d.hooks.onChange(['marketing'], []); d.hooks.onChange(['marketing'], [])
     cookieSpy.mockRestore()
     expect(c.leftovers.filter((l) => l.name === 'stubborn')).toHaveLength(1)
   })

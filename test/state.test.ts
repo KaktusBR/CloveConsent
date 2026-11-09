@@ -1,8 +1,11 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
+import * as CC from 'vanilla-cookieconsent'
 import { defineConsent } from '../src/config'
-import { theme, youtube } from '../src/catalog'
+import { esriImagery, openStreetMap, theme, turnstile, youtube } from '../src/catalog'
+import { createConsent } from '../src/client'
+import { createVccDriver } from '../src/driver-vcc'
 import sk from '../src/locales/sk'
-import { buildStoredData, needsPrompt, parseConsent, readCookieValue, serviceAccepted } from '../src/state'
+import { MAX_COOKIE_LENGTH, buildStoredData, needsPrompt, parseConsent, readCookieValue, serviceAccepted } from '../src/state'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const good = (extra: object = {}) => enc({
@@ -143,4 +146,28 @@ describe('needsPrompt', () => {
 
 test('buildStoredData lists current selected revisions', () => {
   expect(buildStoredData(config())).toEqual({ siteRevision: 1, revisions: { youtube: 1, theme: 1 } })
+})
+
+describe('cookie size with per-service consent (review focus 3)', () => {
+  afterEach(() => { CC.reset(true) })
+  test('every shipped service plus 40 generated ones, all selected, still fits in the cookie as the engine writes it', async () => {
+    const generated = Array.from({ length: 40 }, (_, i) => ({ ...youtube(), id: `generated-service-${String(i).padStart(2, '0')}`, origins: [`gen${i}.example.com`] }))
+    const shipped = [turnstile(), youtube(), theme(), openStreetMap(), esriImagery()]
+    const conf = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [...shipped, ...generated] })
+    CC.reset(true)
+    const c = createConsent(conf, { driver: createVccDriver() }); c.init()
+    await new Promise((r) => setTimeout(r, 20))
+    const optional = conf.services.filter((x) => x.category !== 'necessary').map((x) => x.id)
+    c.setServices(optional)
+    await new Promise((r) => setTimeout(r, 20))
+    const raw = readCookieValue(document.cookie, 'cc_cookie')!
+    expect(raw).toBeTruthy()
+    // the exact value the engine stored, percent-encoded as the browser holds it
+    expect(raw.length).toBeLessThan(MAX_COOKIE_LENGTH)
+    const st = parseConsent(raw)!
+    expect(st).not.toBeNull()
+    expect(st.services!.media).toHaveLength(optional.filter((id) => conf.services.find((x) => x.id === id)!.category === 'media').length)
+    expect(Object.keys(st.revisions)).toHaveLength(conf.services.length)
+    expect(optional.every((id) => c.isAllowed(id))).toBe(true)
+  })
 })

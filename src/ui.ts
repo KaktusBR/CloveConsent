@@ -47,7 +47,7 @@ export function bindDom(consent: Consent, doc: Document = document): void {
     const entry = consent.config.services.find((s) => s.id === box?.dataset.consentService)
     if (!entry) return
     if (t.dataset.consentAction === 'once') consent.allowOnce(entry.id)
-    else if (t.dataset.consentAction === 'accept') consent.acceptCategory(entry.category)
+    else if (t.dataset.consentAction === 'accept') consent.acceptService(entry.id)
   })
   const sync = () => syncEmbeds(consent, doc)
   consent.on('ready', sync); consent.on('decision', sync); consent.on('once', sync)

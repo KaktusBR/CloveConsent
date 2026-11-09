@@ -57,7 +57,9 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
     },
     onFirstConsent: () => hooks.onFirstConsent(),
     onConsent: () => hooks.onConsent(),
-    onChange: ({ changedCategories }: { changedCategories: string[] }) => hooks.onChange(changedCategories as Category[]),
+    // the engine reports changed services as an object keyed by category; the hook takes a flat list of ids
+    onChange: ({ changedCategories, changedServices }: { changedCategories: string[]; changedServices?: Record<string, string[]> }) =>
+      hooks.onChange(changedCategories as Category[], [...new Set(Object.values(changedServices ?? {}).flat())]),
     // Only hiding the consent modal (the banner) is a decision: the library hides it solely from its
     // accept/reject/save buttons (and our own hide() after acceptCategory). Closing the preferences modal
     // (X, Escape, overlay) hides only 'preferencesModal' and must not count. The banner buttons call
@@ -68,12 +70,28 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
   }
 }
 
+// the engine reports one callback per accepted category or service call; acceptServices makes several calls for one decision
+interface Batch { first: boolean; consent: boolean; categories: Set<Category>; services: Set<string> }
+
 export function createVccDriver(): ConsentDriver {
   let cookieName = 'cc_cookie'
+  let target: DriverHooks | null = null
+  let batch: Batch | null = null
   // a programmatic decision closes the UI like the library's own buttons do
   const decide = (c: string | string[]) => { CC.acceptCategory(c); CC.hidePreferences(); CC.hide() }
+  // while a batch is open the engine's callbacks are collected and replayed once, so the client sees one decision
+  const batched: DriverHooks = {
+    onFirstConsent: () => { if (batch) batch.first = true; else target?.onFirstConsent() },
+    onConsent: () => { if (batch) batch.consent = true; else target?.onConsent() },
+    onChange: (changed, services) => {
+      if (!batch) { target?.onChange(changed, services); return }
+      changed.forEach((c) => batch!.categories.add(c)); services.forEach((s) => batch!.services.add(s))
+    },
+    onDecision: () => target?.onDecision(),
+  }
   return {
     init(view, hooks) {
+      target = hooks
       cookieName = view.cookieName
       if (view.darkMode) {
         const html = document.documentElement
@@ -81,7 +99,7 @@ export function createVccDriver(): ConsentDriver {
         sync()
         new MutationObserver(sync).observe(html, { attributeFilter: ['class'] })
       }
-      Promise.resolve(CC.run(buildVccConfig(view, hooks, location.protocol === 'https:') as never)).catch((e) => console.error('[consent] vanilla-cookieconsent failed to start', e))
+      Promise.resolve(CC.run(buildVccConfig(view, batched, location.protocol === 'https:') as never)).catch((e) => console.error('[consent] vanilla-cookieconsent failed to start', e))
     },
     readRaw() { try { return readCookieValue(document.cookie, cookieName) } catch { return null } },
     writeData(data: StoredData) { CC.setCookieData({ value: data, mode: 'overwrite' } as never) },
@@ -90,5 +108,24 @@ export function createVccDriver(): ConsentDriver {
     acceptAll() { decide('all') },
     rejectAll() { decide([]) },
     acceptCategories(categories) { decide(categories as string[]) },
+    acceptServices(selection) {
+      // accepting services of a category also accepts the category; an empty list removes it. Categories left out are not accepted.
+      const have = (CC.getUserPreferences().acceptedCategories as string[]).filter((c) => c !== 'necessary')
+      const wanted: Record<string, string[]> = { ...Object.fromEntries(have.map((c) => [c, []])), ...selection }
+      delete wanted.necessary
+      const some = Object.entries(wanted).filter(([, ids]) => ids.length > 0)
+      const none = Object.entries(wanted).filter(([, ids]) => ids.length === 0)
+      const b: Batch = { first: false, consent: false, categories: new Set(), services: new Set() }
+      batch = b
+      try {
+        // with nothing selected there may be no consent yet; rejecting everything records it
+        if (some.length === 0) CC.acceptCategory([])
+        // accepted categories first, so the visitor's first answer is created by a real selection
+        for (const [category, ids] of [...some, ...none]) CC.acceptService(ids, category)
+        CC.hidePreferences(); CC.hide()
+      } finally { batch = null }
+      if (b.first) { target?.onFirstConsent(); if (b.consent) target?.onConsent() }
+      else if (b.categories.size > 0 || b.services.size > 0) target?.onChange([...b.categories], [...b.services])
+    },
   }
 }

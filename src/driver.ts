@@ -5,7 +5,7 @@ export interface StoredData { siteRevision: number; revisions: Record<string, nu
 export interface DriverHooks {
   onFirstConsent(): void
   onConsent(): void
-  onChange(changed: Category[]): void
+  onChange(changed: Category[], changedServices: string[]): void
   onDecision(): void
 }
 export interface ConsentDriver {
@@ -17,4 +17,9 @@ export interface ConsentDriver {
   acceptAll(): void
   rejectAll(): void
   acceptCategories(categories: Category[]): void
+  /**
+   * Afterwards exactly these service ids are accepted per category; a category with an empty list is not accepted (necessary
+   * always is). Closes the banner and dialog like the other decisions and reports a single decision.
+   */
+  acceptServices(selection: Record<string, string[]>): void
 }

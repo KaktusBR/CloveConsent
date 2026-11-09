@@ -17,6 +17,12 @@ export interface Consent {
   rejectAll(): void
   open(): void
   acceptCategory(c: Category): void
+  /** Exactly these optional services are accepted afterwards (an empty list accepts none). Throws for an unknown id; ids of necessary services are ignored. */
+  setServices(ids: string[]): void
+  /** Accept one more service, keeping the ones already accepted. */
+  acceptService(id: string): void
+  /** Withdraw all consent. Reported as a decision of kind `withdraw`. */
+  withdraw(): void
   /** Allow one embed for this page view only. Not available for scripts: their side effects cannot be undone. */
   allowOnce(id: string): void
   /** Fires on every page load that has a stored decision, and after each decision. */
@@ -41,6 +47,10 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   const once = new Set<string>()
   const leftovers: StorageItem[] = []
   let started = false
+  // set by withdraw() (with the services accepted at that moment) and consumed by the next change, which is then a withdrawal
+  let withdrawing: string[] | null = null
+  // optional services the visitor had accepted after the last decision: what to unload when one of them is switched off
+  let lastAccepted: string[] = []
 
   const emit = (e: ConsentEvent, arg?: unknown) => {
     for (const fn of [...listeners[e]]) { try { fn(arg) } catch (err) { dev(`listener for ${e} threw`, err) } }
@@ -54,8 +64,17 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   }
 
   const ready = () => { const s = state(); emit('ready', s); if (s) hook(() => config.hooks.onReady?.(s)) }
-  const decided = (info: DecisionInfo) => { emit('decision', info); const s = state(); if (s) hook(() => config.hooks.onDecision?.(s, info)) }
+  const decided = (info: Omit<DecisionInfo, 'locale'>) => {
+    const full: DecisionInfo = { ...info, locale }
+    emit('decision', full); const s = state(); if (s) hook(() => config.hooks.onDecision?.(s, full))
+  }
   const accepted = (): Category[] => (state()?.categories ?? []).filter((c) => c !== 'necessary')
+  // optional services the visitor has accepted, by the stored choice alone (re-consent gates are applied by isAllowed)
+  const acceptedIds = (): string[] => {
+    const st = state()
+    return st ? config.services.filter((s) => s.category !== 'necessary' && serviceAccepted(st, s)).map((s) => s.id) : []
+  }
+  const optionalCategories = (): Category[] => [...new Set(config.services.map((s) => s.category).filter((c) => c !== 'necessary'))]
 
   // an optional service whose revision the visitor has not seen (new service, bumped catalogRevision, or bumped
   // site revision) stays blocked until the visitor answers the re-consent banner
@@ -76,10 +95,18 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
       }
     }
   }
-  const withdraw = (changed: Category[]) => {
+  // unload every service that is no longer allowed: those of changed categories, and those the visitor switched off
+  // inside a category that stays accepted
+  const unload = (changed: Category[]) => {
     for (const s of config.services) {
-      if (changed.includes(s.category) && !isAllowed(s.id)) noteLeftovers(unloadService(doc, s))
+      if ((changed.includes(s.category) || lastAccepted.includes(s.id)) && !isAllowed(s.id)) noteLeftovers(unloadService(doc, s))
     }
+    lastAccepted = acceptedIds()
+  }
+  const select = (ids: string[]) => {
+    const selection: Record<string, string[]> = Object.fromEntries(optionalCategories().map((c) => [c, [] as string[]]))
+    for (const id of new Set(ids)) selection[find(id)!.category]!.push(id)
+    driver.acceptServices(selection)
   }
 
   const api: Consent = {
@@ -91,20 +118,30 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
       const prompt = needsPrompt(st, config)
       try {
         driver.init(buildView(config, locale), {
-          onFirstConsent: () => { once.clear(); persist(); applyScripts(); decided({ kind: 'first', changed: accepted() }) },
-          onConsent: () => { applyScripts(); ready() },
-          onChange: (changed) => { once.clear(); persist(); withdraw(changed); applyScripts(); decided({ kind: 'change', changed }) },
+          onFirstConsent: () => {
+            withdrawing = null; once.clear(); persist(); applyScripts(); lastAccepted = acceptedIds()
+            decided({ kind: 'first', changed: accepted(), changedServices: lastAccepted })
+          },
+          onConsent: () => { applyScripts(); lastAccepted = acceptedIds(); ready() },
+          onChange: (changed, changedServices) => {
+            const before = withdrawing; withdrawing = null
+            once.clear(); persist(); unload(changed); applyScripts()
+            decided(before
+              ? { kind: 'withdraw', changed, changedServices: [...new Set([...before, ...changedServices])] }
+              : { kind: 'change', changed, changedServices })
+          },
           // the visitor answered the re-consent banner without changing categories: record the revisions they have
           // now seen and load what the re-consent gate was holding back
           onDecision: () => {
             const before = state()
             if (!before || !needsPrompt(before, config)) return
-            persist(); applyScripts(); decided({ kind: 'reconfirm', changed: [] }); ready()
+            persist(); applyScripts(); lastAccepted = acceptedIds(); decided({ kind: 'reconfirm', changed: [], changedServices: [] }); ready()
           },
         })
         if (st && prompt) driver.showBanner()
       } catch (err) { dev('driver failed to start', err) }
       applyScripts()
+      lastAccepted = acceptedIds()
       current = api
       ;(window as unknown as Record<string, unknown>).CookieConsent = Object.freeze({
         acceptAll: () => api.acceptAll(), rejectAll: () => api.rejectAll(), getState: () => api.getState(),
@@ -114,10 +151,34 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     isAllowed,
     acceptAll: () => driver.acceptAll(),
     rejectAll: () => driver.rejectAll(),
+    withdraw() {
+      // with nothing accepted the driver reports no change, so no flag may be left behind for the next one
+      if (accepted().length > 0) withdrawing = acceptedIds()
+      try { driver.rejectAll() } catch (err) { withdrawing = null; throw err }
+    },
     open: () => driver.open(),
     acceptCategory(c) {
       const have = state()?.categories ?? ['necessary']
       driver.acceptCategories([...new Set<Category>([...have, c])])
+    },
+    setServices(ids) {
+      for (const id of ids) if (!find(id)) throw new Error(`[consent] unknown service ${id}`)
+      select(ids.filter((id) => find(id)!.category !== 'necessary'))
+    },
+    acceptService(id) {
+      const s = find(id)
+      if (!s) throw new Error(`[consent] unknown service ${id}`)
+      if (s.category === 'necessary') return
+      const st = state(); const ids: string[] = []
+      if (st) {
+        // keep the services that are already accepted, in the order the engine stored them
+        for (const c of optionalCategories()) {
+          if (!st.categories.includes(c)) continue
+          const inCategory = config.services.filter((x) => x.category === c).map((x) => x.id)
+          ids.push(...(st.services === null ? inCategory : (st.services[c] ?? []).filter((x) => inCategory.includes(x))))
+        }
+      }
+      api.setServices([...ids, id])
     },
     allowOnce(id) {
       const s = find(id)

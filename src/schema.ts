@@ -67,9 +67,20 @@ export interface ConsentState {
   timestamp: string | null
 }
 export interface DecisionInfo {
-  /** `first`: the first answer ever. `change`: categories changed. `reconfirm`: the visitor re-confirmed after a re-consent prompt without changing categories. */
-  kind: 'first' | 'change' | 'reconfirm'
+  /**
+   * `first`: the first answer ever. `change`: categories or services changed. `reconfirm`: the visitor re-confirmed after a
+   * re-consent prompt without changing anything. `withdraw`: the visitor withdrew all consent (`consent.withdraw()`).
+   */
+  kind: 'first' | 'change' | 'reconfirm' | 'withdraw'
+  /** Optional categories whose acceptance changed (for `first`: the categories accepted). */
   changed: Category[]
+  /**
+   * Service ids whose acceptance changed (turned on or off). For `first`: the services accepted. For `withdraw`: every
+   * service that was accepted before the withdrawal.
+   */
+  changedServices: string[]
+  /** The language the visitor saw the banner in. With reference, time and policy version from the state this is a full consent record. */
+  locale: Locale
 }
 export interface ConsentHooks {
   /** Fires on every page load that has a stored decision, and after each decision. Not suitable for writing consent records. */
