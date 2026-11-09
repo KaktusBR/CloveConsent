@@ -152,9 +152,10 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     acceptAll: () => driver.acceptAll(),
     rejectAll: () => driver.rejectAll(),
     withdraw() {
-      // with nothing accepted the driver reports no change, so no flag may be left behind for the next one
-      if (accepted().length > 0) withdrawing = acceptedIds()
-      try { driver.rejectAll() } catch (err) { withdrawing = null; throw err }
+      // the driver reports the change synchronously from rejectAll; when it reports none (nothing accepted, or a category the
+      // engine does not know) the flag must not survive to label the next, unrelated change as a withdrawal
+      withdrawing = acceptedIds()
+      try { driver.rejectAll() } finally { withdrawing = null }
     },
     open: () => driver.open(),
     acceptCategory(c) {

@@ -117,15 +117,19 @@ export function createVccDriver(): ConsentDriver {
       const none = Object.entries(wanted).filter(([, ids]) => ids.length === 0)
       const b: Batch = { first: false, consent: false, categories: new Set(), services: new Set() }
       batch = b
+      let failure: unknown = null; let failed = false
       try {
         // with nothing selected there may be no consent yet; rejecting everything records it
         if (some.length === 0) CC.acceptCategory([])
         // accepted categories first, so the visitor's first answer is created by a real selection
         for (const [category, ids] of [...some, ...none]) CC.acceptService(ids, category)
         CC.hidePreferences(); CC.hide()
-      } finally { batch = null }
+      } catch (err) { failed = true; failure = err } finally { batch = null }
+      // replay what the engine already applied even when a later call failed: the cookie has changed, so the decision must be
+      // persisted, unloaded and reported
       if (b.first) { target?.onFirstConsent(); if (b.consent) target?.onConsent() }
       else if (b.categories.size > 0 || b.services.size > 0) target?.onChange([...b.categories], [...b.services])
+      if (failed) throw failure
     },
   }
 }

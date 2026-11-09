@@ -229,10 +229,15 @@ describe('real vanilla-cookieconsent: acceptServices and old cookies', () => {
     c.setServices(['youtube', 'theme'])
     await flush()
     const seen: string[] = []
+    const idBefore = stored()!.consentId
     c.on('decision', (i) => seen.push(`${i.kind}:${i.changedServices.sort().join(',')}`))
     c.withdraw()
     await flush()
     expect(stored()!.categories).toEqual(['necessary'])
+    // the consent reference survives a withdrawal (it is the proof of the earlier consent) and the banner is not shown again
+    expect(stored()!.consentId).toBe(idBefore)
+    expect(banner()).toBe(false)
+    expect(prefs()).toBe(false)
     expect(seen).toEqual(['withdraw:theme,youtube'])
     expect(c.isAllowed('youtube')).toBe(false)
   })
