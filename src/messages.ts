@@ -9,8 +9,13 @@ export interface Messages {
   catSocial: string; catSocialText: string
   catAnalytics: string; catAnalyticsText: string
   catMarketing: string; catMarketingText: string
-  embedBlocked: string; embedLoadOnce: string; embedAccept: string
+  embedBlocked: string; embedLoadOnce: string; embedAllow: string
   clearWarning: string
+  receiptTitle: string; receiptNone: string; receiptCopy: string; receiptCopied: string; receiptSaved: string
+  receiptPolicy: string; receiptLanguage: string; receiptChoice: string
+  choiceAll: string; choiceNecessary: string; choiceCustom: string
+  settingsTitle: string; settingsIntro: string; settingsSaved: string; withdraw: string
+  showDetails: string; hideDetails: string; servicesAllowed: string; stateMixed: string; noStorage: string
   processorsHeading: string; processorLocation: string; processorData: string; processorDpa: string; processorTransfers: string
 }
 
@@ -26,8 +31,14 @@ export const en: Messages = {
   catSocial: 'Social', catSocialText: 'Embedded content from social networks.',
   catAnalytics: 'Analytics', catAnalyticsText: 'Help us understand how the site is used.',
   catMarketing: 'Marketing', catMarketingText: 'Used to measure and target advertising.',
-  embedBlocked: 'Content from {provider} is blocked until you allow it.', embedLoadOnce: 'Load once', embedAccept: 'Allow category',
+  embedBlocked: 'Content from {provider} is blocked until you allow it.', embedLoadOnce: 'Load once', embedAllow: 'Allow {service}',
   clearWarning: 'Some third-party files cannot be removed from this site. Delete them in your browser settings.',
+  receiptTitle: 'Your consent reference', receiptNone: 'No choice saved yet.', receiptCopy: 'Copy', receiptCopied: 'Copied', receiptSaved: 'Saved',
+  receiptPolicy: 'Policy version', receiptLanguage: 'Language', receiptChoice: 'Choice',
+  choiceAll: 'All', choiceNecessary: 'Necessary only', choiceCustom: 'Custom',
+  settingsTitle: 'Cookie and privacy settings', settingsIntro: 'Choose what you allow. Necessary items are always on. You can change or withdraw your choice at any time.',
+  settingsSaved: 'Your choice has been saved.', withdraw: 'Withdraw consent',
+  showDetails: 'Show details', hideDetails: 'Hide details', servicesAllowed: '{allowed} of {total} allowed', stateMixed: 'Some allowed', noStorage: 'No storage documented',
   processorsHeading: 'Service providers', processorLocation: 'Location', processorData: 'Data categories', processorDpa: 'Data processing agreement', processorTransfers: 'Transfers',
 }
 

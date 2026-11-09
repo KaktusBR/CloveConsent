@@ -120,7 +120,7 @@ describe('real vanilla-cookieconsent: re-consent decisions', () => {
 })
 
 describe('real vanilla-cookieconsent: programmatic decisions hide the UI', () => {
-  test('acceptCategory (embed "Allow category") hides the banner and records revisions', async () => {
+  test('acceptCategory (what the embed "Allow" button does) hides the banner and records revisions', async () => {
     const c = await load()
     expect(banner()).toBe(true)
     c.acceptCategory('media')

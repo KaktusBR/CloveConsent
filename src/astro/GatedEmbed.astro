@@ -15,6 +15,6 @@ const label = title ?? entry.messages.title[view.locale]
   <div data-consent-placeholder class="consent-placeholder">
     <p>{format(m.embedBlocked, { provider: (entry as ClientEntry).provider.name })}</p>
     <button type="button" data-consent-action="once">{m.embedLoadOnce}</button>
-    <button type="button" data-consent-action="accept">{m.embedAccept}</button>
+    <button type="button" data-consent-action="accept">{format(m.embedAllow, { service: label })}</button>
   </div>
 </div>
