@@ -27,7 +27,7 @@ export function loadScript(doc: Document, entry: ClientEntry): HTMLScriptElement
   const existing = findOwned(doc, entry.id, 'script')
   if (existing) return existing
   const win = doc.defaultView
-  if (entry.gating.init && win) runScriptInit(win, entry.gating.init)
+  if (entry.gating.init && win) setupOnce(win, entry.gating.init)
   const s = doc.createElement('script')
   s.async = true
   s.setAttribute('async', '')
@@ -79,6 +79,23 @@ export function runScriptInit(win: Window & typeof globalThis, init: ScriptInit)
   w.gtag('js', new Date())
   w.gtag('config', init.id)
   w[`ga-disable-${init.id}`] = false
+}
+
+// Which setups already ran in which window. Kept off the DOM: unloading removes the script element, but the
+// page-level state (dataLayer, fbq queue) stays, and running the setup again would double-count page views.
+const setupDone = new WeakMap<Window, Set<string>>()
+
+function setupOnce(win: Window & typeof globalThis, init: ScriptInit): void {
+  const key = init.kind === 'gtm' ? 'gtm' : `${init.kind}:${init.id}`
+  let done = setupDone.get(win)
+  if (!done) setupDone.set(win, (done = new Set()))
+  if (!done.has(key)) {
+    runScriptInit(win, init)
+    done.add(key)
+  } else if (init.kind === 'gtag') {
+    // re-allowed after unloadService: only lift Google's opt-out switch
+    ;(win as unknown as Record<string, unknown>)[`ga-disable-${init.id}`] = false
+  }
 }
 
 const SAFE_NAME = /^[A-Za-z0-9_.-]{1,128}$/

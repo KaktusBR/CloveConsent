@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { youtube, theme } from '../src/catalog'
 import { clearStorage, createEmbed, hostAllowed, loadScript, runScriptInit, unloadService } from '../src/gating'
-import type { ClientEntry } from '../src/schema'
+import type { ClientEntry, ScriptInit } from '../src/schema'
 
 const yt = youtube()
 const win = window as any
 beforeEach(() => {
   document.head.innerHTML = ''; document.body.innerHTML = ''; localStorage.clear(); sessionStorage.clear()
-  for (const k of ['dataLayer', 'gtag', 'fbq', '_fbq', 'ga-disable-G-ABCD1234']) delete win[k]
+  for (const k of Object.keys(win)) if (k.startsWith('ga-disable-')) delete win[k]
+  for (const k of ['dataLayer', 'gtag', 'fbq', '_fbq']) delete win[k]
 })
 
 describe('hostAllowed (review focus 3)', () => {
@@ -119,6 +120,7 @@ describe('runScriptInit', () => {
     expect(win['ga-disable-G-ABCD1234']).toBe(false)
     win.gtag('event', 'x')
     expect(Object.prototype.toString.call(win.dataLayer[2])).toBe('[object Arguments]')
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
   test('gtag keeps an existing dataLayer', () => {
     win.dataLayer = [{ before: true }]
@@ -130,6 +132,7 @@ describe('runScriptInit', () => {
     runScriptInit(window, { kind: 'gtm' })
     expect(win.dataLayer).toHaveLength(1)
     expect(win.dataLayer[0]).toEqual({ 'gtm.start': expect.any(Number), event: 'gtm.js' })
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
   test('fbq is a queueing stub holding init then PageView', () => {
     runScriptInit(window, { kind: 'fbq', id: '123456789012345' })
@@ -139,6 +142,7 @@ describe('runScriptInit', () => {
     expect(win._fbq).toBe(win.fbq)
     win.fbq('track', 'Lead')
     expect(win.fbq.queue).toHaveLength(3)
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
   test('fbq hands calls to the real implementation once it sets callMethod', () => {
     runScriptInit(window, { kind: 'fbq', id: '12345' })
@@ -156,11 +160,13 @@ describe('runScriptInit', () => {
 })
 
 describe('script setup in loadScript and unloadService', () => {
-  const ga: ClientEntry = {
+  // The setup state is remembered per window for the whole file, so each test uses its own gtag id.
+  const gaWith = (gid: string): ClientEntry => ({
     ...yt, id: 'ga', origins: ['www.googletagmanager.com'],
-    gating: { type: 'script', src: 'https://www.googletagmanager.com/gtag/js?id=G-ABCD1234', init: { kind: 'gtag', id: 'G-ABCD1234' } },
-  }
+    gating: { type: 'script', src: `https://www.googletagmanager.com/gtag/js?id=${gid}`, init: { kind: 'gtag', id: gid } },
+  })
   test('runs the setup once, before the script is added, and not again on a second call', () => {
+    const ga = gaWith('G-ONCE0001')
     let atInsert: number | undefined
     const real = document.head.appendChild.bind(document.head)
     const spy = vi.spyOn(document.head, 'appendChild').mockImplementation(((n: Node) => { atInsert = win.dataLayer?.length; return real(n) }) as never)
@@ -172,25 +178,90 @@ describe('script setup in loadScript and unloadService', () => {
     expect(second).toBe(first)
     expect(win.dataLayer).toHaveLength(2)
     expect(document.querySelectorAll('script[data-consent-service="ga"]').length).toBe(1)
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
   test('does not run the setup when the origin is refused', () => {
-    const bad: ClientEntry = { ...ga, gating: { type: 'script', src: 'https://evil.com/a.js', init: { kind: 'gtag', id: 'G-ABCD1234' } } }
+    const bad: ClientEntry = { ...gaWith('G-REFUSED1'), gating: { type: 'script', src: 'https://evil.com/a.js', init: { kind: 'gtag', id: 'G-REFUSED1' } } }
     expect(() => loadScript(document, bad)).toThrow(/not allowed/)
     expect(win.dataLayer).toBeUndefined()
   })
   test('unloadService for gtag sets the ga-disable switch', () => {
+    const ga = gaWith('G-UNLOAD01')
     loadScript(document, ga)
-    expect(win['ga-disable-G-ABCD1234']).toBe(false)
+    expect(win['ga-disable-G-UNLOAD01']).toBe(false)
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
     unloadService(document, ga)
-    expect(win['ga-disable-G-ABCD1234']).toBe(true)
+    expect(win['ga-disable-G-UNLOAD01']).toBe(true)
     expect(document.querySelector('script[data-consent-service="ga"]')).toBeNull()
+    expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
   test('unloadService for a non-gtag entry sets nothing', () => {
-    const gtm: ClientEntry = { ...ga, gating: { type: 'script', src: 'https://www.googletagmanager.com/gtm.js?id=GTM-X', init: { kind: 'gtm' } } }
+    const gtm: ClientEntry = { ...gaWith('G-UNUSED01'), gating: { type: 'script', src: 'https://www.googletagmanager.com/gtm.js?id=GTM-X', init: { kind: 'gtm' } } }
     unloadService(document, gtm)
     expect(Object.keys(win).filter((k) => k.startsWith('ga-disable'))).toEqual([])
   })
-  test('no inline script is ever created', () => {
+})
+
+describe('re-allowing a service after unloadService', () => {
+  // The setup state is remembered per window for the whole file, so every test uses its own ids.
+  const noInline = (d: Document = document) => expect(d.querySelectorAll('script:not([src])').length).toBe(0)
+  const entry = (id: string, src: string, origin: string, init: ScriptInit): ClientEntry =>
+    ({ ...yt, id, origins: [origin], gating: { type: 'script', src, init } })
+
+  test('gtag: the second load does not repeat js/config; the opt-out switch follows load and unload', () => {
+    const e = entry('ga-r', 'https://www.googletagmanager.com/gtag/js?id=G-REALLOW1', 'www.googletagmanager.com', { kind: 'gtag', id: 'G-REALLOW1' })
+    loadScript(document, e)
+    noInline()
+    expect(win.dataLayer).toHaveLength(2)
+    expect(win['ga-disable-G-REALLOW1']).toBe(false)
+    unloadService(document, e)
+    expect(win['ga-disable-G-REALLOW1']).toBe(true)
+    expect(document.querySelector('script[data-consent-service="ga-r"]')).toBeNull()
+    const again = loadScript(document, e)
+    expect(again).not.toBeNull()
+    expect(document.querySelectorAll('script[data-consent-service="ga-r"]').length).toBe(1)
+    expect(win.dataLayer).toHaveLength(2)
+    expect(win['ga-disable-G-REALLOW1']).toBe(false)
+    noInline()
+  })
+  test('gtm: the second load does not push a second gtm.start', () => {
+    const e = entry('gtm-r', 'https://www.googletagmanager.com/gtm.js?id=GTM-REALLOW', 'www.googletagmanager.com', { kind: 'gtm' })
+    loadScript(document, e)
+    noInline()
+    unloadService(document, e)
+    loadScript(document, e)
+    expect(document.querySelectorAll('script[data-consent-service="gtm-r"]').length).toBe(1)
+    expect(win.dataLayer).toHaveLength(1)
+    expect(win.dataLayer[0]).toEqual({ 'gtm.start': expect.any(Number), event: 'gtm.js' })
+    noInline()
+  })
+  test('fbq: the second load does not queue init and PageView again', () => {
+    const e = entry('fb-r', 'https://connect.facebook.net/en_US/fbevents.js', 'connect.facebook.net', { kind: 'fbq', id: '987654321' })
+    loadScript(document, e)
+    noInline()
+    unloadService(document, e)
+    loadScript(document, e)
+    expect(document.querySelectorAll('script[data-consent-service="fb-r"]').length).toBe(1)
+    expect(win.fbq.queue.map((a: unknown) => Array.from(a as ArrayLike<unknown>))).toEqual([['init', '987654321'], ['track', 'PageView']])
+    noInline()
+  })
+  test('a different window still gets its own setup', () => {
+    const e = entry('ga-w', 'https://www.googletagmanager.com/gtag/js?id=G-WINDOW01', 'www.googletagmanager.com', { kind: 'gtag', id: 'G-WINDOW01' })
+    const frame = document.createElement('iframe')
+    document.body.appendChild(frame)
+    const other = frame.contentWindow as any
+    const otherDoc = frame.contentDocument!
+    loadScript(document, e)
+    loadScript(otherDoc, e)
+    expect(win.dataLayer).toHaveLength(2)
+    expect(other.dataLayer).toHaveLength(2)
+    expect(other['ga-disable-G-WINDOW01']).toBe(false)
+    noInline(); noInline(otherDoc)
+  })
+  test('runScriptInit alone creates no inline script', () => {
+    runScriptInit(window, { kind: 'gtag', id: 'G-ABCD1234' })
+    runScriptInit(window, { kind: 'gtm' })
+    runScriptInit(window, { kind: 'fbq', id: '12345' })
     expect(document.querySelectorAll('script:not([src])').length).toBe(0)
   })
 })
