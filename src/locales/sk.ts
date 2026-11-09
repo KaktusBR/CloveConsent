@@ -90,6 +90,34 @@ const pack: LocalePack = {
       "title": "Satelitné snímky Esri",
       "description": "Satelitné mapové podklady načítané zo serverov Esri. Pri načítaní mapy dostane Esri vašu IP adresu."
     },
+    "google-analytics": {
+      "title": "Google Analytics",
+      "description": "Meria, ako sa stránka používa (zobrazené stránky, dĺžka návštevy). Údaje sa odosielajú spoločnosti Google.",
+      "storage": {
+        "_ga": {
+          "expiry": "2 roky",
+          "purpose": "Rozlišuje návštevníkov pri meraní používania stránky."
+        },
+        "_ga_container": {
+          "expiry": "2 roky",
+          "purpose": "Uchováva stav relácie pre túto službu Google Analytics."
+        }
+      }
+    },
+    "google-tag-manager": {
+      "title": "Google Tag Manager",
+      "description": "Načítava značky webovej stránky (napríklad analytické alebo reklamné) zo služby Google Tag Manager."
+    },
+    "meta-pixel": {
+      "title": "Meta Pixel",
+      "description": "Meria a cieli reklamu na Facebooku a Instagrame. Údaje o návšteve sa odosielajú spoločnosti Meta.",
+      "storage": {
+        "_fbp": {
+          "expiry": "90 dní",
+          "purpose": "Identifikuje prehliadač, aby Meta mohla merať a cieliť reklamu."
+        }
+      }
+    },
     "resend": {
       "purpose": "Odosielanie e-mailov z formulárov.",
       "location": "USA (uložené údaje). Región odosielania (napr. Írsko) určuje len to, odkiaľ sa e-maily odosielajú, nie kde sa údaje ukladajú.",

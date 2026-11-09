@@ -8,7 +8,8 @@ import fr from '../src/locales/fr'
 import sk from '../src/locales/sk'
 import { validateProcessor, validateService } from '../src/validate'
 
-const services = [catalog.turnstile(), catalog.youtube(), catalog.theme(), catalog.openStreetMap(), catalog.esriImagery()]
+const services = [catalog.turnstile(), catalog.youtube(), catalog.theme(), catalog.openStreetMap(), catalog.esriImagery(),
+  catalog.googleAnalytics({ measurementId: 'G-TEST1234' }), catalog.googleTagManager({ containerId: 'GTM-TEST123' }), catalog.metaPixel({ pixelId: '1234567890' })]
 const processors = [catalog.resend(), catalog.cloudflareCdn(), catalog.facebookGraph(),
   catalog.hosting({ name: 'Test host', privacyUrl: 'https://example.com/privacy', location: { en: 'Germany' } })]
 
@@ -35,6 +36,7 @@ describe('catalog (English sources, valid, flagged)', () => {
   const VERIFIED = '2026-10-14'
   const expected: Record<string, string | null> = {
     'cloudflare-turnstile': null, youtube: null, theme: null, openstreetmap: null, 'esri-imagery': null,
+    'google-analytics': null, 'google-tag-manager': null, 'meta-pixel': null,
     resend: VERIFIED, 'cloudflare-cdn': VERIFIED, 'facebook-graph': null, hosting: null,
   }
   test('lastVerified matches the recorded verification status for every entry', () => {
@@ -86,6 +88,71 @@ describe('catalog (English sources, valid, flagged)', () => {
     test('their hosts reach the CSP img-src list', () => {
       const c = defineConsent({ ...base, services: [catalog.openStreetMap(), catalog.esriImagery()] })
       expect(cspSources(c)['img-src']).toEqual(['server.arcgisonline.com', 'tile.openstreetmap.org'])
+    })
+  })
+  describe('analytics and marketing', () => {
+    const base = { locales: ['en'], defaultLocale: 'en', revision: 1 }
+    test('Google Analytics 4: analytics by default, script with gtag init, two cookies', () => {
+      const e = catalog.googleAnalytics({ measurementId: 'G-ABC1234XY' })
+      expect(e.id).toBe('google-analytics')
+      expect(e.category).toBe('analytics')
+      expect(e.gating).toEqual({ type: 'script', src: 'https://www.googletagmanager.com/gtag/js?id=G-ABC1234XY', init: { kind: 'gtag', id: 'G-ABC1234XY' } })
+      expect(e.origins).toEqual(['www.googletagmanager.com'])
+      expect(e.csp).toEqual({ 'connect-src': ['www.google-analytics.com', 'analytics.google.com'], 'img-src': ['www.google-analytics.com'] })
+      expect(e.storage.map((s) => s.name)).toEqual(['_ga', '_ga_ABC1234XY'])
+      expect(e.storage[1]!.translationKey).toBe('_ga_container')
+      expect(e.provider.privacyUrl).toBe('https://policies.google.com/privacy')
+      expect(e.catalogRevision).toBe(1)
+      expect(e.lastVerified).toBeNull()
+      expect(e.notes ?? '').toMatch(/UNVERIFIED/)
+    })
+    test('Google Tag Manager: marketing by default, gtm init, storage empty and stated unknown', () => {
+      const e = catalog.googleTagManager({ containerId: 'GTM-ABC1234' })
+      expect(e.id).toBe('google-tag-manager')
+      expect(e.category).toBe('marketing')
+      expect(e.gating).toEqual({ type: 'script', src: 'https://www.googletagmanager.com/gtm.js?id=GTM-ABC1234', init: { kind: 'gtm' } })
+      expect(e.storage).toEqual([])
+      expect(e.notes ?? '').toMatch(/not gated individually/)
+      expect(e.notes ?? '').toMatch(/unknown/)
+      expect(e.notes ?? '').toMatch(/UNVERIFIED/)
+    })
+    test('Meta Pixel: marketing by default, fbq init, _fbp cookie', () => {
+      const e = catalog.metaPixel({ pixelId: '123456789012345' })
+      expect(e.id).toBe('meta-pixel')
+      expect(e.category).toBe('marketing')
+      expect(e.gating).toEqual({ type: 'script', src: 'https://connect.facebook.net/en_US/fbevents.js', init: { kind: 'fbq', id: '123456789012345' } })
+      expect(e.origins).toEqual(['connect.facebook.net'])
+      expect(e.csp).toEqual({ 'connect-src': ['www.facebook.com'], 'img-src': ['www.facebook.com'] })
+      expect(e.storage.map((s) => s.name)).toEqual(['_fbp'])
+      expect(e.provider.privacyUrl).toBe('https://www.facebook.com/privacy/policy/')
+      expect(e.notes ?? '').toMatch(/UNVERIFIED/)
+    })
+    test('each accepts a category override and keeps notes within 600 characters', () => {
+      expect(catalog.googleAnalytics({ measurementId: 'G-ABCD', category: 'marketing' }).category).toBe('marketing')
+      expect(catalog.googleTagManager({ containerId: 'GTM-ABCD', category: 'analytics' }).category).toBe('analytics')
+      expect(catalog.metaPixel({ pixelId: '12345', category: 'social' }).category).toBe('social')
+      for (const e of [catalog.googleAnalytics({ measurementId: 'G-ABCD' }), catalog.googleTagManager({ containerId: 'GTM-ABCD' }), catalog.metaPixel({ pixelId: '12345' })]) expect((e.notes ?? '').length, e.id).toBeLessThanOrEqual(600)
+    })
+    test('missing or malformed ids throw an error naming the option', () => {
+      const ga = catalog.googleAnalytics as (o?: unknown) => unknown
+      const gtm = catalog.googleTagManager as (o?: unknown) => unknown
+      const px = catalog.metaPixel as (o?: unknown) => unknown
+      expect(() => ga()).toThrow(/measurementId/)
+      expect(() => ga({ measurementId: 'UA-123' })).toThrow(/measurementId/)
+      expect(() => ga({ measurementId: 'G-abc' })).toThrow(/measurementId/)
+      expect(() => ga({ measurementId: 'G-ABC&x=1' })).toThrow(/measurementId/)
+      expect(() => gtm()).toThrow(/containerId/)
+      expect(() => gtm({ containerId: 'G-ABCD' })).toThrow(/containerId/)
+      expect(() => gtm({ containerId: 'GTM-ABC' })).toThrow(/containerId/)
+      expect(() => px()).toThrow(/pixelId/)
+      expect(() => px({ pixelId: '12ab' })).toThrow(/pixelId/)
+      expect(() => px({ pixelId: 12345 })).toThrow(/pixelId/)
+    })
+    test('their hosts reach the CSP connect-src and img-src lists', () => {
+      const c = defineConsent({ ...base, services: services.slice(5) })
+      const csp = cspSources(c)
+      expect(csp['connect-src']).toEqual(expect.arrayContaining(['www.google-analytics.com', 'analytics.google.com', 'www.facebook.com']))
+      expect(csp['img-src']).toEqual(expect.arrayContaining(['www.google-analytics.com', 'www.facebook.com']))
     })
   })
   test.each([['sk', sk], ['fr', fr], ['de', de]] as const)('the %s pack translates every catalog service', (code, pack) => {

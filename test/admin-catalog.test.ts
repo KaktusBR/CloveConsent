@@ -18,6 +18,16 @@ test('hosting is built from sample args', () => {
   expect(youtube?.entry?.id).toBe('youtube')
 })
 
+test('analytics and marketing entries are built from sample args without throwing', () => {
+  const items = listCatalog()
+  for (const [name, id] of [['googleAnalytics', 'google-analytics'], ['googleTagManager', 'google-tag-manager'], ['metaPixel', 'meta-pixel']] as const) {
+    const item = items.find((i) => i.name === name)
+    expect(item?.error, name).toBeNull()
+    expect(item?.sample, name).toBe(true)
+    expect(item?.entry?.id).toBe(id)
+  }
+})
+
 test('a throwing factory becomes an error row', () => {
   const items = listCatalog({
     ok: () => cloudflareCdn(),

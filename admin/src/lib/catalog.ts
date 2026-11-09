@@ -5,6 +5,9 @@ export type Entry = ServiceEntry | ProcessorEntry
 
 // Factories that need arguments get these; the admin shows them with a "sample args" badge.
 export const SAMPLE_ARGS: Record<string, unknown> = {
+  googleAnalytics: { measurementId: 'G-SAMPLE0000' },
+  googleTagManager: { containerId: 'GTM-SAMPLE0' },
+  metaPixel: { pixelId: '1234567890' },
   hosting: { name: 'Example Host (sample)', privacyUrl: 'https://example.com/privacy', location: { en: 'Sample location' } },
 }
 

@@ -90,6 +90,34 @@ const pack: LocalePack = {
       "title": "Esri-Satellitenbilder",
       "description": "Satellitenbilder, die von Esri-Servern geladen werden. Esri erhält beim Laden der Karte Ihre IP-Adresse."
     },
+    "google-analytics": {
+      "title": "Google Analytics",
+      "description": "Misst, wie die Website genutzt wird (aufgerufene Seiten, Besuchsdauer). Die Daten werden an Google übertragen.",
+      "storage": {
+        "_ga": {
+          "expiry": "2 Jahre",
+          "purpose": "Unterscheidet Besucher, um die Nutzung der Website zu messen."
+        },
+        "_ga_container": {
+          "expiry": "2 Jahre",
+          "purpose": "Speichert den Sitzungsstatus für diese Google-Analytics-Property."
+        }
+      }
+    },
+    "google-tag-manager": {
+      "title": "Google Tag Manager",
+      "description": "Lädt die Tags der Website (zum Beispiel für Analyse oder Werbung) aus dem Google Tag Manager."
+    },
+    "meta-pixel": {
+      "title": "Meta Pixel",
+      "description": "Misst und steuert Werbung auf Facebook und Instagram. Besuchsdaten werden an Meta übertragen.",
+      "storage": {
+        "_fbp": {
+          "expiry": "90 Tage",
+          "purpose": "Identifiziert den Browser, damit Meta Werbung messen und ausspielen kann."
+        }
+      }
+    },
     "resend": {
       "purpose": "Versand von E-Mails aus Formularen.",
       "location": "USA (gespeicherte Daten). Die Versandregion (z. B. Irland) legt nur fest, von wo E-Mails versendet werden, nicht wo Daten gespeichert werden.",
