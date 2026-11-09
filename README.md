@@ -146,6 +146,14 @@ Astro view transitions may not re-run the banner script on client-side navigatio
 - Local sites on different ports share the `localhost` cookie jar (cookies ignore ports). Give each site its own `cookieName` (`^[A-Za-z0-9_-]{1,64}$`) so they do not overwrite each other's decision.
 - Cloudflare Turnstile on localhost needs `localhost` in the widget's allowed hostnames, or Cloudflare's test keys.
 
+## Local admin
+
+`npm run admin` starts a local, view-only dev tool at http://localhost:4321. It reads `src/` directly, so edits to the catalog or language packs show up on reload. It is not part of the published package and never writes to the repo; all changes to defaults are made in code.
+
+- **Catalog**: every service and processor with category, storage, gating, origins and `lastVerified` (unverified entries are flagged). Expand a row for the full entry and its `notes`.
+- **Languages**: every banner and catalog text against each language pack, with missing translations and unreviewed packs highlighted.
+- **Playground**: pick languages, services, processors and options and see the real banner and preferences panel, with the same validation errors a site build would give.
+
 ## Adding a catalog entry
 
 1. Add a file under `src/catalog/` that returns a `ClientEntry` or `FirstPartyEntry` (see `youtube.ts`, `theme.ts`) and export it from `src/catalog/index.ts`.

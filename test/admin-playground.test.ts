@@ -57,6 +57,12 @@ test('no language ticked asks for at least one', () => {
   expect(r.error).toBe('enable at least one language')
 })
 
+test('console.warn is restored even when the build fails', () => {
+  const before = console.warn
+  expect(build({ services: ['nope'] }).config).toBeNull()
+  expect(console.warn).toBe(before)
+})
+
 test('missing pack with allowFallback warns, without it fails', () => {
   const ar = { locales: ['en', 'ar'], previewLocale: 'ar' }
   const ok = build({ ...ar, allowFallback: true })

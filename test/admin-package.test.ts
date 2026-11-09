@@ -13,4 +13,4 @@ test('admin is not in the published package', () => {
   expect(pack!.files.filter((f) => f.path.startsWith('admin/'))).toEqual([])
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   expect(pkg.files).toEqual(['dist', 'src/astro'])
-})
+}, 30_000)

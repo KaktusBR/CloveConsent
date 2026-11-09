@@ -22,7 +22,7 @@ export function listCatalog(mod: Record<string, unknown> = catalog): CatalogItem
     .sort()
     .map((name) => {
       const fn = mod[name] as (args?: unknown) => Entry
-      const sample = name in SAMPLE_ARGS
+      const sample = Object.hasOwn(SAMPLE_ARGS, name)
       const create = (args?: unknown) => fn(args)
       try {
         return { name, sample, entry: create(SAMPLE_ARGS[name]), error: null, create }
