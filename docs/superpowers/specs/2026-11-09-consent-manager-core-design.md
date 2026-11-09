@@ -8,12 +8,13 @@ cloveconsent is a TypeScript consent library installed into the author's sites (
 
 ## The end goal: a hosted CMP
 
-The overall goal is a proper hosted consent management platform at cmp.clovetek.com, run by the author. It has its own admin UI where each site (tenant) is configured: services, texts, languages, policy version, colors. Each site embeds one snippet that loads the banner and manager from the CMP and receives that site's config. The CMP stores consent records so consent can be demonstrated, and visitors keep their reference number and can review their choices on the site's privacy page. Whether it serves only the author's sites or other companies too is still open and belongs to the hosted-service design.
+The overall goal is a proper hosted consent management platform at cmp.clovetek.com, run by the author. It has its own admin UI where each site (tenant) is configured: services, texts, languages, policy version, colors. Each site embeds one snippet that loads the banner and manager from the CMP and receives that site's config. The CMP stores consent records so consent can be demonstrated, and visitors keep their reference number and can review their choices on the site's privacy page. It serves other people's sites too (confirmed by the author), and every site is unique with its own needs. So separate tenants, authentication, tenant isolation and the CMP's role as a data processor for its customers are requirements of the hosted service, not extras, and nothing in the runtime may be baked in for one site (see Modular settings).
 
-The author wants all of it, as one project built in two phases, in this order:
+The author wants all of it, as one project built in three phases, in this order:
 
 - **Phase 1 (this document): the consent manager core.** The visitor-facing runtime and UI: per-service consent, the settings panel, the consent reference, the themed bottom-bar banner, analytics and marketing entries. This is what the hosted CMP serves to every site.
-- **Phase 2: the hosted service.** Embed loader, tenant and site config API, admin UI (the current local admin is its seed), consent record storage, authentication, and the legal side of the CMP processing visitors' data. It gets its own detailed design document, written after this one and before it is built, because its stack, hosting and tenancy are still undecided.
+- **Phase 2: the hosted service.** Embed loader, tenant and site config API, admin UI (the current local admin is its seed), consent record storage, authentication, and the legal side of the CMP processing visitors' data. It gets its own detailed design document, written after this one and before it is built, because its stack and hosting are still undecided.
+- **Phase 3: the site scanner.** Scans a site with a headless browser for cookies, localStorage and third-party requests, before and after consent. It matches what it finds against the catalog, flags what is unknown or unverified, suggests the site's configuration, checks that nothing optional loads before consent, and re-scans on a schedule to catch drift such as a new tracker. It gets its own design after phase 2. Phase 1 supports it by keeping catalog entries machine-readable (hosts, storage names, gating), which they already are.
 
 Part 1 must be built so part 2 needs no rework: the client keeps booting from the public JSON config it already uses (never assume config lives in code only), the stylesheet and theming must be reachable by a loader script, `onDecision` carries everything a consent record needs (reference, time, policy version, language, accepted services, decision kind), and nothing in the runtime depends on the host being an Astro site.
 
@@ -27,6 +28,7 @@ Part 1 must be built so part 2 needs no rework: the client keeps booting from th
 6. **Plug and play look.** One shipped stylesheet themes the banner, dialog, panel, tables, buttons, blocked-embed placeholder, processor list and reopen button. It reads the host site's color tokens and needs no Tailwind configuration.
 7. **Analytics and marketing are first-class.** The categories exist already; this work adds first catalog entries for them so the manager is not empty in those groups.
 8. **Verification vehicle:** the local admin previews the banner and the panel under light, dark and no-token color sets.
+9. **Nothing baked in.** Every look and behavior in this document is a setting with a default, not a fixed choice (see Modular settings).
 
 ## Non-goals
 
@@ -45,12 +47,25 @@ Part 1 must be built so part 2 needs no rework: the client keeps booting from th
 
 ## Decisions made by the author
 
-- Banner: full-width bottom bar.
+- Banner: full-width bottom bar is the default for the author's sites; it is a setting, not a fixed choice.
 - Colors: the author's sites all use the same shadcn-style tokens (`--background`, `--foreground`, `--primary`, `--primary-foreground`, `--muted`, `--muted-foreground`, `--border`, `--ring`) and toggle dark mode with a `.dark` class on `html`. Tokens that are missing fall back to neutral built-in colors.
 - Styling is plain CSS with stable class names, not Tailwind utilities, so it works without Tailwind setup and can still be overridden with the site's own utilities or CSS.
 - Per-service and per-group control, both.
 - A privacy-page view with a unique consent reference is required.
 - Analytics and marketing are part of it.
+
+## Modular settings (nothing baked in)
+
+The hosted CMP will serve sites run by other people, and each site is unique. So no look or behavior here is fixed: each is a setting with a default, and the defaults are only what an unconfigured site gets. Settings live in one serializable `ui` object on the config, validated like everything else, resolved with defaults by `defineConsent`, and carried in the public JSON, so a hosted admin can later produce it per site.
+
+- **Banner:** layout (bar, box, cloud), position, button order, equal-weight buttons (default on; turning it off is allowed, the legal risk is the site's).
+- **Dialog:** layout and position.
+- **Manager panel:** show the receipt, per-service toggles or group toggles only, show storage tables, show the processor list, show the Withdraw button, details open or collapsed by default.
+- **Theme:** inherit the site's tokens (default) or override individual tokens. Override values must match a strict color pattern (hex, `rgb()`, `hsl()`, `oklch()`, or `var(--name)`) and are applied through the CSSOM (`style.setProperty`), never as injected CSS text, so a hostile or mistaken config cannot inject styles and a strict Content Security Policy keeps working. Radius and font family inherit by default.
+- **Already settings today and staying so:** languages, every text (per-site `messages` override), services, processors, policy version, cookie name, privacy link, dark mode. Any new visitor-facing text must be overridable the same way.
+- **Catalog entries** take site-specific values (IDs, category) as options. No site-specific value (domain, ID, brand color) may be hard-coded in shipped code except the documented neutral fallbacks.
+
+Rule for the builder: a new behavior ships together with its setting, its default, its validation and a test that the setting changes the result.
 
 ## Existing code this builds on (verified)
 
