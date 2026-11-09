@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { defineConsent } from '../src/config'
 import { createConsent } from '../src/client'
 import type { ConsentDriver, DriverHooks } from '../src/driver'
-import { theme, turnstile, youtube } from '../src/catalog'
+import { openStreetMap, theme, turnstile, youtube } from '../src/catalog'
 import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
@@ -113,6 +113,35 @@ describe('re-consent gates optional services until a decision (spec section 6)',
     const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [{ ...theme(), id: 'constructor' }], allowFallback: true })
     const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all, { siteRevision: 1, revisions: {} }))) }); c.init()
     expect(c.isAllowed('constructor')).toBe(false)
+  })
+})
+
+describe('per-service consent', () => {
+  const both = ['necessary', 'functional', 'media']
+  const conf = (services = [turnstile(), theme(), youtube(), openStreetMap()]) =>
+    defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services })
+  const rev = { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1, openstreetmap: 1 } }
+  const withServices = (services: object, data: object = rev) =>
+    enc({ consentId: 'abc-12345678', categories: both, lastConsentTimestamp: '2026-10-14T10:00:00.000Z', data, services })
+  test('only the listed service of an accepted category is allowed', () => {
+    const c = createConsent(conf(), { driver: drv(fakeDriver(withServices({ media: ['openstreetmap'], functional: ['theme'] }))) }); c.init()
+    expect(c.isAllowed('openstreetmap')).toBe(true)
+    expect(c.isAllowed('youtube')).toBe(false)
+    expect(c.isAllowed('theme')).toBe(true)
+    expect(c.isAllowed('cloudflare-turnstile')).toBe(true)
+  })
+  test('an old cookie with no services field allows every service of an accepted category (review focus 1)', () => {
+    const c = createConsent(conf(), { driver: drv(fakeDriver(cookie(both, rev))) }); c.init()
+    expect(c.getState()!.services).toBeNull()
+    expect(c.isAllowed('openstreetmap')).toBe(true)
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('theme')).toBe(true)
+  })
+  test('a service with a higher catalogRevision stays blocked though its category and id are accepted (review focus 2)', () => {
+    const y = youtube(); y.catalogRevision = 2
+    const c = createConsent(conf([turnstile(), theme(), y, openStreetMap()]), { driver: drv(fakeDriver(withServices({ media: ['youtube', 'openstreetmap'], functional: ['theme'] }))) }); c.init()
+    expect(c.isAllowed('youtube')).toBe(false)
+    expect(c.isAllowed('openstreetmap')).toBe(true)
   })
 })
 

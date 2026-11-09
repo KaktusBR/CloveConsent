@@ -1,7 +1,7 @@
 import type { Category, ClientEntry, ConsentConfig, ConsentState, DecisionInfo, Locale, ServiceEntry, StorageItem } from './schema'
 import type { ConsentDriver } from './driver'
 import { loadScript, unloadService } from './gating'
-import { buildStoredData, needsPrompt, parseConsent } from './state'
+import { buildStoredData, needsPrompt, parseConsent, serviceAccepted } from './state'
 import { buildView } from './view'
 import { isDev } from './dev'
 
@@ -67,7 +67,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     if (!st || st.siteRevision !== config.revision) return false
     const seen = Object.hasOwn(st.revisions, s.id) ? st.revisions[s.id] : undefined
     if (seen === undefined || seen < s.catalogRevision) return false
-    return st.categories.includes(s.category)
+    return serviceAccepted(st, s)
   }
   const applyScripts = () => {
     for (const s of config.services) {

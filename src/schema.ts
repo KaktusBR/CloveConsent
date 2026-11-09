@@ -62,6 +62,8 @@ export interface ConsentState {
   categories: Category[]               // accepted, always includes 'necessary'
   siteRevision: number | null
   revisions: Record<string, number>
+  /** Category id -> accepted service ids. `null` means the cookie has no `services` field (written before per-service consent). */
+  services: Record<string, string[]> | null
   timestamp: string | null
 }
 export interface DecisionInfo {

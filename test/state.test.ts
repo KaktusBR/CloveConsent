@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { defineConsent } from '../src/config'
 import { theme, youtube } from '../src/catalog'
 import sk from '../src/locales/sk'
-import { buildStoredData, needsPrompt, parseConsent, readCookieValue } from '../src/state'
+import { buildStoredData, needsPrompt, parseConsent, readCookieValue, serviceAccepted } from '../src/state'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const good = (extra: object = {}) => enc({
@@ -50,6 +50,53 @@ describe('parseConsent (review focus 1)', () => {
     const s = parseConsent(enc({ consentId: 'abc-12345678', categories: ['necessary'] }))!
     expect(s.siteRevision).toBeNull()
     expect(s.revisions).toEqual({})
+  })
+})
+
+describe('parseConsent services', () => {
+  test('reads services keyed by category', () => {
+    const s = parseConsent(good({ services: { media: ['youtube'], functional: [] } }))!
+    expect(s.services).toEqual({ media: ['youtube'], functional: [] })
+  })
+  test('a cookie without a services field has services null', () => {
+    expect(parseConsent(good())!.services).toBeNull()
+  })
+  test.each([
+    ['array', []], ['string', 'x'], ['number', 3],
+  ])('a services field that is %s is treated as missing', (_n, v) => {
+    expect(parseConsent(good({ services: v }))!.services).toBeNull()
+  })
+  test('drops entries that are not arrays of valid service ids, unknown categories and prototype keys', () => {
+    const raw = '{"consentId":"abc-12345678","categories":["necessary","media"],"services":{"media":["youtube","bad id",3,"UPPER"],"functional":"theme","hacker":["x"],"analytics":{"0":"a"},"__proto__":["pwn"],"constructor":["pwn"]}}'
+    const s = parseConsent(encodeURIComponent(raw))!
+    expect(s.services).toEqual({ media: ['youtube'] })
+    expect(({} as any).pwn).toBeUndefined()
+    expect(Object.getPrototypeOf(s.services)).toBeNull()
+  })
+})
+
+describe('serviceAccepted', () => {
+  const state = (services: Record<string, string[]> | null, categories = ['necessary', 'media']) =>
+    parseConsent(good({ categories, ...(services ? { services } : {}) }))!
+  test('necessary services are always accepted', () => {
+    expect(serviceAccepted(state({}, ['necessary']), theme({ category: 'necessary' } as any))).toBe(true)
+  })
+  test('a listed service of an accepted category is accepted', () => {
+    expect(serviceAccepted(state({ media: ['youtube'] }), youtube())).toBe(true)
+  })
+  test('an unlisted service of an accepted category is not accepted', () => {
+    expect(serviceAccepted(state({ media: ['openstreetmap'] }), youtube())).toBe(false)
+    expect(serviceAccepted(state({}), youtube())).toBe(false)
+  })
+  test('a listed service whose category is not accepted is not accepted', () => {
+    expect(serviceAccepted(state({ media: ['youtube'] }, ['necessary']), youtube())).toBe(false)
+  })
+  test('old cookie (services null) accepts every service of an accepted category (review focus 1)', () => {
+    const s = state(null)
+    expect(s.services).toBeNull()
+    expect(() => serviceAccepted(s, youtube())).not.toThrow()
+    expect(serviceAccepted(s, youtube())).toBe(true)
+    expect(serviceAccepted(s, theme())).toBe(false) // functional category not accepted
   })
 })
 

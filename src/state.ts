@@ -1,4 +1,4 @@
-import { CATEGORIES, type Category, type ConsentConfig, type ConsentState } from './schema'
+import { CATEGORIES, type Category, type ConsentConfig, type ConsentState, type ServiceEntry } from './schema'
 
 export const MAX_COOKIE_LENGTH = 4096
 const ID = /^[a-z0-9-]{1,48}$/
@@ -11,6 +11,17 @@ export function readCookieValue(cookieHeader: string, name: string): string | nu
     if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim()
   }
   return null
+}
+
+// the engine stores `services` as an object keyed by category id; anything else (or a missing field) is null
+function parseServices(raw: unknown): Record<string, string[]> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const out: Record<string, string[]> = Object.create(null)
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(CATEGORIES as readonly string[]).includes(k) || !Array.isArray(v)) continue
+    out[k] = v.filter((id): id is string => typeof id === 'string' && ID.test(id))
+  }
+  return out
 }
 
 export function parseConsent(rawValue: string | null): ConsentState | null {
@@ -33,8 +44,16 @@ export function parseConsent(rawValue: string | null): ConsentState | null {
       if (ID.test(k) && !(k in Object.prototype) && Number.isInteger(v) && (v as number) >= 1) revisions[k] = v as number
     }
   }
+  const services = parseServices(o.services)
   const ts = typeof o.lastConsentTimestamp === 'string' && !Number.isNaN(Date.parse(o.lastConsentTimestamp)) ? o.lastConsentTimestamp : null
-  return { consentId: o.consentId, categories: [...categories], siteRevision, revisions, timestamp: ts }
+  return { consentId: o.consentId, categories: [...categories], siteRevision, revisions, services, timestamp: ts }
+}
+
+/** Whether the visitor accepted this service. A cookie without per-service data (`services: null`) accepts every service of an accepted category. */
+export function serviceAccepted(state: ConsentState, service: ServiceEntry): boolean {
+  if (service.category === 'necessary') return true
+  if (!state.categories.includes(service.category)) return false
+  return state.services === null || (state.services[service.category]?.includes(service.id) ?? false)
 }
 
 export function needsPrompt(state: ConsentState | null, config: ConsentConfig): boolean {

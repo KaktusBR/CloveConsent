@@ -148,3 +148,24 @@ describe('real vanilla-cookieconsent: programmatic decisions hide the UI', () =>
     expect(stored()!.siteRevision).toBe(2)
   })
 })
+
+describe('real vanilla-cookieconsent: per-service cookie shape', () => {
+  test('the engine stores services keyed by category and the client allows only the accepted one', async () => {
+    const c = await load()
+    CC.acceptCategory(['media', 'functional'])
+    CC.acceptService(['youtube'], 'media')
+    CC.acceptService([], 'functional')
+    await flush()
+    const st = stored()!
+    expect(st.services).toEqual({ necessary: [], media: ['youtube'], functional: [] })
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('theme')).toBe(false)
+  })
+  test('accepting all lists every declared service', async () => {
+    const c = await load()
+    click('.cm__btn[data-role="all"]')
+    await flush()
+    expect(stored()!.services).toEqual({ necessary: [], media: ['youtube'], functional: ['theme'] })
+    expect(c.isAllowed('theme')).toBe(true)
+  })
+})

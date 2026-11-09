@@ -11,7 +11,9 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
   for (const c of view.categories) {
     if (c.id === 'necessary') { categories.necessary = { enabled: true, readOnly: true }; continue }
     const cookies = c.services.flatMap((s) => s.storage.filter((x) => x.type === 'cookie').map((x) => ({ name: x.name })))
-    categories[c.id] = { enabled: false, readOnly: false, ...(cookies.length ? { autoClear: { cookies } } : {}) }
+    // the engine only records per-service acceptance for services declared here; undeclared ones are stored as an empty list
+    const services = Object.fromEntries(c.services.map((s) => [s.id, { label: esc(s.title) }]))
+    categories[c.id] = { enabled: false, readOnly: false, services, ...(cookies.length ? { autoClear: { cookies } } : {}) }
   }
   const sections: unknown[] = [{ title: esc(m.prefsTitle), description: esc(m.prefsIntro) }]
   for (const c of view.categories) {
