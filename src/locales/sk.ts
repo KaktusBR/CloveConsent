@@ -62,6 +62,14 @@ const pack: LocalePack = {
       "title": "Videá YouTube",
       "description": "Vložené videá z YouTube v rozšírenom režime ochrany súkromia (youtube-nocookie.com)."
     },
+    "openstreetmap": {
+      "title": "Mapy OpenStreetMap",
+      "description": "Mapové podklady načítané zo serverov OpenStreetMap. Pri ich načítaní sa OpenStreetMap odošle vaša IP adresa a webová stránka, na ktorej sa nachádzate."
+    },
+    "esri-imagery": {
+      "title": "Satelitné snímky Esri",
+      "description": "Satelitné mapové podklady načítané zo serverov Esri. Pri načítaní mapy dostane Esri vašu IP adresu."
+    },
     "resend": {
       "purpose": "Odosielanie e-mailov z formulárov.",
       "location": "USA (uložené údaje). Región odosielania (napr. Írsko) určuje len to, odkiaľ sa e-maily odosielajú, nie kde sa údaje ukladajú.",

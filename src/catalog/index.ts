@@ -1,4 +1,6 @@
 export { turnstile } from './turnstile'
 export { youtube } from './youtube'
 export { theme } from './theme'
+export { openStreetMap } from './openstreetmap'
+export { esriImagery } from './esri'
 export { resend, cloudflareCdn, facebookGraph, hosting } from './processors'

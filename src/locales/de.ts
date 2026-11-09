@@ -62,6 +62,14 @@ const pack: LocalePack = {
       "title": "YouTube-Videos",
       "description": "Eingebettete YouTube-Videos im erweiterten Datenschutzmodus (youtube-nocookie.com)."
     },
+    "openstreetmap": {
+      "title": "OpenStreetMap-Karten",
+      "description": "Kartenbilder, die von OpenStreetMap-Servern geladen werden. Beim Laden werden Ihre IP-Adresse und die besuchte Website an OpenStreetMap übertragen."
+    },
+    "esri-imagery": {
+      "title": "Esri-Satellitenbilder",
+      "description": "Satellitenbilder, die von Esri-Servern geladen werden. Esri erhält beim Laden der Karte Ihre IP-Adresse."
+    },
     "resend": {
       "purpose": "Versand von E-Mails aus Formularen.",
       "location": "USA (gespeicherte Daten). Die Versandregion (z. B. Irland) legt nur fest, von wo E-Mails versendet werden, nicht wo Daten gespeichert werden.",

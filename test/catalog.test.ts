@@ -2,9 +2,13 @@ import { describe, expect, test } from 'vitest'
 import * as catalog from '../src/catalog'
 import { defineConsent } from '../src/config'
 import { theme } from '../src/catalog'
+import { cspSources } from '../src/csp'
+import de from '../src/locales/de'
+import fr from '../src/locales/fr'
+import sk from '../src/locales/sk'
 import { validateProcessor, validateService } from '../src/validate'
 
-const services = [catalog.turnstile(), catalog.youtube(), catalog.theme()]
+const services = [catalog.turnstile(), catalog.youtube(), catalog.theme(), catalog.openStreetMap(), catalog.esriImagery()]
 const processors = [catalog.resend(), catalog.cloudflareCdn(), catalog.facebookGraph(),
   catalog.hosting({ name: 'Test host', privacyUrl: 'https://example.com/privacy', location: { en: 'Germany' } })]
 
@@ -30,7 +34,7 @@ describe('catalog (English sources, valid, flagged)', () => {
   // Verification status as recorded in docs/catalog-verification.md. Changing a row here means re-checking the provider docs.
   const VERIFIED = '2026-10-14'
   const expected: Record<string, string | null> = {
-    'cloudflare-turnstile': null, youtube: null, theme: null,
+    'cloudflare-turnstile': null, youtube: null, theme: null, openstreetmap: null, 'esri-imagery': null,
     resend: VERIFIED, 'cloudflare-cdn': VERIFIED, 'facebook-graph': null, hosting: null,
   }
   test('lastVerified matches the recorded verification status for every entry', () => {
@@ -56,6 +60,36 @@ describe('catalog (English sources, valid, flagged)', () => {
     expect(text).not.toMatch(/bez cookies|no cookies|cookie-free|sans cookie|ohne Cookies/i)
     const resend = catalog.resend()
     for (const loc of Object.values(resend.location)) expect(loc).toMatch(/USA|United States|États-Unis/)
+  })
+  describe('map tiles', () => {
+    const base = { locales: ['en'], defaultLocale: 'en', revision: 1 }
+    test('OpenStreetMap uses the single tile host from the OSMF tile policy, no wildcard', () => {
+      const e = catalog.openStreetMap()
+      expect(e.id).toBe('openstreetmap')
+      expect(e.category).toBe('media')
+      expect(e.origins).toEqual(['tile.openstreetmap.org'])
+      expect(e.csp).toEqual({ 'img-src': ['tile.openstreetmap.org'] })
+      expect(e.provider.privacyUrl).toBe('https://osmfoundation.org/wiki/Privacy_Policy')
+    })
+    test('Esri imagery is a media service on its tile host', () => {
+      const e = catalog.esriImagery()
+      expect(e.id).toBe('esri-imagery')
+      expect(e.category).toBe('media')
+      expect(e.origins).toEqual(['server.arcgisonline.com'])
+      expect(e.csp).toEqual({ 'img-src': ['server.arcgisonline.com'] })
+    })
+    test('tile services are gated by the site code (gating none) and allow a category override', () => {
+      for (const e of [catalog.openStreetMap(), catalog.esriImagery()]) expect(e.gating).toEqual({ type: 'none' })
+      expect(catalog.openStreetMap({ category: 'functional' }).category).toBe('functional')
+      expect(catalog.esriImagery({ category: 'functional' }).category).toBe('functional')
+    })
+    test('their hosts reach the CSP img-src list', () => {
+      const c = defineConsent({ ...base, services: [catalog.openStreetMap(), catalog.esriImagery()] })
+      expect(cspSources(c)['img-src']).toEqual(['server.arcgisonline.com', 'tile.openstreetmap.org'])
+    })
+  })
+  test.each([['sk', sk], ['fr', fr], ['de', de]] as const)('the %s pack translates every catalog service', (code, pack) => {
+    expect(() => defineConsent({ locales: [code, 'en'], defaultLocale: 'en', revision: 1, packs: [pack], services })).not.toThrow()
   })
   test('report warnings (never fails)', () => {
     const now = Date.now()
