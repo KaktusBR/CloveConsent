@@ -51,13 +51,16 @@ export function parseConsent(rawValue: string | null): ConsentState | null {
 
 /**
  * Whether the visitor accepted this service. A cookie without per-service data (`services: null`) accepts every service of an
- * accepted category; so does a site without per-service toggles (`perService` false), where the engine does not know the
- * services and stores an empty list for every category.
+ * accepted category. A site without per-service toggles (`perService` false) does so too for an empty list, which is what the
+ * engine writes there; a non-empty list can only come from a visit with toggles on and is honoured as written.
  */
-export function serviceAccepted(state: ConsentState, service: ServiceEntry, perService = true): boolean {
+export function serviceAccepted(state: ConsentState, service: ServiceEntry, perService: boolean): boolean {
   if (service.category === 'necessary') return true
   if (!state.categories.includes(service.category)) return false
-  return !perService || state.services === null || (state.services[service.category]?.includes(service.id) ?? false)
+  if (state.services === null) return true
+  const listed = state.services[service.category]
+  if (!perService && listed?.length === 0) return true
+  return listed?.includes(service.id) ?? false
 }
 
 export function needsPrompt(state: ConsentState | null, config: ConsentConfig): boolean {

@@ -332,6 +332,19 @@ describe('real vanilla-cookieconsent: layout and dialog from ui', () => {
 
   describe('without service toggles the client works per category', () => {
     const noToggles = { manager: { serviceToggles: false } }
+    test('a cookie written with toggles on is honoured when the site later turns them off', async () => {
+      // the visitor accepted only OpenStreetMap while per-service toggles were on
+      document.cookie = `cc_cookie=${enc({
+        categories: ['necessary', 'media'], revision: 0, data: { siteRevision: 2, revisions: { theme: 1, youtube: 1, openstreetmap: 1 } },
+        consentTimestamp: '2026-10-01T10:00:00.000Z', lastConsentTimestamp: '2026-10-01T10:00:00.000Z',
+        consentId: 'abc-12345678', services: { necessary: [], media: ['openstreetmap'], functional: [] }, languageCode: 'sk', expirationTime: Date.now() + 1e9,
+      })}; path=/`
+      const c = await load(2, three(), noToggles)
+      expect(banner()).toBe(false)
+      expect(c.isAllowed('openstreetmap')).toBe(true)
+      expect(c.isAllowed('youtube')).toBe(false)
+      expect(c.isAllowed('theme')).toBe(false)
+    })
     test('accept all allows every service and lists the changed ones', async () => {
       const c = await load(2, three(), noToggles)
       const seen: string[] = []

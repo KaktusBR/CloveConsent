@@ -84,27 +84,34 @@ describe('serviceAccepted', () => {
   test('without per-service toggles an accepted category accepts all its services, whatever the cookie lists', () => {
     expect(serviceAccepted(state({ media: [] }), youtube(), false)).toBe(true)
     expect(serviceAccepted(state({ media: [] }, ['necessary']), youtube(), false)).toBe(false)
-    expect(serviceAccepted(state({ media: [] }), youtube())).toBe(false)
+    expect(serviceAccepted(state({ media: [] }), youtube(), true)).toBe(false)
+  })
+  test('without per-service toggles a non-empty list is honoured as written; an empty list or no services field accepts the category', () => {
+    expect(serviceAccepted(state({ media: ['openstreetmap'] }), youtube(), false)).toBe(false)
+    expect(serviceAccepted(state({ media: ['openstreetmap'] }), openStreetMap(), false)).toBe(true)
+    expect(serviceAccepted(state({ media: [] }), youtube(), false)).toBe(true)
+    expect(serviceAccepted(state(null), youtube(), false)).toBe(true)
+    expect(serviceAccepted(state({}), youtube(), false)).toBe(false)
   })
   test('necessary services are always accepted', () => {
-    expect(serviceAccepted(state({}, ['necessary']), theme({ category: 'necessary' } as any))).toBe(true)
+    expect(serviceAccepted(state({}, ['necessary']), theme({ category: 'necessary' } as any), true)).toBe(true)
   })
   test('a listed service of an accepted category is accepted', () => {
-    expect(serviceAccepted(state({ media: ['youtube'] }), youtube())).toBe(true)
+    expect(serviceAccepted(state({ media: ['youtube'] }), youtube(), true)).toBe(true)
   })
   test('an unlisted service of an accepted category is not accepted', () => {
-    expect(serviceAccepted(state({ media: ['openstreetmap'] }), youtube())).toBe(false)
-    expect(serviceAccepted(state({}), youtube())).toBe(false)
+    expect(serviceAccepted(state({ media: ['openstreetmap'] }), youtube(), true)).toBe(false)
+    expect(serviceAccepted(state({}), youtube(), true)).toBe(false)
   })
   test('a listed service whose category is not accepted is not accepted', () => {
-    expect(serviceAccepted(state({ media: ['youtube'] }, ['necessary']), youtube())).toBe(false)
+    expect(serviceAccepted(state({ media: ['youtube'] }, ['necessary']), youtube(), true)).toBe(false)
   })
   test('old cookie (services null) accepts every service of an accepted category (review focus 1)', () => {
     const s = state(null)
     expect(s.services).toBeNull()
-    expect(() => serviceAccepted(s, youtube())).not.toThrow()
-    expect(serviceAccepted(s, youtube())).toBe(true)
-    expect(serviceAccepted(s, theme())).toBe(false) // functional category not accepted
+    expect(() => serviceAccepted(s, youtube(), true)).not.toThrow()
+    expect(serviceAccepted(s, youtube(), true)).toBe(true)
+    expect(serviceAccepted(s, theme(), true)).toBe(false) // functional category not accepted
   })
 })
 
