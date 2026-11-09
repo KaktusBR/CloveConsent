@@ -367,3 +367,35 @@ describe('turning a service off inside an accepted category', () => {
     expect(c.isAllowed('plausible')).toBe(true)
   })
 })
+
+describe('acceptedServices', () => {
+  const all = ['necessary', 'functional', 'media']
+  test('lists the optional services with a stored, current consent; not necessary, not once', () => {
+    const c = createConsent(cfg(), { driver: drv(fakeDriver(cookie(all))) }); c.init()
+    expect(c.acceptedServices()).toEqual(['theme', 'youtube'])
+    const u = createConsent(cfg(), { driver: drv(fakeDriver()) }); u.init()
+    u.allowOnce('youtube')
+    expect(u.isAllowed('youtube')).toBe(true)
+    expect(u.acceptedServices()).toEqual([])
+  })
+  test('excludes a service with a stale catalogRevision, like isAllowed', () => {
+    const y = youtube(); y.catalogRevision = 2
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), y] })
+    const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all))) }); c.init()
+    expect(c.acceptedServices()).toEqual(['theme'])
+    expect(c.isAllowed('youtube')).toBe(false)
+  })
+  test('is empty after a site revision bump', () => {
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 2, services: [turnstile(), theme(), youtube()] })
+    const c = createConsent(conf, { driver: drv(fakeDriver(cookie(all))) }); c.init()
+    expect(c.acceptedServices()).toEqual([])
+  })
+  test('honours per-service choices, and perService false accepts the whole category', () => {
+    const per = fakeDriver(enc({ consentId: 'abc-12345678', categories: all, services: { functional: ['theme'], media: [] }, data: { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1 } } }))
+    const a = createConsent(cfg(), { driver: drv(per) }); a.init()
+    expect(a.acceptedServices()).toEqual(['theme'])
+    const conf = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), theme(), youtube()], ui: { manager: { serviceToggles: false } } })
+    const b = createConsent(conf, { driver: drv(fakeDriver(enc({ consentId: 'abc-12345678', categories: all, services: { functional: [], media: [] }, data: { siteRevision: 1, revisions: { 'cloudflare-turnstile': 1, theme: 1, youtube: 1 } } }))) }); b.init()
+    expect(b.acceptedServices()).toEqual(['theme', 'youtube'])
+  })
+})

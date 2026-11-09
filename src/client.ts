@@ -19,6 +19,12 @@ export interface Consent {
   acceptCategory(c: Category): void
   /** Exactly these optional services are accepted afterwards (an empty list accepts none). Throws for an unknown id; ids of necessary services are ignored. */
   setServices(ids: string[]): void
+  /**
+   * Ids of the optional services whose consent is stored and current: the persisted part of `isAllowed`. A one-time allowance
+   * (`allowOnce`) is not included, nor are necessary services, nor a service held back by re-consent (new service, bumped
+   * `catalogRevision` or site `revision`). Use it to show what the visitor has actually chosen.
+   */
+  acceptedServices(): string[]
   /** Accept one more service, keeping the ones already accepted. */
   acceptService(id: string): void
   /** Withdraw all consent. Reported as a decision of kind `withdraw`. */
@@ -80,15 +86,21 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
 
   // an optional service whose revision the visitor has not seen (new service, bumped catalogRevision, or bumped
   // site revision) stays blocked until the visitor answers the re-consent banner
-  const isAllowed = (id: string): boolean => {
-    const s = find(id)
-    if (!s) return false
-    if (s.category === 'necessary' || once.has(id)) return true
-    const st = state()
+  const storedConsent = (st: ConsentState | null, s: ServiceEntry): boolean => {
     if (!st || st.siteRevision !== config.revision) return false
     const seen = Object.hasOwn(st.revisions, s.id) ? st.revisions[s.id] : undefined
     if (seen === undefined || seen < s.catalogRevision) return false
     return serviceAccepted(st, s, perService)
+  }
+  const isAllowed = (id: string): boolean => {
+    const s = find(id)
+    if (!s) return false
+    if (s.category === 'necessary' || once.has(id)) return true
+    return storedConsent(state(), s)
+  }
+  const acceptedServices = (): string[] => {
+    const st = state()
+    return config.services.filter((s) => s.category !== 'necessary' && storedConsent(st, s)).map((s) => s.id)
   }
   const applyScripts = () => {
     for (const s of config.services) {
@@ -151,6 +163,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     },
     getState: state,
     isAllowed,
+    acceptedServices,
     acceptAll: () => driver.acceptAll(),
     rejectAll: () => driver.rejectAll(),
     withdraw() {

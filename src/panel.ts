@@ -53,23 +53,44 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
   let wasConnected = root.isConnected
   let disposed = false
 
-  const status = (text: string): void => {
+  let pending: ReturnType<typeof setTimeout> | null = null
+  const cancelAnnounce = (): void => { if (pending !== null) { clearTimeout(pending); pending = null } }
+  /** Writes into the live region: cleared first and set on a later task, so the same text twice in a row is announced twice. */
+  const announce = (text: string): void => {
+    cancelAnnounce()
     const el = root.querySelector('.consent-status')
-    if (el) el.textContent = text
+    if (!el) return
+    el.textContent = ''
+    if (!text) return
+    pending = setTimeout(() => {
+      pending = null
+      const now = root.querySelector('.consent-status')
+      if (now && !disposed) now.textContent = text
+    }, 0)
   }
-  const allowedIds = (): Set<string> => new Set(optional.flatMap((c) => c.services.map((s) => s.id)).filter((id) => consent.isAllowed(id)))
+  // what the visitor has chosen and stored: a one-time allowance (allowOnce) is not a choice and must never be saved by the panel
+  const allowedIds = (): Set<string> => {
+    const optionalIds = new Set(optional.flatMap((c) => c.services.map((s) => s.id)))
+    return new Set(consent.acceptedServices().filter((id) => optionalIds.has(id)))
+  }
+  let renders = 0
 
   /** Renders the panel for the current state into the root. Event-driven renders skip an unchanged state so unsaved ticks survive. */
   function render(force: boolean): void {
     const html = renderSettings(view, consent.getState(), allowedIds())
     if (!force && html === lastHtml) return
     lastHtml = html
+    renders++
     const focused = root.contains(doc.activeElement) ? controlKey(doc.activeElement) : null
     const open = new Set([...root.querySelectorAll('[data-category]')].filter((c) => c.querySelector('details[open]')).map((c) => c.getAttribute('data-category')))
     const tpl = doc.createElement('template')
     tpl.innerHTML = html
     const fresh = tpl.content.firstElementChild
     if (!fresh) return
+    // keep the live region node itself: a replaced node is not reliably announced
+    const live = root.querySelector('.consent-status')
+    const placeholder = fresh.querySelector('.consent-status')
+    if (live && placeholder) placeholder.replaceWith(live)
     root.replaceChildren(...fresh.childNodes)
     root.querySelectorAll('[data-category]').forEach((cat) => {
       const details = cat.querySelector('details')
@@ -137,7 +158,7 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
     if (!clip || typeof clip.writeText !== 'function') { selectReference(); return }
     try {
       await clip.writeText(ref)
-      if (!disposed) status(m.receiptCopied)
+      if (!disposed) announce(m.receiptCopied)
     } catch {
       // permission denied or no secure context: leave the reference selected so the visitor can copy it by hand
       if (!disposed) selectReference()
@@ -149,14 +170,16 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
     const btn = ev.target.closest<HTMLElement>('[data-consent-action]')
     if (!btn || !root.contains(btn)) return
     const name = btn.getAttribute('data-consent-action')
+    const before = renders
     if (name === 'copy') { void copy(); return }
     if (name === 'accept-all') consent.acceptAll()
     else if (name === 'reject-all') consent.rejectAll()
     else if (name === 'withdraw') consent.withdraw()
     else if (name === 'save') consent.setServices(chosen())
     else return
-    render(true)
-    status(m.settingsSaved)
+    // a decision has already re-rendered the panel; only an action that changed nothing still needs to reset the switches
+    if (renders === before) render(true)
+    announce(m.settingsSaved)
   }
   const onChange = (ev: Event): void => {
     const t = ev.target
@@ -167,7 +190,7 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
       if (perService) cat.querySelectorAll<HTMLInputElement>('input[data-consent-service]').forEach((i) => { if (!i.disabled) i.checked = t.checked })
     } else if (!t.hasAttribute('data-consent-service')) return
     refreshCategory(cat)
-    status('')
+    announce('')
   }
   // the summary text follows the open state; `toggle` does not bubble, so it is caught in the capture phase
   const onToggle = (ev: Event): void => {
@@ -187,6 +210,7 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
   function unbind(): void {
     if (disposed) return
     disposed = true
+    cancelAnnounce()
     root.removeEventListener('click', onClick)
     root.removeEventListener('change', onChange)
     root.removeEventListener('toggle', onToggle, true)

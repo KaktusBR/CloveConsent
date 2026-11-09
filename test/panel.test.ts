@@ -81,7 +81,7 @@ afterEach(() => {
 })
 
 describe('before any decision (state null)', () => {
-  test('renders without a reference, hides Withdraw, and Save creates the first decision', () => {
+  test('renders without a reference, hides Withdraw, and Save creates the first decision', async () => {
     const { consent, root } = setup()
     expect(consent.getState()).toBeNull()
     expect(root.querySelector('.consent-receipt__id')).toBeNull()
@@ -99,6 +99,7 @@ describe('before any decision (state null)', () => {
     expect(consent.isAllowed('theme')).toBe(true)
     expect(q(root, '.consent-receipt__id').textContent).toBe('abc-12345678')
     expect(action(root, 'withdraw')).not.toBeNull()
+    await flush()
     expect(status(root)).toBe('Your choice has been saved.')
   })
   test('Save with nothing ticked is still a first decision (necessary only)', () => {
@@ -165,7 +166,7 @@ describe('switches', () => {
 })
 
 describe('actions', () => {
-  test('Save calls setServices with exactly the checked, enabled service ids and reports it', () => {
+  test('Save calls setServices with exactly the checked, enabled service ids and reports it', async () => {
     const { consent, root } = setup()
     const spy = vi.spyOn(consent, 'setServices')
     service(root, 'theme').click()
@@ -173,6 +174,7 @@ describe('actions', () => {
     action(root, 'save')!.click()
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy).toHaveBeenCalledWith(['theme', 'openstreetmap'])
+    await flush()
     expect(status(root)).toBe('Your choice has been saved.')
     expect(consent.isAllowed('theme')).toBe(true)
     expect(consent.isAllowed('youtube')).toBe(false)
@@ -225,6 +227,7 @@ describe('copy', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     action(root, 'copy')!.click()
     await flush()
+    await flush()
     expect(writeText).toHaveBeenCalledWith('AbC-12345678')
     expect(status(root)).toBe('Copied')
   })
@@ -270,6 +273,60 @@ describe('decisions from elsewhere', () => {
     service(root, 'theme').click()
     driver.hooks.onConsent() // reports ready with the same stored state
     expect(service(root, 'theme').checked).toBe(true)
+  })
+})
+
+describe('one-time allowances are not choices', () => {
+  test('allowOnce leaves the switch unticked and Save does not include the service', () => {
+    const { consent, root } = setup()
+    consent.allowOnce('youtube')
+    expect(consent.isAllowed('youtube')).toBe(true)
+    expect(service(root, 'youtube').checked).toBe(false)
+    expect(count(root, 'media')).toBe('0 of 2 allowed')
+    const spy = vi.spyOn(consent, 'setServices')
+    service(root, 'theme').click()
+    action(root, 'save')!.click()
+    expect(spy).toHaveBeenCalledWith(['theme'])
+    expect(consent.isAllowed('youtube')).toBe(false)
+  })
+  test('a once allowance with no stored decision offers no Withdraw and no reference', () => {
+    const { consent, root } = setup()
+    consent.allowOnce('youtube')
+    expect(consent.getState()).toBeNull()
+    expect(action(root, 'withdraw')).toBeNull()
+    expect(root.querySelector('.consent-receipt__id')).toBeNull()
+  })
+})
+
+describe('live region', () => {
+  test('the status node survives a re-render caused by a decision', () => {
+    const { consent, root } = setup()
+    const node = q(root, '.consent-status')
+    consent.acceptAll() // e.g. the banner
+    expect(q(root, '.consent-status')).toBe(node)
+    expect(node.isConnected).toBe(true)
+    action(root, 'reject-all')!.click()
+    expect(q(root, '.consent-status')).toBe(node)
+  })
+  test('Save writes settingsSaved into that node, and the same text twice is announced again', async () => {
+    const { root } = setup()
+    const node = q(root, '.consent-status')
+    action(root, 'save')!.click()
+    expect(node.textContent).toBe('') // cleared first, set on a later task
+    await flush()
+    expect(node.textContent).toBe('Your choice has been saved.')
+    action(root, 'save')!.click()
+    expect(node.textContent).toBe('')
+    await flush()
+    expect(node.textContent).toBe('Your choice has been saved.')
+    expect(q(root, '.consent-status')).toBe(node)
+  })
+  test('an action that causes a decision renders once', () => {
+    const { consent, root } = setup()
+    const spy = vi.spyOn(root, 'replaceChildren')
+    void consent
+    action(root, 'accept-all')!.click()
+    expect(spy).toHaveBeenCalledTimes(1)
   })
 })
 
