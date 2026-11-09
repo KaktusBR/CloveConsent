@@ -31,3 +31,8 @@ test('processors carry facts only', () => {
   expect(p.map((x) => x.id)).toEqual(['resend', 'hosting'])
   expect(p[1]!.location).toBe('Germany')
 })
+test('the view carries the resolved ui settings', () => {
+  expect(buildView(config, 'en').ui).toEqual(config.ui)
+  const custom = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [theme()], ui: { banner: { layout: 'cloud', position: 'top' } } })
+  expect(buildView(custom, 'en').ui.banner).toEqual({ layout: 'cloud', position: 'top', equalWeightButtons: true, flipButtons: false })
+})

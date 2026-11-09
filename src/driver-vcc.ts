@@ -11,9 +11,15 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
   for (const c of view.categories) {
     if (c.id === 'necessary') { categories.necessary = { enabled: true, readOnly: true }; continue }
     const cookies = c.services.flatMap((s) => s.storage.filter((x) => x.type === 'cookie').map((x) => ({ name: x.name })))
-    // the engine only records per-service acceptance for services declared here; undeclared ones are stored as an empty list
-    const services = Object.fromEntries(c.services.map((s) => [s.id, { label: esc(s.title) }]))
-    categories[c.id] = { enabled: false, readOnly: false, services, ...(cookies.length ? { autoClear: { cookies } } : {}) }
+    // the engine only records per-service acceptance for services declared here; undeclared ones are stored as an empty list.
+    // Without service toggles the dialog shows group toggles only and the client keeps working per category.
+    const services = view.ui.manager.serviceToggles
+      ? Object.fromEntries(c.services.map((s) => {
+        const names = s.storage.filter((x) => x.type === 'cookie').map((x) => ({ name: x.name }))
+        return [s.id, { label: esc(s.title), ...(names.length ? { cookies: names } : {}) }]
+      }))
+      : null
+    categories[c.id] = { enabled: false, readOnly: false, ...(services ? { services } : {}), ...(cookies.length ? { autoClear: { cookies } } : {}) }
   }
   const sections: unknown[] = [{ title: esc(m.prefsTitle), description: esc(m.prefsIntro) }]
   for (const c of view.categories) {
@@ -35,8 +41,8 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
     revision: 0,
     cookie: { name: view.cookieName, path: '/', sameSite: 'Lax', expiresAfterDays: 182, secure },
     guiOptions: {
-      consentModal: { layout: 'box', position: 'bottom left', equalWeightButtons: true, flipButtons: false },
-      preferencesModal: { layout: 'box', position: 'right', equalWeightButtons: true, flipButtons: false },
+      consentModal: { ...view.ui.banner },
+      preferencesModal: { ...view.ui.dialog, equalWeightButtons: true, flipButtons: false },
     },
     categories,
     language: {
@@ -58,8 +64,11 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
     onFirstConsent: () => hooks.onFirstConsent(),
     onConsent: () => hooks.onConsent(),
     // the engine reports changed services as an object keyed by category; the hook takes a flat list of ids
+    // without service toggles no service is declared to the engine, so a changed category stands for all its services
     onChange: ({ changedCategories, changedServices }: { changedCategories: string[]; changedServices?: Record<string, string[]> }) =>
-      hooks.onChange(changedCategories as Category[], [...new Set(Object.values(changedServices ?? {}).flat())]),
+      hooks.onChange(changedCategories as Category[], view.ui.manager.serviceToggles
+        ? [...new Set(Object.values(changedServices ?? {}).flat())]
+        : view.categories.filter((c) => changedCategories.includes(c.id)).flatMap((c) => c.services.map((s) => s.id))),
     // Only hiding the consent modal (the banner) is a decision: the library hides it solely from its
     // accept/reject/save buttons (and our own hide() after acceptCategory). Closing the preferences modal
     // (X, Escape, overlay) hides only 'preferencesModal' and must not count. The banner buttons call
@@ -76,6 +85,7 @@ interface Batch { first: boolean; consent: boolean; categories: Set<Category>; s
 export function createVccDriver(): ConsentDriver {
   let cookieName = 'cc_cookie'
   let target: DriverHooks | null = null
+  let perService = true
   let batch: Batch | null = null
   // a programmatic decision closes the UI like the library's own buttons do
   const decide = (c: string | string[]) => { CC.acceptCategory(c); CC.hidePreferences(); CC.hide() }
@@ -93,6 +103,7 @@ export function createVccDriver(): ConsentDriver {
     init(view, hooks) {
       target = hooks
       cookieName = view.cookieName
+      perService = view.ui.manager.serviceToggles
       if (view.darkMode) {
         const html = document.documentElement
         const sync = () => html.classList.toggle('cc--darkmode', html.classList.contains('dark'))
@@ -109,6 +120,8 @@ export function createVccDriver(): ConsentDriver {
     rejectAll() { decide([]) },
     acceptCategories(categories) { decide(categories as string[]) },
     acceptServices(selection) {
+      // the engine knows no services without toggles: a category with any listed service is accepted as a whole
+      if (!perService) { decide(Object.entries(selection).filter(([, ids]) => ids.length > 0).map(([c]) => c)); return }
       // accepting services of a category also accepts the category; an empty list removes it. Categories left out are not accepted.
       const have = (CC.getUserPreferences().acceptedCategories as string[]).filter((c) => c !== 'necessary')
       const wanted: Record<string, string[]> = { ...Object.fromEntries(have.map((c) => [c, []])), ...selection }

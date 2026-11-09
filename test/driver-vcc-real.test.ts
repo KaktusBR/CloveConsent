@@ -10,7 +10,8 @@ import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)) }
-const cfg = (revision = 2, services = [theme(), youtube()]) => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision, services })
+const cfg = (revision = 2, services = [theme(), youtube()], ui?: Parameters<typeof defineConsent>[0]['ui']) =>
+  defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision, services, ui })
 const stored = () => parseConsent(readCookieValue(document.cookie, 'cc_cookie'))
 const setStale = (categories: string[]) => {
   document.cookie = `cc_cookie=${enc({
@@ -21,11 +22,11 @@ const setStale = (categories: string[]) => {
 }
 const clearCookie = () => { document.cookie = 'cc_cookie=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT' }
 
-async function load(revision = 2, services?: Parameters<typeof cfg>[1]): Promise<Consent> {
+async function load(revision = 2, services?: Parameters<typeof cfg>[1], ui?: Parameters<typeof cfg>[2]): Promise<Consent> {
   CC.reset(false)
   document.body.innerHTML = ''
   document.documentElement.className = ''
-  const c = createConsent(cfg(revision, services), { driver: createVccDriver() })
+  const c = createConsent(cfg(revision, services, ui), { driver: createVccDriver() })
   c.init()
   await flush()
   return c
@@ -255,5 +256,133 @@ describe('real vanilla-cookieconsent: acceptServices and old cookies', () => {
     expect(c.isAllowed('theme')).toBe(true)
     expect(c.isAllowed('youtube')).toBe(true)
     expect(c.isAllowed('openstreetmap')).toBe(true)
+  })
+})
+
+describe('real vanilla-cookieconsent: layout and dialog from ui', () => {
+  const three = () => [theme(), youtube(), openStreetMap()]
+  const serviceToggles = () => [...document.querySelectorAll<HTMLInputElement>('.pm input.section__toggle[data-category]')]
+  const groupToggles = () => [...document.querySelectorAll<HTMLInputElement>('.pm input.section__toggle:not([data-category])')]
+
+  test('the banner is a bottom bar by default', async () => {
+    await load()
+    const cm = document.querySelector('.cm')!
+    expect(cm.classList.contains('cm--bar')).toBe(true)
+    expect(cm.classList.contains('cm--bottom')).toBe(true)
+  })
+  test('banner and dialog layout follow ui', async () => {
+    await load(2, undefined, { banner: { layout: 'box', position: 'top left' }, dialog: { layout: 'bar', position: 'left' } })
+    const cm = document.querySelector('.cm')!
+    expect(cm.classList.contains('cm--box')).toBe(true)
+    expect(cm.classList.contains('cm--top')).toBe(true)
+    expect(cm.classList.contains('cm--left')).toBe(true)
+    click('.cm__btn[data-role="show"]')
+    await flush()
+    expect(document.querySelector('.pm')!.classList.contains('pm--bar')).toBe(true)
+    expect(document.querySelector('.pm')!.classList.contains('pm--left')).toBe(true)
+  })
+  test('the dialog has one toggle per declared service, labelled with the service title, next to the group toggles', async () => {
+    await load(2, three())
+    click('.cm__btn[data-role="show"]')
+    await flush()
+    expect(serviceToggles().map((i) => `${i.dataset.category}:${i.value}`)).toEqual(['functional:theme', 'media:youtube', 'media:openstreetmap'])
+    expect([...document.querySelectorAll('.pm .toggle-service .toggle__label')].map((l) => l.textContent)).toEqual(['Vzhľad stránky', 'Videá YouTube', 'Mapy OpenStreetMap'])
+    expect(groupToggles().map((i) => i.value)).toEqual(['necessary', 'functional', 'media'])
+  })
+  test('a service toggled in the dialog and saved goes through the client and reads back from it', async () => {
+    const c = await load(2, three())
+    const seen: string[] = []
+    c.on('decision', (i) => seen.push(`${i.kind}:${i.changed.join(',')}:${i.changedServices.join(',')}`))
+    click('.cm__btn[data-role="show"]')
+    await flush()
+    serviceToggles().find((i) => i.value === 'openstreetmap')!.click()
+    await flush()
+    click('.pm__btn[data-role="save"]')
+    await flush()
+    expect(stored()!.services).toEqual({ necessary: [], media: ['openstreetmap'], functional: [] })
+    expect(c.isAllowed('openstreetmap')).toBe(true)
+    expect(c.isAllowed('youtube')).toBe(false)
+    expect(seen).toEqual(['first:media:openstreetmap'])
+    // the dialog reads the stored state back
+    c.open()
+    await flush()
+    expect(serviceToggles().filter((i) => i.checked).map((i) => i.value)).toEqual(['openstreetmap'])
+  })
+  test('serviceToggles:false renders group toggles only', async () => {
+    await load(2, three(), { manager: { serviceToggles: false } })
+    click('.cm__btn[data-role="show"]')
+    await flush()
+    expect(serviceToggles()).toHaveLength(0)
+    expect(document.querySelectorAll('.pm .pm__service')).toHaveLength(0)
+    expect(groupToggles().map((i) => i.value)).toEqual(['necessary', 'functional', 'media'])
+  })
+  test('serviceToggles:false: a group toggle accepts every service of that category', async () => {
+    const c = await load(2, three(), { manager: { serviceToggles: false } })
+    click('.cm__btn[data-role="show"]')
+    await flush()
+    groupToggles().find((i) => i.value === 'media')!.click()
+    await flush()
+    click('.pm__btn[data-role="save"]')
+    await flush()
+    expect(stored()!.categories).toEqual(['necessary', 'media'])
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('openstreetmap')).toBe(true)
+    expect(c.isAllowed('theme')).toBe(false)
+  })
+
+  describe('without service toggles the client works per category', () => {
+    const noToggles = { manager: { serviceToggles: false } }
+    test('accept all allows every service and lists the changed ones', async () => {
+      const c = await load(2, three(), noToggles)
+      const seen: string[] = []
+      c.on('decision', (i) => seen.push(`${i.kind}:${i.changed.join(',')}:${i.changedServices.join(',')}`))
+      click('.cm__btn[data-role="all"]')
+      await flush()
+      expect(['theme', 'youtube', 'openstreetmap'].map((id) => c.isAllowed(id))).toEqual([true, true, true])
+      expect(seen).toEqual(['first:functional,media:theme,youtube,openstreetmap'])
+    })
+    test('setServices accepts the categories of the listed services and records one decision', async () => {
+      const c = await load(2, three(), noToggles)
+      const seen: string[] = []
+      c.on('decision', (i) => seen.push(`${i.kind}:${i.changed.join(',')}`))
+      c.setServices(['youtube'])
+      await flush()
+      expect(stored()!.categories).toEqual(['necessary', 'media'])
+      expect(c.isAllowed('youtube')).toBe(true)
+      expect(c.isAllowed('openstreetmap')).toBe(true)
+      expect(c.isAllowed('theme')).toBe(false)
+      expect(seen).toEqual(['first:media'])
+      expect(banner()).toBe(false)
+    })
+    test('acceptService keeps the categories already accepted', async () => {
+      const c = await load(2, three(), noToggles)
+      c.setServices(['theme'])
+      await flush()
+      c.acceptService('youtube')
+      await flush()
+      expect(stored()!.categories).toEqual(['necessary', 'functional', 'media'])
+      expect(c.isAllowed('theme')).toBe(true)
+      expect(c.isAllowed('youtube')).toBe(true)
+    })
+    test('withdraw() lists every service that was allowed', async () => {
+      const c = await load(2, three(), noToggles)
+      c.acceptAll()
+      await flush()
+      const seen: string[] = []
+      c.on('decision', (i) => seen.push(`${i.kind}:${i.changedServices.sort().join(',')}`))
+      c.withdraw()
+      await flush()
+      expect(seen).toEqual(['withdraw:openstreetmap,theme,youtube'])
+      expect(c.isAllowed('youtube')).toBe(false)
+    })
+    test('setServices([]) rejects everything', async () => {
+      const c = await load(2, three(), noToggles)
+      c.setServices(['youtube'])
+      await flush()
+      c.setServices([])
+      await flush()
+      expect(stored()!.categories).toEqual(['necessary'])
+      expect(c.isAllowed('youtube')).toBe(false)
+    })
   })
 })

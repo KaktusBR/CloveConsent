@@ -51,3 +51,54 @@ test('left-to-right languages do not set rtl', () => {
   const cfg: any = buildVccConfig(view, hooks, false)
   expect(cfg.language.rtl).toBeUndefined()
 })
+
+const withUi = (ui: Parameters<typeof defineConsent>[0]['ui']) =>
+  buildView(defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [theme(), youtube()], ui }), 'sk')
+
+test('default ui gives a bottom bar banner and a right box dialog', () => {
+  const c: any = buildVccConfig(view, hooks, false)
+  expect(c.guiOptions.consentModal).toEqual({ layout: 'bar', position: 'bottom', equalWeightButtons: true, flipButtons: false })
+  expect(c.guiOptions.preferencesModal).toEqual({ layout: 'box', position: 'right', equalWeightButtons: true, flipButtons: false })
+})
+test('banner and dialog layout come from ui', () => {
+  const c: any = buildVccConfig(withUi({
+    banner: { layout: 'box', position: 'bottom left', equalWeightButtons: false, flipButtons: true },
+    dialog: { layout: 'bar', position: 'left' },
+  }), hooks, false)
+  expect(c.guiOptions.consentModal).toEqual({ layout: 'box', position: 'bottom left', equalWeightButtons: false, flipButtons: true })
+  expect(c.guiOptions.preferencesModal).toMatchObject({ layout: 'bar', position: 'left' })
+})
+test('every service of an optional category is declared with its escaped title and cookie names', () => {
+  const v = structuredClone(view)
+  v.categories[2]!.services[0]!.title = 'a&b'
+  v.categories[2]!.services[0]!.storage.push({ name: '_ytc', type: 'cookie', expiry: 'x', purpose: 'y' }, { name: 'ls', type: 'localStorage', expiry: 'x', purpose: 'y' })
+  const c: any = buildVccConfig(v, hooks, false)
+  expect(c.categories.media.services.youtube).toEqual({ label: 'a&amp;b', cookies: [{ name: '_ytc' }] })
+  expect(c.categories.functional.services.theme).toEqual({ label: v.categories[1]!.services[0]!.title })
+  expect(c.categories.necessary.services).toBeUndefined()
+})
+test('serviceToggles:false declares no services, so the dialog has group toggles only', () => {
+  const c: any = buildVccConfig(withUi({ manager: { serviceToggles: false } }), hooks, false)
+  expect(c.categories.media.services).toBeUndefined()
+  expect(c.categories.functional.services).toBeUndefined()
+  expect(c.categories.media).toMatchObject({ enabled: false, readOnly: false })
+})
+test('serviceToggles:false keeps category-level cookie auto-clear', () => {
+  const v = withUi({ manager: { serviceToggles: false } })
+  v.categories[2]!.services[0]!.storage.push({ name: '_ytc', type: 'cookie', expiry: 'x', purpose: 'y' })
+  const c: any = buildVccConfig(v, hooks, false)
+  expect(c.categories.media.autoClear.cookies).toEqual([{ name: '_ytc' }])
+})
+test('the engine change callback passes changed categories and flattened services to the hook', () => {
+  const calls: unknown[][] = []
+  const c: any = buildVccConfig(view, { ...hooks, onChange: (...a: unknown[]) => { calls.push(a) } }, false)
+  c.onChange({ changedCategories: ['media'], changedServices: { media: ['youtube'], functional: ['theme', 'youtube'] } })
+  c.onChange({ changedCategories: ['functional'] })
+  expect(calls).toEqual([[['media'], ['youtube', 'theme']], [['functional'], []]])
+})
+test('without service toggles a changed category stands for all its services', () => {
+  const calls: unknown[][] = []
+  const c: any = buildVccConfig(withUi({ manager: { serviceToggles: false } }), { ...hooks, onChange: (...a: unknown[]) => { calls.push(a) } }, false)
+  c.onChange({ changedCategories: ['media'], changedServices: {} })
+  expect(calls).toEqual([[['media'], ['youtube']]])
+})

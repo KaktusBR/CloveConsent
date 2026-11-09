@@ -56,6 +56,8 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     for (const fn of [...listeners[e]]) { try { fn(arg) } catch (err) { dev(`listener for ${e} threw`, err) } }
   }
   const hook = (fn: () => void) => { try { fn() } catch (err) { dev('hook threw', err) } }
+  // without per-service toggles the engine knows no services: choices are made, stored and read per category
+  const perService = config.ui.manager.serviceToggles
   const state = (): ConsentState | null => { try { return parseConsent(driver.readRaw()) } catch { return null } }
   const find = (id: string): ServiceEntry | undefined => config.services.find((s) => s.id === id)
   const persist = () => { try { driver.writeData(buildStoredData(config)) } catch (err) { dev('could not store revisions', err) } }
@@ -72,7 +74,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   // optional services the visitor has accepted, by the stored choice alone (re-consent gates are applied by isAllowed)
   const acceptedIds = (): string[] => {
     const st = state()
-    return st ? config.services.filter((s) => s.category !== 'necessary' && serviceAccepted(st, s)).map((s) => s.id) : []
+    return st ? config.services.filter((s) => s.category !== 'necessary' && serviceAccepted(st, s, perService)).map((s) => s.id) : []
   }
   const optionalCategories = (): Category[] => [...new Set(config.services.map((s) => s.category).filter((c) => c !== 'necessary'))]
 
@@ -86,7 +88,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     if (!st || st.siteRevision !== config.revision) return false
     const seen = Object.hasOwn(st.revisions, s.id) ? st.revisions[s.id] : undefined
     if (seen === undefined || seen < s.catalogRevision) return false
-    return serviceAccepted(st, s)
+    return serviceAccepted(st, s, perService)
   }
   const applyScripts = () => {
     for (const s of config.services) {
@@ -176,7 +178,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
         for (const c of optionalCategories()) {
           if (!st.categories.includes(c)) continue
           const inCategory = config.services.filter((x) => x.category === c).map((x) => x.id)
-          ids.push(...(st.services === null ? inCategory : (st.services[c] ?? []).filter((x) => inCategory.includes(x))))
+          ids.push(...(st.services === null || !perService ? inCategory : (st.services[c] ?? []).filter((x) => inCategory.includes(x))))
         }
       }
       api.setServices([...ids, id])

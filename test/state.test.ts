@@ -81,6 +81,11 @@ describe('parseConsent services', () => {
 describe('serviceAccepted', () => {
   const state = (services: Record<string, string[]> | null, categories = ['necessary', 'media']) =>
     parseConsent(good({ categories, ...(services ? { services } : {}) }))!
+  test('without per-service toggles an accepted category accepts all its services, whatever the cookie lists', () => {
+    expect(serviceAccepted(state({ media: [] }), youtube(), false)).toBe(true)
+    expect(serviceAccepted(state({ media: [] }, ['necessary']), youtube(), false)).toBe(false)
+    expect(serviceAccepted(state({ media: [] }), youtube())).toBe(false)
+  })
   test('necessary services are always accepted', () => {
     expect(serviceAccepted(state({}, ['necessary']), theme({ category: 'necessary' } as any))).toBe(true)
   })
