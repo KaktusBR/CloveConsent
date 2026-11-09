@@ -8,6 +8,7 @@ export interface LocalisedText { en: string; [locale: string]: string | undefine
 
 export type Slot =
   | { kind: 'field'; field: 'title' | 'description' | 'purpose' | 'location' | 'transfers' }
+  // `name` is the pack lookup key: the storage item's `translationKey` when it has one, else its `name`
   | { kind: 'storage'; name: string; field: 'expiry' | 'purpose' }
   | { kind: 'category'; index: number }
 
@@ -82,8 +83,8 @@ export function mapEntryText<T extends { kind: string }>(entry: T, f: (v: Locali
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     e.storage = e.storage.map((s: any) => ({
       ...s,
-      expiry: f(s.expiry, { kind: 'storage', name: s.name, field: 'expiry' }),
-      purpose: f(s.purpose, { kind: 'storage', name: s.name, field: 'purpose' }),
+      expiry: f(s.expiry, { kind: 'storage', name: s.translationKey ?? s.name, field: 'expiry' }),
+      purpose: f(s.purpose, { kind: 'storage', name: s.translationKey ?? s.name, field: 'purpose' }),
     }))
   }
   return e as T

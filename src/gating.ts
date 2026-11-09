@@ -1,4 +1,4 @@
-import type { ClientEntry, ServiceEntry, StorageItem } from './schema'
+import type { ClientEntry, ScriptInit, ServiceEntry, StorageItem } from './schema'
 
 export function hostAllowed(entry: ClientEntry, rawUrl: string): boolean {
   let u: URL
@@ -26,6 +26,8 @@ export function loadScript(doc: Document, entry: ClientEntry): HTMLScriptElement
   if (!hostAllowed(entry, src)) throw new Error(`[consent] script origin not allowed for ${entry.id}: ${src}`)
   const existing = findOwned(doc, entry.id, 'script')
   if (existing) return existing
+  const win = doc.defaultView
+  if (entry.gating.init && win) runScriptInit(win, entry.gating.init)
   const s = doc.createElement('script')
   s.async = true
   s.setAttribute('async', '')
@@ -33,6 +35,50 @@ export function loadScript(doc: Document, entry: ClientEntry): HTMLScriptElement
   s.dataset.consentService = entry.id
   doc.head.appendChild(s)
   return s
+}
+
+/**
+ * Runs a declared setup step as library code, so a strict Content Security Policy (no inline scripts) keeps working.
+ * Each step mirrors the vendor's standard snippet; the id has already been validated to a fixed pattern.
+ */
+export function runScriptInit(win: Window & typeof globalThis, init: ScriptInit): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = win as any
+  if (init.kind === 'fbq') {
+    if (!w.fbq) {
+      // Meta's loader semantics: calls queue until fbevents.js sets callMethod
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const n: any = function (this: unknown) {
+        // eslint-disable-next-line prefer-rest-params
+        if (n.callMethod) n.callMethod.apply(n, arguments)
+        // eslint-disable-next-line prefer-rest-params
+        else n.queue.push(arguments)
+      }
+      w.fbq = n
+      if (!w._fbq) w._fbq = n
+      n.push = n
+      n.loaded = true
+      n.version = '2.0'
+      n.queue = []
+    }
+    w.fbq('init', init.id)
+    w.fbq('track', 'PageView')
+    return
+  }
+  if (!Array.isArray(w.dataLayer)) w.dataLayer = []
+  const layer: unknown[] = w.dataLayer
+  if (init.kind === 'gtm') {
+    layer.push({ 'gtm.start': Date.now(), event: 'gtm.js' })
+    return
+  }
+  // Google's loader only recognises Arguments objects in dataLayer, so the stub must push `arguments`, not an array
+  w.gtag = function gtag() {
+    // eslint-disable-next-line prefer-rest-params
+    layer.push(arguments)
+  }
+  w.gtag('js', new Date())
+  w.gtag('config', init.id)
+  w[`ga-disable-${init.id}`] = false
 }
 
 const SAFE_NAME = /^[A-Za-z0-9_.-]{1,128}$/
@@ -85,5 +131,9 @@ export function clearStorage(doc: Document, entry: ServiceEntry): StorageItem[] 
 
 export function unloadService(doc: Document, entry: ServiceEntry): StorageItem[] {
   findAllOwned(doc, entry.id).forEach((n) => n.remove())
+  // Google's documented opt-out switch: stops an already loaded gtag.js from measuring or setting cookies
+  if (entry.kind === 'client' && entry.gating.type === 'script' && entry.gating.init?.kind === 'gtag' && doc.defaultView) {
+    (doc.defaultView as unknown as Record<string, unknown>)[`ga-disable-${entry.gating.init.id}`] = true
+  }
   return clearStorage(doc, entry)
 }

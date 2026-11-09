@@ -11,12 +11,22 @@ export const CATEGORIES = ['necessary', 'functional', 'media', 'social', 'analyt
 export type Category = (typeof CATEGORIES)[number]
 
 export type StorageType = 'cookie' | 'localStorage' | 'sessionStorage'
-export interface StorageItem { name: string; type: StorageType; expiry: Localised; purpose: Localised }
+export interface StorageItem {
+  name: string
+  /** Pack lookup key used instead of `name`, for names with a per-site part such as `_ga_ABC1234`. */
+  translationKey?: string
+  type: StorageType
+  expiry: Localised
+  purpose: Localised
+}
 export interface Provider { name: string; privacyUrl: string }
+
+/** A small setup step the library runs itself, as library code, after it loads a provider script (keeps a strict CSP working). */
+export type ScriptInit = { kind: 'gtag'; id: string } | { kind: 'gtm' } | { kind: 'fbq'; id: string }
 
 export type Gating =
   | { type: 'none' }
-  | { type: 'script'; src: string }
+  | { type: 'script'; src: string; init?: ScriptInit }
   | { type: 'iframe'; sandbox?: string }
 
 export type CspExtras = Partial<Record<'script-src' | 'frame-src' | 'connect-src' | 'img-src', string[]>>

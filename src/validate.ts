@@ -65,9 +65,28 @@ function assertStorage(items: unknown, path: string): void {
     const p = `${path}[${i}]`
     if (typeof s?.name !== 'string' || !STORAGE_NAME_PATTERN.test(s.name)) throw new ConsentConfigError(`${p}.name`, 'invalid storage name')
     if (!['cookie', 'localStorage', 'sessionStorage'].includes(s.type)) throw new ConsentConfigError(`${p}.type`, 'invalid storage type')
+    if (Object.hasOwn(s, 'translationKey') && (typeof s.translationKey !== 'string' || !STORAGE_NAME_PATTERN.test(s.translationKey))) {
+      throw new ConsentConfigError(`${p}.translationKey`, 'invalid storage translation key')
+    }
     assertLocalised(s.expiry, `${p}.expiry`)
     assertLocalised(s.purpose, `${p}.purpose`)
   })
+}
+
+const SCRIPT_INIT_ID: Record<string, RegExp | null> = { gtag: /^G-[A-Z0-9]{4,20}$/, gtm: null, fbq: /^[0-9]{5,20}$/ }
+
+function assertScriptInit(v: unknown, path: string): void {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new ConsentConfigError(path, 'must be an object')
+  const o = v as Record<string, unknown>
+  if (typeof o.kind !== 'string' || !Object.hasOwn(SCRIPT_INIT_ID, o.kind)) throw new ConsentConfigError(`${path}.kind`, 'must be gtag, gtm or fbq')
+  const idPattern = SCRIPT_INIT_ID[o.kind]!
+  const allowed = idPattern ? ['kind', 'id'] : ['kind']
+  for (const key of Object.keys(o)) {
+    if (!allowed.includes(key)) throw new ConsentConfigError(`${path}.${key}`, `unknown key for a ${o.kind} setup`)
+  }
+  if (idPattern && (typeof o.id !== 'string' || !idPattern.test(o.id))) {
+    throw new ConsentConfigError(`${path}.id`, o.kind === 'gtag' ? 'must look like G-XXXXXXXXXX' : 'must be a numeric pixel id')
+  }
 }
 
 function isRealDate(s: string): boolean {
@@ -114,6 +133,10 @@ export function validateService(e: ServiceEntry, path: string): void {
   if (g.type !== 'iframe' && Object.hasOwn(g, 'sandbox')) {
     throw new ConsentConfigError(`${path}.gating.sandbox`, 'sandbox only applies to iframe gating')
   }
+  if (g.type !== 'script' && Object.hasOwn(g, 'init')) {
+    throw new ConsentConfigError(`${path}.gating.init`, 'init only applies to script gating')
+  }
+  if (g.type === 'script' && g.init !== undefined) assertScriptInit(g.init, `${path}.gating.init`)
   if (g.type === 'script') {
     assertUrl(g.src, `${path}.gating.src`)
     let u: URL

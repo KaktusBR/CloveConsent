@@ -102,6 +102,44 @@ describe('validateService', () => {
       expect(() => validateService(e, 'e')).toThrow(ConsentConfigError)
     }
   })
+  describe('script init and translationKey', () => {
+    const withInit = (init: unknown): any => { const e = client(); e.gating = { type: 'script', src: 'https://cdn.x.com/a.js', init }; return e }
+    test('accepts gtag, gtm and fbq setups', () => {
+      expect(() => validateService(withInit({ kind: 'gtag', id: 'G-ABCD1234' }), 'e')).not.toThrow()
+      expect(() => validateService(withInit({ kind: 'gtm' }), 'e')).not.toThrow()
+      expect(() => validateService(withInit({ kind: 'fbq', id: '123456789012345' }), 'e')).not.toThrow()
+    })
+    test('init is only allowed with script gating', () => {
+      for (const g of [{ type: 'none' }, { type: 'iframe' }]) {
+        const e = client(); e.gating = { ...g, init: { kind: 'gtm' } }
+        expect(() => validateService(e, 'e')).toThrow(/init/)
+      }
+    })
+    test.each(['G-abc', 'G-ABC', 'X-ABCD1234', 'G-' + 'A'.repeat(21), 'G-ABCD 12', '', 5])('rejects gtag id %j', (id) => {
+      expect(() => validateService(withInit({ kind: 'gtag', id }), 'e')).toThrow(/init/)
+    })
+    test.each(['1234', '1'.repeat(21), 'abc12345', '', 5])('rejects fbq id %j', (id) => {
+      expect(() => validateService(withInit({ kind: 'fbq', id }), 'e')).toThrow(/init/)
+    })
+    test('rejects unknown kind, unknown keys, and an id on gtm', () => {
+      expect(() => validateService(withInit({ kind: 'eval' }), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit({}), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit('gtm'), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit(null), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit([]), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit({ kind: 'gtm', id: 'GTM-X' }), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit({ kind: 'gtag', id: 'G-ABCD1234', code: 'alert(1)' }), 'e')).toThrow(/init/)
+      expect(() => validateService(withInit({ kind: 'fbq', id: '12345', extra: 1 }), 'e')).toThrow(/init/)
+    })
+    test('translationKey must match the storage name pattern', () => {
+      const e = client(); e.storage = [{ name: '_ga_ABC1234', translationKey: '_ga_container', type: 'cookie', expiry: L('1y'), purpose: L('p') }]
+      expect(() => validateService(e, 'e')).not.toThrow()
+      for (const bad of ['a;b', '', 'x'.repeat(129), 5]) {
+        e.storage[0].translationKey = bad
+        expect(() => validateService(e, 'e')).toThrow(/translationKey/)
+      }
+    })
+  })
   test('iframe sandbox', () => {
     const e = client(); e.gating = { type: 'iframe', sandbox: 'allow-scripts allow-same-origin' }
     expect(() => validateService(e, 'e')).not.toThrow()

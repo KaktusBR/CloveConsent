@@ -91,6 +91,21 @@ describe('public json', () => {
     expect(back.privacyHref).toBeNull()
     expect(back.services[0]!.id).toBe('theme')
   })
+  test('script setup and translationKey survive the public JSON round trip, and a tampered init is rejected', () => {
+    const y: any = {
+      ...youtube(), id: 'ga', origins: ['www.googletagmanager.com'], csp: undefined,
+      gating: { type: 'script', src: 'https://www.googletagmanager.com/gtag/js?id=G-ABCD1234', init: { kind: 'gtag', id: 'G-ABCD1234' } },
+      storage: [{ name: '_ga_ABC1234', translationKey: '_ga_container', type: 'cookie', expiry: { en: '2 years' }, purpose: { en: 'counts' } }],
+    }
+    const c = defineConsent({ ...(input() as any), services: [y], allowFallback: true })
+    const json = toPublicJson(c, 'sk')
+    const back = fromPublicJson(json).services[0] as any
+    expect(back.gating.init).toEqual({ kind: 'gtag', id: 'G-ABCD1234' })
+    expect(back.storage[0].translationKey).toBe('_ga_container')
+    const tampered = JSON.parse(json)
+    tampered.services[0].gating.init = { kind: 'gtag', id: 'G-ABCD1234', code: 'x' }
+    expect(() => fromPublicJson(JSON.stringify(tampered))).toThrow(ConsentConfigError)
+  })
   test('fromPublicJson re-validates tampered input', () => {
     const c = defineConsent(input() as any)
     const tampered = JSON.parse(toPublicJson(c, 'sk'))

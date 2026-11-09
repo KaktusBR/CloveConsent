@@ -82,6 +82,25 @@ describe('mapEntryText', () => {
     mapEntryText(noTransfers as never, (v, slot) => { seen2.push(slotLabel(slot)); return v })
     expect(seen2).not.toContain('transfers')
   })
+  test('a storage item with translationKey is looked up by that key, not its name', () => {
+    const withKey = structuredClone(service) as any
+    withKey.storage = [{ name: '_ga_ABC1234', translationKey: '_ga_container', type: 'cookie', expiry: { en: 'two years' }, purpose: { en: 'counts' } }]
+    const seen: Slot[] = []
+    const out = mapEntryText(withKey, (v, slot) => { seen.push(slot); return v }) as any
+    expect(seen.slice(2)).toEqual([
+      { kind: 'storage', name: '_ga_container', field: 'expiry' },
+      { kind: 'storage', name: '_ga_container', field: 'purpose' },
+    ])
+    expect(slotLabel(seen[2]!)).toBe('storage._ga_container.expiry')
+    expect(out.storage[0].name).toBe('_ga_ABC1234')
+    expect(out.storage[0].translationKey).toBe('_ga_container')
+  })
+  test('the resolver translates a translationKey slot from the pack key, not from the concrete name', () => {
+    const p = new Map([['sk', pack('sk', { ga: { storage: { _ga_container: { purpose: 'Počíta' } } } })]])
+    const rr = createResolver(p, new Map(), 'sk')
+    expect(rr.text({ en: 'counts' }, 'ga', { kind: 'storage', name: '_ga_container', field: 'purpose' }, 'sk').value).toBe('Počíta')
+    expect(rr.text({ en: 'counts' }, 'ga', { kind: 'storage', name: '_ga_ABC1234', field: 'purpose' }, 'sk').value).toBe('counts')
+  })
   test('returns a copy and applies the mapper', () => {
     const input = structuredClone(service)
     const out = mapEntryText(input as never, (v) => ({ ...v, sk: 'X' })) as typeof service
