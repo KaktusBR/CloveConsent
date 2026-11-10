@@ -136,6 +136,105 @@ describe('scripts created through document.createElement', () => {
   })
 })
 
+describe('marked tags and non-JavaScript scripts built by code', () => {
+  test('a marked script the site builds itself keeps its marking and is not reported', () => {
+    install()
+    const s = document.createElement('script')
+    s.type = 'text/plain'
+    s.dataset.consent = 'chat'
+    s.src = TRACKER
+    const t = document.createElement('script')
+    t.setAttribute('data-consent', 'chat')
+    t.setAttribute('type', 'text/plain')
+    t.setAttribute('src', TRACKER)
+    document.body.append(s, t)
+    for (const el of [s, t]) {
+      expect(el.getAttribute('type')).toBe('text/plain')
+      expect(el.getAttribute('data-consent')).toBe('chat')
+      expect(el.hasAttribute('data-type')).toBe(false)
+      expect(el.hasAttribute('data-consent-auto')).toBe(false)
+      expect(el.getAttribute('src')).toBe(TRACKER)
+    }
+    expect(blocked).toEqual([])
+  })
+  test('a marked iframe the site builds itself is left as written', () => {
+    install()
+    const f = document.createElement('iframe')
+    f.setAttribute('data-consent', 'chat')
+    f.setAttribute('data-consent-src', FRAME)
+    document.body.appendChild(f)
+    expect(f.getAttribute('data-consent')).toBe('chat')
+    expect(f.hasAttribute('data-consent-auto')).toBe(false)
+    expect(blocked).toEqual([])
+  })
+  test('a script of a non-JavaScript type is data and left alone, until its type makes it runnable', () => {
+    install()
+    const json = document.createElement('script')
+    json.type = 'application/ld+json'
+    json.src = TRACKER
+    document.body.appendChild(json)
+    expect(json.getAttribute('type')).toBe('application/ld+json')
+    expect(json.hasAttribute('data-consent')).toBe(false)
+    const byProp = document.createElement('script')
+    byProp.type = 'text/x-template'
+    byProp.src = TRACKER
+    byProp.type = 'text/javascript'
+    const byAttr = document.createElement('script')
+    byAttr.setAttribute('type', 'text/x-template')
+    byAttr.setAttribute('src', TRACKER)
+    byAttr.setAttribute('type', 'module')
+    const byRemoval = document.createElement('script')
+    byRemoval.type = 'text/x-template'
+    byRemoval.src = TRACKER
+    byRemoval.removeAttribute('type')
+    document.body.append(byProp, byAttr, byRemoval)
+    neutralizedScript(byProp)
+    expect(byProp.getAttribute('data-type')).toBe('text/javascript')
+    neutralizedScript(byAttr)
+    expect(byAttr.getAttribute('data-type')).toBe('module')
+    neutralizedScript(byRemoval)
+    expect(byRemoval.hasAttribute('data-type')).toBe(false)
+  })
+  test('JavaScript types with parameters or odd case are still scripts', () => {
+    install()
+    const s = document.createElement('script')
+    s.type = ' Text/JavaScript; charset=utf-8'
+    s.src = TRACKER
+    document.body.appendChild(s)
+    neutralizedScript(s)
+  })
+  test('markup: a marked or non-JavaScript script is not touched by the observer', async () => {
+    install()
+    document.body.innerHTML = `<script type="application/ld+json" src="${TRACKER}"></script>`
+    await flush()
+    expect(document.querySelector('script')!.getAttribute('type')).toBe('application/ld+json')
+    expect(blocked).toEqual([])
+  })
+})
+
+describe('known hosts the configuration does not cover', () => {
+  test('stay blocked even when a configured service with the same id is allowed or released', () => {
+    allowed.add('youtube').add('meta-pixel')
+    const h = install()
+    h.release('youtube')
+    const f = document.createElement('iframe')
+    f.src = 'https://www.youtube.com/embed/x'
+    const s = document.createElement('script')
+    s.src = 'https://connect.facebook.net/en_US/fbevents.js'
+    document.body.append(f, s)
+    expect(f.hasAttribute('src')).toBe(false)
+    expect(f.getAttribute('data-consent')).toBe('youtube')
+    neutralizedScript(s, 'meta-pixel')
+    expect(blocked.map((b) => [b.id, b.configured])).toEqual([['youtube', false], ['meta-pixel', false]])
+  })
+  test('markup with such an iframe is held too', () => {
+    allowed.add('youtube')
+    install()
+    document.body.innerHTML = '<iframe src="https://www.youtube.com/embed/x"></iframe>'
+    expect(document.querySelector('iframe')!.hasAttribute('src')).toBe(false)
+  })
+})
+
 describe('iframes created through document.createElement', () => {
   test('src is held in data-consent-src: the frame has no src and cannot load', () => {
     install()
@@ -306,6 +405,29 @@ describe('the neutralized format is what bindMarked activates', () => {
     messages: { title: { en: 'Tracker' }, description: { en: 'Tracker' } },
   }
   const config = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [tracker] })
+  const consented = () => encodeURIComponent(JSON.stringify({ consentId: 'abc-12345678', categories: ['necessary', 'analytics'], data: { siteRevision: 1, revisions: { tracker: 1 } } }))
+  test('a marked script the site builds by code activates as a runnable script after consent', () => {
+    let raw: string | null = null
+    const driver = {
+      init() {}, readRaw: () => raw, writeData() {}, showBanner() {}, open() {}, acceptAll() {}, rejectAll() {},
+      acceptCategories() {}, acceptServices() {},
+    }
+    const c = createConsent(config, { driver: driver as never })
+    c.init()
+    install({ isAllowed: (id) => c.acceptedServices().includes(id) })
+    const s = document.createElement('script')
+    s.type = 'text/plain'
+    s.dataset.consent = 'tracker'
+    s.src = TRACKER
+    document.head.appendChild(s)
+    raw = consented()
+    const unbind = bindMarked(c, document)
+    const active = document.head.querySelector('script')!
+    expect(active).not.toBe(s)
+    expect(active.hasAttribute('type')).toBe(false)
+    expect(active.getAttribute('src')).toBe(TRACKER)
+    unbind()
+  })
   test('after consent the neutralized script is replaced by a runnable one with its type and src', () => {
     let raw: string | null = null
     const driver = {

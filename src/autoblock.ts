@@ -3,7 +3,8 @@ import { KNOWN_HOSTS } from './known-hosts'
 export interface AutoBlockOptions {
   /**
    * The configured service whose origins include this host, null if none. A host the configuration does not cover but
-   * `KNOWN_HOSTS` lists is blocked all the same, under its catalog id, and reported as unconfigured.
+   * `KNOWN_HOSTS` lists is blocked all the same, under its catalog id, and reported as unconfigured; it never passes, whatever
+   * is allowed (consent for a service covers that service's origins only).
    */
   serviceForHost(host: string): string | null
   /** Persisted consent for a service (necessary services count as allowed). Asked live, so a withdrawal blocks again. */
@@ -23,6 +24,17 @@ export interface AutoBlocking {
 }
 
 const HTML_NS = 'http://www.w3.org/1999/xhtml'
+// the script types a browser runs (HTML "JavaScript MIME type essence match", plus module); anything else is data
+const JS_TYPES = new Set([
+  'module', 'application/ecmascript', 'application/javascript', 'application/x-ecmascript', 'application/x-javascript',
+  'text/ecmascript', 'text/javascript', 'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2', 'text/javascript1.3',
+  'text/javascript1.4', 'text/javascript1.5', 'text/jscript', 'text/livescript', 'text/x-ecmascript', 'text/x-javascript',
+])
+const isJsType = (type: string | null): boolean => {
+  if (type === null) return true
+  const t = type.trim().toLowerCase()
+  return t === '' || JS_TYPES.has(t) || JS_TYPES.has(t.split(';')[0]!.trim())
+}
 const AUTO = 'data-consent-auto'
 interface Tracker { id: string; configured: boolean }
 type Target = HTMLScriptElement | HTMLIFrameElement
@@ -80,12 +92,17 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     if (isFrame(el) && released.has(id)) return true
     try { return opts.isAllowed(id) === true } catch { return false }
   }
-  /** The tracker an element with this source must be blocked for, or null when it may load. */
+  /**
+   * The tracker an element with this source must be blocked for, or null when it may load. A host no configured service
+   * covers never loads, whatever is allowed: consent for a service covers its origins only.
+   */
   const blockFor = (el: Element, raw: string): Tracker | null => {
     if (stopped) return null
     const t = trackerFor(raw)
-    return t && !allowed(el, t.id) ? t : null
+    return t && (!t.configured || !allowed(el, t.id)) ? t : null
   }
+  /** A script that would run: not marked by the site (a marked tag is the site's own decision) and of a JavaScript type. */
+  const runnable = (s: HTMLScriptElement) => !nat.has.call(s, 'data-consent') && isJsType(attr(s, 'type'))
   const report = (el: Element, t: Tracker) => {
     if (reported.has(el)) return
     reported.add(el)
@@ -124,6 +141,8 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   /** A source being set by code on an element from the patched factories; true when it was held back. */
   const intercept = (el: Target, raw: string): boolean => {
     try {
+      // a marked tag the site built itself, or a script that never runs: left as written
+      if (!nat.has.call(el, AUTO) && (isScript(el) ? !runnable(el) : nat.has.call(el, 'data-consent'))) return false
       const t = blockFor(el, raw)
       if (!t) return false
       if (isScript(el)) {
@@ -137,6 +156,16 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     } catch {
       return false
     }
+  }
+
+  /** A script whose type was set or removed: one that has become runnable with a tracker source is neutralized now. */
+  const recheck = (s: HTMLScriptElement) => {
+    try {
+      const raw = attr(s, 'src')
+      if (raw === null || nat.has.call(s, AUTO) || !runnable(s)) return
+      const t = blockFor(s, raw)
+      if (t) neutralizeScript(s, t)
+    } catch { /* never into host code */ }
   }
 
   const patch = (el: Target) => {
@@ -157,7 +186,11 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
       Object.defineProperty(el, 'type', {
         configurable: true, enumerable: true,
         get() { return neutralized(el) ? attr(el, 'data-type') ?? '' : scriptType.get!.call(el) },
-        set(v: unknown) { if (neutralized(el)) setAttr(el, 'data-type', String(v)); else scriptType.set!.call(el, v) },
+        set(v: unknown) {
+          if (neutralized(el)) { setAttr(el, 'data-type', String(v)); return }
+          scriptType.set!.call(el, v)
+          recheck(el as HTMLScriptElement)
+        },
       })
     }
     // the same rules for the attribute forms; the type of a neutralized script goes to data-type
@@ -166,23 +199,27 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
       if (name === 'type' && script && neutralized(el)) { setAttr(el, 'data-type', value); return true }
       return false
     }
+    const after = (name: string) => { if (script && name === 'type') recheck(el as HTMLScriptElement) }
     Object.defineProperty(el, 'setAttribute', {
       configurable: true, writable: true,
       value(this: Element, name: string, value: string) {
-        if (!routed(String(name).toLowerCase(), String(value))) nat.set.call(this, name, value)
+        const n = String(name).toLowerCase()
+        if (!routed(n, String(value))) { nat.set.call(this, name, value); after(n) }
       },
     })
     Object.defineProperty(el, 'setAttributeNS', {
       configurable: true, writable: true,
       value(this: Element, ns: string | null, name: string, value: string) {
-        if (ns || !routed(String(name).toLowerCase(), String(value))) nat.setNS.call(this, ns, name, value)
+        const n = String(name).toLowerCase()
+        if (ns || !routed(n, String(value))) { nat.setNS.call(this, ns, name, value); if (!ns) after(n) }
       },
     })
     Object.defineProperty(el, 'removeAttribute', {
       configurable: true, writable: true,
       value(this: Element, name: string) {
-        if (script && String(name).toLowerCase() === 'type' && neutralized(el)) nat.remove.call(this, 'data-type')
-        else nat.remove.call(this, name)
+        const n = String(name).toLowerCase()
+        if (script && n === 'type' && neutralized(el)) nat.remove.call(this, 'data-type')
+        else { nat.remove.call(this, name); after(n) }
       },
     })
   }
@@ -197,6 +234,7 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     const raw = attr(el, 'src')
     if (raw === null) return
     if (isScript(el)) {
+      if (!runnable(el)) return
       const t = blockFor(el, raw)
       if (t) neutralizeScript(el, t)
     } else if (isFrame(el)) {

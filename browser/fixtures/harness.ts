@@ -5,6 +5,7 @@ import { createConsent } from '../../src/client'
 import { defineConsent } from '../../src/config'
 import { createVccDriver } from '../../src/driver-vcc'
 import { bindMarked, syncMarked } from '../../src/marked'
+import { youtube } from '../../src/catalog'
 import type { ClientEntry } from '../../src/schema'
 
 export const TRACKER_HOST = 'tracker.cloveconsent.test'
@@ -15,7 +16,7 @@ const tracker: ClientEntry = {
   storage: [], gating: { type: 'none' }, origins: [TRACKER_HOST],
   messages: { title: { en: 'Tracker' }, description: { en: 'A fake tracker for the browser tests.' } },
 }
-const config = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [tracker] })
+const config = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [tracker, youtube()] })
 const consent = createConsent(config, { driver: createVccDriver() })
 
 // auto-blocking first and synchronously: everything after this script in the page is within its reach

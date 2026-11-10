@@ -1,7 +1,9 @@
 /**
  * Hosts of known tracking and embedding services -> the catalog id that covers them. Auto-blocking uses this map for a tracker
- * the site's configuration does not list: the element stays blocked (no configured service can allow it) and is reported as
- * unconfigured. Hosts are lowercase plain hostnames, matched exactly.
+ * whose host no configured service has in its origins: the element stays blocked and is reported as unconfigured. Consent is
+ * never asked for it, not even when a configured service has the same id (for example `youtube` configured with
+ * www.youtube-nocookie.com only, and an embed from www.youtube.com): consent covers a service's origins only. Hosts are
+ * lowercase plain hostnames, matched exactly.
  *
  * Sources:
  * - "catalog": the `origins` of a shipped catalog entry (src/catalog/*.ts); as verified as that entry is.

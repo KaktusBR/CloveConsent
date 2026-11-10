@@ -105,3 +105,25 @@ for (const c of frameCases) {
     expect(requests).toEqual([frame(c.case)])
   })
 }
+
+// a host that no configured service has in its origins never loads: here youtube is configured (www.youtube-nocookie.com)
+// and accepted, and an embed from www.youtube.com, a known host of the same id, is inserted after Accept all
+test('a known host outside every configured origin stays blocked after Accept all, without a request', async ({ page }) => {
+  const outside: string[] = []
+  await page.context().route('https://www.youtube.com/**', (route) => {
+    outside.push(route.request().url())
+    return route.fulfill({ contentType: 'text/html', body: frameHtml })
+  })
+  await open(page, '/dynamic.html?case=none')
+  await acceptAll(page)
+  await page.waitForFunction(() => document.cookie.includes('cc_cookie'))
+  await page.evaluate(() => {
+    const f = document.createElement('iframe')
+    f.src = 'https://www.youtube.com/embed/by-code'
+    document.body.appendChild(f)
+    document.getElementById('box')!.innerHTML = '<iframe src="https://www.youtube.com/embed/by-markup"></iframe>'
+  })
+  await page.waitForTimeout(300)
+  expect(outside).toEqual([])
+  await expect(page.locator('iframe[src^="https://www.youtube.com"]')).toHaveCount(0)
+})
