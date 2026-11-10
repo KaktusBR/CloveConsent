@@ -1,3 +1,4 @@
+import { hasOwn } from '../has-own'
 import type { Messages } from '../messages'
 import { en } from '../messages'
 import type { EntryTranslation, LocalePack } from './pack'
@@ -28,7 +29,7 @@ export function slotLabel(slot: Slot): string {
 }
 
 function own<T>(o: Record<string, T> | undefined, key: string): T | undefined {
-  return o !== undefined && Object.hasOwn(o, key) ? o[key] : undefined
+  return o !== undefined && hasOwn(o, key) ? o[key] : undefined
 }
 
 function packText(t: EntryTranslation | undefined, slot: Slot): string | undefined {
@@ -69,8 +70,9 @@ export function createResolver(
 
 /** Return a copy of a service or processor entry with `f` applied to every localised text. Entries must already be validated. */
 export function mapEntryText<T extends { kind: string }>(entry: T, f: (v: LocalisedText, slot: Slot) => LocalisedText): T {
+  // validated entries are plain JSON data; structuredClone is missing before Safari 15.4
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const e = structuredClone(entry) as any
+  const e = JSON.parse(JSON.stringify(entry)) as any
   const field = (name: Extract<Slot, { kind: 'field' }>['field']): Slot => ({ kind: 'field', field: name })
   if (e.kind === 'processor') {
     e.purpose = f(e.purpose, field('purpose'))

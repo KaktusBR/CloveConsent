@@ -1,3 +1,4 @@
+import { hasOwn } from './has-own'
 import { KNOWN_HOSTS } from './known-hosts'
 
 export interface AutoBlockOptions {
@@ -62,9 +63,14 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   const win = (doc.defaultView ?? globalThis) as Window & typeof globalThis
   const E = win.Element.prototype
   const nat = { set: E.setAttribute, setNS: E.setAttributeNS, remove: E.removeAttribute, get: E.getAttribute, has: E.hasAttribute }
-  const scriptSrc = Object.getOwnPropertyDescriptor(win.HTMLScriptElement.prototype, 'src')!
-  const scriptType = Object.getOwnPropertyDescriptor(win.HTMLScriptElement.prototype, 'type')!
-  const frameSrc = Object.getOwnPropertyDescriptor(win.HTMLIFrameElement.prototype, 'src')!
+  // an accessor this browser does not have (or has in another shape) is not patched: that path stays native
+  const accessor = (proto: object | undefined, name: string): PropertyDescriptor | null => {
+    const d = proto ? Object.getOwnPropertyDescriptor(proto, name) : undefined
+    return d && typeof d.get === 'function' && typeof d.set === 'function' ? d : null
+  }
+  const scriptSrc = accessor(win.HTMLScriptElement?.prototype, 'src')
+  const scriptType = accessor(win.HTMLScriptElement?.prototype, 'type')
+  const frameSrc = accessor(win.HTMLIFrameElement?.prototype, 'src')
   const released = new Set<string>()
   const reported = new WeakSet<Element>()
   let stopped = false
@@ -85,7 +91,7 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     let id: string | null = null
     try { id = opts.serviceForHost(host) } catch { /* treated as not configured */ }
     if (typeof id === 'string' && id) return { id, configured: true }
-    const known = Object.hasOwn(KNOWN_HOSTS, host) ? KNOWN_HOSTS[host] : undefined
+    const known = hasOwn(KNOWN_HOSTS, host) ? KNOWN_HOSTS[host] : undefined
     return known ? { id: known, configured: false } : null
   }
   const allowed = (el: Element, id: string): boolean => {
@@ -175,18 +181,20 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   const patch = (el: Target) => {
     const script = isScript(el)
     const src = script ? scriptSrc : frameSrc
-    Object.defineProperty(el, 'src', {
-      configurable: true, enumerable: true,
-      get() {
-        if (!script && neutralized(el) && !nat.has.call(el, 'src')) {
-          const held = attr(el, 'data-consent-src') ?? ''
-          try { return new URL(held, doc.baseURI).href } catch { return held }
-        }
-        return src.get!.call(el)
-      },
-      set(v: unknown) { if (!intercept(el, String(v))) src.set!.call(el, v) },
-    })
-    if (script) {
+    if (src) {
+      Object.defineProperty(el, 'src', {
+        configurable: true, enumerable: true,
+        get() {
+          if (!script && neutralized(el) && !nat.has.call(el, 'src')) {
+            const held = attr(el, 'data-consent-src') ?? ''
+            try { return new URL(held, doc.baseURI).href } catch { return held }
+          }
+          return src.get!.call(el)
+        },
+        set(v: unknown) { if (!intercept(el, String(v))) src.set!.call(el, v) },
+      })
+    }
+    if (script && scriptType) {
       Object.defineProperty(el, 'type', {
         configurable: true, enumerable: true,
         get() { return neutralized(el) ? attr(el, 'data-type') ?? '' : scriptType.get!.call(el) },
@@ -262,7 +270,7 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   // the factories: wrapped on this document only, the native behaviour kept for everything else
   const origCreate = doc.createElement
   const origCreateNS = doc.createElementNS
-  const hadOwn = { create: Object.hasOwn(doc, 'createElement'), createNS: Object.hasOwn(doc, 'createElementNS') }
+  const hadOwn = { create: hasOwn(doc, 'createElement'), createNS: hasOwn(doc, 'createElementNS') }
   const createElement = function (this: Document, ...args: Parameters<Document['createElement']>) {
     const el = Reflect.apply(origCreate, this, args)
     watch(el)

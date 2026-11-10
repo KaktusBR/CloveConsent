@@ -1,3 +1,4 @@
+import { hasOwn } from './has-own'
 import { MESSAGE_KEYS, type Messages } from './messages'
 import { canonicalLocale, localePrefixes } from './i18n/locale'
 import { validatePack, type LocalePack } from './i18n/pack'
@@ -169,7 +170,7 @@ export function assertValidatedConfig(config: unknown, component: string): asser
  */
 export function toPublicJson(config: ConsentConfig, locale: string): string {
   const l = config.locales.includes(locale) ? locale : config.defaultLocale
-  const keep = (v: LocalisedText): LocalisedText => (l === 'en' ? { en: v.en } : { en: v.en, [l]: Object.hasOwn(v, l) ? v[l] : v.en })
+  const keep = (v: LocalisedText): LocalisedText => (l === 'en' ? { en: v.en } : { en: v.en, [l]: hasOwn(v, l) ? v[l] : v.en })
   const { hooks: _hooks, unreviewed: _unreviewed, messages, ...rest } = config
   const snapshot = {
     ...rest, locales: [l], defaultLocale: l,

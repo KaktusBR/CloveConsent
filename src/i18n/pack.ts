@@ -1,3 +1,4 @@
+import { hasOwn } from '../has-own'
 import { MESSAGE_KEYS, type Messages } from '../messages'
 import { canonicalLocale } from './locale'
 import { ConsentConfigError, ID_PATTERN, STORAGE_NAME_PATTERN, assertText } from '../validate'
@@ -54,13 +55,13 @@ export function validatePack(p: unknown, path: string): asserts p is LocalePack 
     if (!isObject(t)) throw new ConsentConfigError(cp, 'must be an object')
     onlyKeys(t, ['title', 'description', 'purpose', 'location', 'transfers', 'dataCategories', 'storage'], cp)
     for (const f of ['title', 'description', 'purpose', 'location', 'transfers'] as const) {
-      if (Object.hasOwn(t, f)) assertText(t[f], `${cp}.${f}`)
+      if (hasOwn(t, f)) assertText(t[f], `${cp}.${f}`)
     }
-    if (Object.hasOwn(t, 'dataCategories')) {
+    if (hasOwn(t, 'dataCategories')) {
       if (!Array.isArray(t.dataCategories)) throw new ConsentConfigError(`${cp}.dataCategories`, 'must be an array')
       t.dataCategories.forEach((d, i) => assertText(d, `${cp}.dataCategories[${i}]`))
     }
-    if (Object.hasOwn(t, 'storage')) {
+    if (hasOwn(t, 'storage')) {
       if (!isObject(t.storage)) throw new ConsentConfigError(`${cp}.storage`, 'must be an object keyed by storage name')
       for (const name of Object.keys(t.storage)) {
         const sp = `${cp}.storage.${name}`
@@ -68,7 +69,7 @@ export function validatePack(p: unknown, path: string): asserts p is LocalePack 
         const s = t.storage[name]
         if (!isObject(s)) throw new ConsentConfigError(sp, 'must be an object')
         onlyKeys(s, ['expiry', 'purpose'], sp)
-        for (const f of ['expiry', 'purpose'] as const) if (Object.hasOwn(s, f)) assertText(s[f], `${sp}.${f}`)
+        for (const f of ['expiry', 'purpose'] as const) if (hasOwn(s, f)) assertText(s[f], `${sp}.${f}`)
       }
     }
   }

@@ -1,3 +1,4 @@
+import { hasOwn } from './has-own'
 import type { Category, ClientEntry, ConsentConfig, ConsentState, DecisionInfo, Locale, ServiceEntry, StorageItem } from './schema'
 import type { ConsentDriver } from './driver'
 import { loadScript, unloadService } from './gating'
@@ -95,7 +96,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
   // site revision) stays blocked until the visitor answers the re-consent banner
   const storedConsent = (st: ConsentState | null, s: ServiceEntry): boolean => {
     if (!st || st.siteRevision !== config.revision) return false
-    const seen = Object.hasOwn(st.revisions, s.id) ? st.revisions[s.id] : undefined
+    const seen = hasOwn(st.revisions, s.id) ? st.revisions[s.id] : undefined
     if (seen === undefined || seen < s.catalogRevision) return false
     return serviceAccepted(st, s, perService)
   }

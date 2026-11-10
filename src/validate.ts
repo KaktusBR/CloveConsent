@@ -1,3 +1,4 @@
+import { hasOwn } from './has-own'
 import { CATEGORIES, type ProcessorEntry, type ServiceEntry } from './schema'
 import { canonicalLocale } from './i18n/locale'
 
@@ -76,7 +77,7 @@ export function assertLocalised(v: unknown, path: string): void {
     throw new ConsentConfigError(path, 'must be an object with an "en" text and optional other languages')
   }
   const o = v as Record<string, unknown>
-  assertText(Object.hasOwn(o, 'en') ? o.en : undefined, `${path}.en`)
+  assertText(hasOwn(o, 'en') ? o.en : undefined, `${path}.en`)
   for (const key of Object.keys(o)) {
     if (key === 'en') continue
     assertLocaleTag(key, `${path}.${key}`)
@@ -91,7 +92,7 @@ function assertStorage(items: unknown, path: string): void {
     const p = `${path}[${i}]`
     if (typeof s?.name !== 'string' || !STORAGE_NAME_PATTERN.test(s.name)) throw new ConsentConfigError(`${p}.name`, 'invalid storage name')
     if (!['cookie', 'localStorage', 'sessionStorage'].includes(s.type)) throw new ConsentConfigError(`${p}.type`, 'invalid storage type')
-    if (Object.hasOwn(s, 'translationKey') && (typeof s.translationKey !== 'string' || !STORAGE_NAME_PATTERN.test(s.translationKey))) {
+    if (hasOwn(s, 'translationKey') && (typeof s.translationKey !== 'string' || !STORAGE_NAME_PATTERN.test(s.translationKey))) {
       throw new ConsentConfigError(`${p}.translationKey`, 'invalid storage translation key')
     }
     assertLocalised(s.expiry, `${p}.expiry`)
@@ -104,7 +105,7 @@ const SCRIPT_INIT_ID: Record<string, RegExp | null> = { gtag: /^G-[A-Z0-9]{4,20}
 function assertScriptInit(v: unknown, path: string): void {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new ConsentConfigError(path, 'must be an object')
   const o = v as Record<string, unknown>
-  if (typeof o.kind !== 'string' || !Object.hasOwn(SCRIPT_INIT_ID, o.kind)) throw new ConsentConfigError(`${path}.kind`, 'must be gtag, gtm or fbq')
+  if (typeof o.kind !== 'string' || !hasOwn(SCRIPT_INIT_ID, o.kind)) throw new ConsentConfigError(`${path}.kind`, 'must be gtag, gtm or fbq')
   const idPattern = SCRIPT_INIT_ID[o.kind]!
   const allowed = idPattern ? ['kind', 'id'] : ['kind']
   for (const key of Object.keys(o)) {
@@ -156,10 +157,10 @@ export function validateService(e: ServiceEntry, path: string): void {
   }
   const g = e.gating
   if (!g || !['none', 'script', 'iframe'].includes(g.type)) throw new ConsentConfigError(`${path}.gating`, 'invalid gating')
-  if (g.type !== 'iframe' && Object.hasOwn(g, 'sandbox')) {
+  if (g.type !== 'iframe' && hasOwn(g, 'sandbox')) {
     throw new ConsentConfigError(`${path}.gating.sandbox`, 'sandbox only applies to iframe gating')
   }
-  if (g.type !== 'script' && Object.hasOwn(g, 'init')) {
+  if (g.type !== 'script' && hasOwn(g, 'init')) {
     throw new ConsentConfigError(`${path}.gating.init`, 'init only applies to script gating')
   }
   if (g.type === 'script' && g.init !== undefined) assertScriptInit(g.init, `${path}.gating.init`)

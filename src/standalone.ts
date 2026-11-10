@@ -1,4 +1,5 @@
-import { installAutoBlocking } from './autoblock'
+import { hasOwn } from './has-own'
+import { installAutoBlocking, type AutoBlocking } from './autoblock'
 import { createConsent, type Consent } from './client'
 import { fromPublicJson } from './config'
 import { createVccDriver } from './driver-vcc'
@@ -24,10 +25,10 @@ export interface StandaloneBundle {
 const booted = new WeakMap<Document, Consent | null>()
 
 /**
- * Sends one report per unconfigured tracker service and page view to `url` with `sendBeacon`: the service id, the page path
- * (no query, no hash) and the time. Nothing about the visitor. Without a usable URL or `sendBeacon`, nothing is sent.
+ * Sends one report per unconfigured tracker service and page view to `url` with `sendBeacon`: the site key, the service id, the
+ * page path (no query, no hash) and the time. Nothing about the visitor. Without a usable URL or `sendBeacon`, nothing is sent.
  */
-function unconfiguredReporter(url: string | undefined, win: Window | null): (serviceId: string) => void {
+function unconfiguredReporter(url: string | undefined, site: string, win: Window | null): (serviceId: string) => void {
   if (!url || !win) return () => {}
   const problem = endpointProblem(url, win.location)
   if (problem) {
@@ -41,7 +42,7 @@ function unconfiguredReporter(url: string | undefined, win: Window | null): (ser
     try {
       const nav = win.navigator
       if (typeof nav.sendBeacon !== 'function') return
-      nav.sendBeacon(url, JSON.stringify({ service: serviceId, path: win.location.pathname, timestamp: new Date().toISOString() }))
+      nav.sendBeacon(url, JSON.stringify({ site, service: serviceId, path: win.location.pathname, timestamp: new Date().toISOString() }))
     } catch { /* reporting never disturbs the page */ }
   }
 }
@@ -72,30 +73,48 @@ function sendRecords(consent: Consent, site: string, win: Window | null): void {
 export function boot(bundle: StandaloneBundle, doc: Document = document): Consent | null {
   if (booted.has(doc)) return booted.get(doc) ?? null
   booted.set(doc, null)
+  // never throws into the host page
+  try {
+    return bootIn(bundle, doc)
+  } catch (err) {
+    console.error('[consent] runtime not started', err)
+    return booted.get(doc) ?? null
+  }
+}
+
+function bootIn(bundle: StandaloneBundle, doc: Document): Consent | null {
   const win = doc.defaultView
-  const report = unconfiguredReporter(bundle.reportUrl, win)
+  const report = unconfiguredReporter(bundle.reportUrl, bundle.site, win)
+  // set once the configuration has been parsed: until then, and for good when it cannot be, nothing is reported as unconfigured
+  // (a configured service's host would look unconfigured)
   let consent: Consent | null = null
   let markedBound = false
 
-  const blocking = installAutoBlocking(doc, {
-    // configured services only: auto-blocking itself knows the trackers no configured service covers (they never pass)
-    serviceForHost: (host) => consent?.config.services.find((s) => s.kind === 'client' && s.origins.includes(host))?.id ?? null,
-    // persisted consent only; a one-time allowance comes through release()
-    isAllowed: (id) => !!consent
-      && (consent.acceptedServices().includes(id) || consent.config.services.some((s) => s.id === id && s.category === 'necessary')),
-    onBlocked: (id, el, configured) => {
-      if (!configured) { report(id); return }
-      // a neutralized iframe gets its placeholder once it is in the page
-      const c = consent
-      if (c && markedBound && el.localName === 'iframe') queueMicrotask(() => syncMarked(c, doc))
-    },
-  })
+  let blocking: AutoBlocking | null = null
+  try {
+    blocking = installAutoBlocking(doc, {
+      // configured services only: auto-blocking itself knows the trackers no configured service covers (they never pass)
+      serviceForHost: (host) => consent?.config.services.find((s) => s.kind === 'client' && s.origins.includes(host))?.id ?? null,
+      // persisted consent only; a one-time allowance comes through release()
+      isAllowed: (id) => !!consent
+        && (consent.acceptedServices().includes(id) || consent.config.services.some((s) => s.id === id && s.category === 'necessary')),
+      onBlocked: (id, el, configured) => {
+        const c = consent
+        if (!configured) { if (c) report(id); return }
+        // a neutralized iframe gets its placeholder once it is in the page
+        if (c && markedBound && el.localName === 'iframe') queueMicrotask(() => syncMarked(c, doc))
+      },
+    })
+  } catch (err) {
+    // marked tags still hold their trackers: they never depend on auto-blocking
+    console.error('[consent] auto-blocking not installed', err)
+  }
 
   try {
     const nav = win?.navigator
     const preferred = nav?.languages?.length ? nav.languages : nav?.language ? [nav.language] : []
     const locale = pickLocale(Object.keys(bundle.configs), doc.documentElement?.getAttribute('lang') ?? null, preferred, bundle.defaultLocale)
-    const json = Object.hasOwn(bundle.configs, locale) ? bundle.configs[locale] : undefined
+    const json = hasOwn(bundle.configs, locale) ? bundle.configs[locale] : undefined
     if (typeof json !== 'string') throw new Error(`no configuration for ${locale}`)
     consent = createConsent(fromPublicJson(json), { driver: createVccDriver(), doc, locale })
   } catch (err) {
@@ -106,12 +125,12 @@ export function boot(bundle: StandaloneBundle, doc: Document = document): Consen
   const c = consent
   booted.set(doc, c)
   // before bindMarked: a released iframe must pass auto-blocking when marked-tag activation sets its src
-  c.on('once', (id) => blocking.release(id))
+  c.on('once', (id) => blocking?.release(id))
   sendRecords(c, bundle.site, win)
   applyThemeSafely(c, doc)
   try { adoptStyles(doc) } catch (err) { console.error('[consent] styles not adopted', err) }
 
-  const start = () => {
+  const bind = () => {
     try {
       c.init()
       bindDom(c, doc)
@@ -125,7 +144,7 @@ export function boot(bundle: StandaloneBundle, doc: Document = document): Consen
       try { bindSettings(c, root) } catch (err) { console.error('[consent] settings panel not bound', err) }
     })
   }
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start, { once: true })
-  else start()
+  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', bind, { once: true })
+  else bind()
   return c
 }

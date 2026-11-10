@@ -1,3 +1,4 @@
+import { hasOwn } from './has-own'
 import { CATEGORIES, type Category, type ConsentConfig, type ConsentState, type ServiceEntry } from './schema'
 
 export const MAX_COOKIE_LENGTH = 4096
@@ -67,7 +68,7 @@ export function needsPrompt(state: ConsentState | null, config: ConsentConfig): 
   if (!state) return true
   if (state.siteRevision !== config.revision) return true
   for (const s of config.services) {
-    const seen = Object.hasOwn(state.revisions, s.id) ? state.revisions[s.id] : undefined
+    const seen = hasOwn(state.revisions, s.id) ? state.revisions[s.id] : undefined
     if (seen === undefined || seen < s.catalogRevision) return true
   }
   return false

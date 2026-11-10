@@ -420,6 +420,32 @@ describe('never throws into host code', () => {
     neutralizedScript(s, 'google-tag-manager')
     expect(t.hasAttribute('type')).toBe(false)
   })
+  test('a missing src or type descriptor skips that patch only: installing does not throw and setAttribute still blocks', async () => {
+    const protos = [HTMLScriptElement.prototype, HTMLIFrameElement.prototype] as object[]
+    const saved = protos.map((p) => [Object.getOwnPropertyDescriptor(p, 'src')!, Object.getOwnPropertyDescriptor(p, 'type')] as const)
+    protos.forEach((p) => { delete (p as Record<string, unknown>).src; delete (p as Record<string, unknown>).type })
+    try {
+      expect(() => install()).not.toThrow()
+      const s = document.createElement('script')
+      s.setAttribute('src', TRACKER)
+      document.body.appendChild(s)
+      neutralizedScript(s)
+      // the properties behave as the page has them (plain properties here), never throwing
+      expect(() => { void s.src; void s.type; s.type = 'module' }).not.toThrow()
+      const f = document.createElement('iframe')
+      f.setAttribute('src', FRAME)
+      expect(f.hasAttribute('src')).toBe(false)
+      document.body.insertAdjacentHTML('beforeend', `<script src="${TRACKER}"></script>`)
+      await flush()
+      neutralizedScript(document.body.lastElementChild!)
+    } finally {
+      handle?.stop(); handle = undefined
+      protos.forEach((p, i) => {
+        Object.defineProperty(p, 'src', saved[i]![0])
+        if (saved[i]![1]) Object.defineProperty(p, 'type', saved[i]![1])
+      })
+    }
+  })
   test('invalid URLs and invalid tag names behave natively', () => {
     install()
     const s = document.createElement('script')

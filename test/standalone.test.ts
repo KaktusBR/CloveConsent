@@ -79,7 +79,7 @@ describe('boot', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  test('an unconfigured tracker is reported once to reportUrl, with no personal data', async () => {
+  test('an unconfigured tracker is reported once to reportUrl, with the site key and no personal data', async () => {
     for (let i = 0; i < 2; i++) {
       const s = document.createElement('script')
       s.src = `https://static.hotjar.com/c/hotjar-${i}.js?sv=6`
@@ -93,7 +93,8 @@ describe('boot', () => {
     const [url, data] = beacon.mock.calls[0]!
     expect(url).toBe('https://reports.example/unconfigured')
     const payload = JSON.parse(String(data))
-    expect(Object.keys(payload).sort()).toEqual(['path', 'service', 'timestamp'])
+    expect(Object.keys(payload).sort()).toEqual(['path', 'service', 'site', 'timestamp'])
+    expect(payload.site).toBe('site-key-1')
     expect(payload.service).toBe('hotjar')
     expect(payload.path).toBe('/shop/item')
     expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false)
@@ -134,13 +135,28 @@ describe('boot', () => {
   })
 })
 
+const jsdom = createRequire(import.meta.url)('jsdom') as { JSDOM: new (html: string, o: object) => { window: Window & typeof globalThis } }
+const markedPage = '<!DOCTYPE html><html lang="sk"><head></head><body>'
+  + '<script type="text/plain" data-consent="google-tag-manager" src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123"></script>'
+  + '<iframe data-consent="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc"></iframe>'
+  + '<div data-cloveconsent-settings></div></body></html>'
+/** A page of its own whose document is still being parsed: boot sets everything up but leaves the engine (global) alone. */
+const parsingPage = (prepare: (win: Window & typeof globalThis) => void = () => {}) => {
+  const win = new jsdom.JSDOM(markedPage, { url: 'https://other.example/' }).window
+  Object.defineProperty(win.document, 'readyState', { configurable: true, value: 'loading' })
+  prepare(win)
+  return win
+}
+
 describe('boot with a malformed config', () => {
-  const jsdom = createRequire(import.meta.url)('jsdom') as { JSDOM: new (html: string, o: object) => { window: Window } }
   test('returns null, logs once, and leaves every marked tag blocked', async () => {
-    const doc = new jsdom.JSDOM('<!DOCTYPE html><html lang="sk"><head></head><body>'
+    const win = new jsdom.JSDOM('<!DOCTYPE html><html lang="sk"><head></head><body>'
       + '<script type="text/plain" data-consent="google-tag-manager" src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123"></script>'
       + '<iframe data-consent="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc"></iframe>'
-      + '<div data-cloveconsent-settings></div></body></html>', { url: 'https://other.example/' }).window.document
+      + '<div data-cloveconsent-settings></div></body></html>', { url: 'https://other.example/' }).window
+    const doc = win.document
+    const sent = vi.fn(() => true)
+    Object.defineProperty(win.navigator, 'sendBeacon', { configurable: true, value: sent })
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       expect(boot(bundle({ en: toPublicJson(config, 'en'), sk: '{"locales": ' }), doc)).toBeNull()
@@ -156,5 +172,49 @@ describe('boot with a malformed config', () => {
     s.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-ABC123'
     doc.body.append(s)
     expect(s.getAttribute('type')).toBe('text/plain')
+    // without a parsed configuration nothing is reported as unconfigured: a configured service's host would look unconfigured
+    await flush()
+    expect(sent).not.toHaveBeenCalled()
+  })
+})
+
+describe('boot never throws into the page', () => {
+  test('auto-blocking that cannot be installed is logged once; the client still starts and marked tags stay blocked', () => {
+    const win = parsingPage((w) => { w.MutationObserver = function () { throw new Error('no observers here') } as never })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let c: Consent | null = null
+    try {
+      expect(() => { c = boot(bundle({ en: toPublicJson(config, 'en'), sk: toPublicJson(config, 'sk') }), win.document) }).not.toThrow()
+      expect(error).toHaveBeenCalledTimes(1)
+      expect(String(error.mock.calls[0]![0])).toContain('auto-blocking')
+    } finally { error.mockRestore() }
+    expect(c).not.toBeNull()
+    expect(c!.locale).toBe('sk')
+    expect(win.document.querySelector('script')!.getAttribute('type')).toBe('text/plain')
+    expect(win.document.querySelector('iframe')!.hasAttribute('src')).toBe(false)
+  })
+
+  test('runs on a browser without Object.hasOwn and structuredClone (Safari before 15.4)', () => {
+    const win = parsingPage()
+    const saved = { hasOwn: Object.hasOwn, clone: globalThis.structuredClone }
+    delete (Object as unknown as Record<string, unknown>).hasOwn
+    delete (globalThis as unknown as Record<string, unknown>).structuredClone
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const c = boot(bundle({ en: toPublicJson(config, 'en'), sk: toPublicJson(config, 'sk') }), win.document)
+      expect(error).not.toHaveBeenCalled()
+      expect(c).not.toBeNull()
+      expect(c!.locale).toBe('sk')
+      // reads the stored revisions (the cookie of this test file's page)
+      expect(() => c!.isAllowed('youtube')).not.toThrow()
+      // auto-blocking looks hosts up too
+      const s = win.document.createElement('script')
+      s.src = 'https://static.hotjar.com/c/hotjar-1.js'
+      expect(s.getAttribute('type')).toBe('text/plain')
+    } finally {
+      error.mockRestore()
+      Object.defineProperty(Object, 'hasOwn', { configurable: true, writable: true, value: saved.hasOwn })
+      ;(globalThis as unknown as Record<string, unknown>).structuredClone = saved.clone
+    }
   })
 })
