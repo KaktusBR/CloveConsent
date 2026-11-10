@@ -62,7 +62,7 @@ const themed = new WeakSet<Document>()
  * there: Astro view transitions swap the root's attributes, which can wipe the inline style, so they are applied again on every
  * `astro:page-load`. A failure is logged and never reaches the caller: the banner is already running.
  */
-function applyThemeSafely(consent: Consent, doc: Document): void {
+export function applyThemeSafely(consent: Consent, doc: Document): void {
   try {
     if (doc.documentElement) applyTheme(doc.documentElement, consent.config.ui.theme.tokens)
   } catch (err) {

@@ -6,6 +6,7 @@ import type { DriverHooks } from '../src/driver'
 import { youtube } from '../src/catalog'
 import { bindMarked, syncMarked } from '../src/marked'
 import { bindDom } from '../src/ui'
+import { installAutoBlocking, type AutoBlocking } from '../src/autoblock'
 import type { ClientEntry } from '../src/schema'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
@@ -277,6 +278,45 @@ describe('placeholder buttons', () => {
     document.querySelector<HTMLElement>('[data-consent-placeholder-for="chat"] [data-consent-open]')!.click()
     expect(d.acceptServices).toHaveBeenCalledTimes(1)
     expect(d.open).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('with auto-blocking installed', () => {
+  let blocking: AutoBlocking | undefined
+  // stopped after each test: auto-blocking patches this window's document factories and markup setters
+  afterEach(() => { blocking?.stop(); blocking = undefined })
+  const setup = () => {
+    const { d, c } = start()
+    const b = (blocking = installAutoBlocking(document, {
+      serviceForHost: (host) => config.services.find((s) => s.kind === 'client' && s.origins.includes(host))?.id ?? null,
+      isAllowed: (id) => c.acceptedServices().includes(id),
+    }))
+    // registered before bindMarked, so the iframe's src passes when marked-tag activation sets it
+    c.on('once', (id) => b.release(id))
+    // a marked iframe the site builds by code: its setAttribute goes through auto-blocking
+    const f = document.createElement('iframe')
+    f.setAttribute('data-consent', 'youtube')
+    f.setAttribute('data-consent-src', 'https://www.youtube-nocookie.com/embed/abc')
+    document.body.append(f)
+    unbind = bindMarked(c, document)
+    return { d, c, f }
+  }
+
+  test('a code-built marked iframe is activated after consent', () => {
+    const { d, f } = setup()
+    expect(f.isConnected).toBe(false)
+    expect(document.querySelector('[data-consent-placeholder-for="youtube"]')).not.toBeNull()
+    d.set(enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
+    d.hooks.onFirstConsent()
+    expect(f.isConnected).toBe(true)
+    expect(f.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
+  })
+  test('a code-built marked iframe loads through "load once"', () => {
+    const { f } = setup()
+    document.querySelector<HTMLElement>('[data-consent-placeholder-for="youtube"] [data-consent-action="once"]')!.click()
+    expect(f.isConnected).toBe(true)
+    expect(f.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
+    expect(f.hasAttribute('data-consent-auto')).toBe(false)
   })
 })
 
