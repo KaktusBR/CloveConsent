@@ -91,6 +91,26 @@ test('bootFromDom twice returns the existing client instead of starting a second
   expect(init1).toHaveBeenCalledTimes(1)
   expect(init2).not.toHaveBeenCalled()
 })
+test('bootFromDom applies the theme tokens to the document root', async () => {
+  const themed = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [youtube()], ui: { theme: { tokens: { primary: '#123456', radius: '4px' } } } })
+  document.documentElement.removeAttribute('style')
+  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(themed, 'sk')}</script>`
+  expect((await freshBoot())(document, driver() as any)).not.toBeNull()
+  const style = document.documentElement.style
+  expect(style.getPropertyValue('--consent-override-primary')).toBe('#123456')
+  expect(style.getPropertyValue('--consent-override-radius')).toBe('4px')
+  document.documentElement.removeAttribute('style')
+})
+test('bootFromDom binds a settings panel that is in the page', async () => {
+  document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(config, 'sk')}</script>`
+    + `<section class="consent-settings" data-consent-settings><input type="checkbox" role="switch" class="consent-switch" data-consent-group="media" disabled></section>`
+  const root = document.querySelector<HTMLElement>('[data-consent-settings]')!
+  expect(root.querySelector('[data-consent-action="save"]')).toBeNull()
+  expect((await freshBoot())(document, driver() as any)).not.toBeNull()
+  // the binder rendered the panel from the client state: its action buttons exist now and the switches are enabled
+  expect(root.querySelector('[data-consent-action="save"]')).not.toBeNull()
+  expect(root.querySelector<HTMLInputElement>('input[data-consent-group="media"]')!.disabled).toBe(false)
+})
 test('load once then reject removes the iframe and restores the placeholder', () => {
   const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)

@@ -16,3 +16,7 @@ test('every exports target is produced by tsup or is an astro source file', () =
     expect(hasEntry(key === '.' ? 'index' : key.slice(2)), key).toBe(true)
   }
 })
+test('the settings component and the stylesheet are package exports', () => {
+  expect(pkg.exports['./astro/ConsentSettings.astro']).toBe('./src/astro/ConsentSettings.astro')
+  expect(pkg.exports['./consent.css']).toBe('./src/astro/consent.css')
+})

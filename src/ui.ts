@@ -2,6 +2,7 @@ import { createConsent, getConsent, type Consent } from './client'
 import { fromPublicJson } from './config'
 import { createEmbed } from './gating'
 import { createVccDriver } from './driver-vcc'
+import { applyTheme, bindSettingsFromDom } from './panel'
 import type { ConsentDriver } from './driver'
 import type { ClientEntry, Locale } from './schema'
 
@@ -68,6 +69,9 @@ export function bootFromDom(doc: Document = document, driver?: ConsentDriver): C
     const consent = createConsent(config, { driver: driver ?? createVccDriver(), doc, locale: want ?? undefined })
     consent.init()
     bindDom(consent, doc)
+    // the overrides sit on the document root: an ancestor of both the engine's #cc-main and the settings panel
+    if (doc.documentElement) applyTheme(doc.documentElement, config.ui.theme.tokens)
+    bindSettingsFromDom(doc)
     return consent
   } catch (err) {
     console.error('[consent] invalid configuration, banner not started', err)

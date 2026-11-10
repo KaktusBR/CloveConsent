@@ -96,6 +96,7 @@ describe('renderSettings', () => {
     const { doc } = render(undefined, { ...state, consentId: 'a<b>&"c' })
     expect(doc.querySelector('.consent-receipt__id')!.textContent).toBe('a<b>&"c')
     expect(doc.querySelector('.consent-receipt__id b')).toBeNull()
+    expect(doc.querySelector('.consent-receipt__id')!.getAttribute('dir')).toBe('ltr')
     expect(doc.querySelector('button.consent-btn.consent-btn--secondary[data-consent-action="copy"]')).not.toBeNull()
     const meta = doc.querySelector('.consent-receipt__meta')!.textContent!
     expect(meta).toContain(String(state.siteRevision))

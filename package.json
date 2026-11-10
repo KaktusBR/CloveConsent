@@ -33,7 +33,9 @@
     "./astro/ConsentPreferences.astro": "./src/astro/ConsentPreferences.astro",
     "./astro/GatedEmbed.astro": "./src/astro/GatedEmbed.astro",
     "./astro/ConsentReopen.astro": "./src/astro/ConsentReopen.astro",
-    "./astro/ProcessorList.astro": "./src/astro/ProcessorList.astro"
+    "./astro/ConsentSettings.astro": "./src/astro/ConsentSettings.astro",
+    "./astro/ProcessorList.astro": "./src/astro/ProcessorList.astro",
+    "./consent.css": "./src/astro/consent.css"
   },
   "peerDependencies": {
     "astro": ">=4"

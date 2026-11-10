@@ -41,7 +41,7 @@ function receipt(view: View, state: ConsentState | null, allowed: ReadonlySet<st
   const choiceText = choice === 'all' ? m.choiceAll : choice === 'necessary' ? m.choiceNecessary : m.choiceCustom
   const policy = state.siteRevision === null ? '—' : String(state.siteRevision)
   return `<div class="consent-receipt">${head}`
-    + `<div class="consent-receipt__ref"><code class="consent-receipt__id">${e(state.consentId)}</code>`
+    + `<div class="consent-receipt__ref"><code class="consent-receipt__id" dir="ltr">${e(state.consentId)}</code>`
     + `<button type="button" class="consent-btn consent-btn--secondary" data-consent-action="copy" data-copied="${e(m.receiptCopied)}">${e(m.receiptCopy)}</button></div>`
     + `<dl class="consent-receipt__meta">`
     + `<div><dt>${e(m.receiptSaved)}</dt><dd>${e(formatSaved(state.timestamp, view.locale))}</dd></div>`

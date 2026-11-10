@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, expect, test } from 'vitest'
 
@@ -54,6 +54,20 @@ test('processor list renders facts', () => {
   expect(html).toContain('Globálna sieť')
   expect(html).toContain('Doručovanie a ochrana stránky (CDN, ochrana pred útokmi).')
   expect(html).toContain('<a href="https://www.cloudflare.com/privacypolicy/" rel="noopener noreferrer">')
+})
+test('settings panel renders without script, read-only, with a reference block and dir/lang', () => {
+  expect(html).toContain('data-consent-settings')
+  expect(html).toContain('consent-receipt')
+  expect(html).toContain('<div dir="ltr" lang="sk"><section class="consent-settings"')
+  const panel = html.slice(html.indexOf('data-consent-settings'))
+  const switches = panel.match(/<input[^>]*role="switch"[^>]*>/g) ?? []
+  expect(switches.length).toBeGreaterThan(0)
+  for (const s of switches) expect(s, s).toMatch(/\sdisabled[\s>]/)
+})
+test('the built stylesheet carries the settings panel styles', () => {
+  const dir = join(site, 'dist', '_astro')
+  const css = readdirSync(dir).filter((f) => f.endsWith('.css')).map((f) => readFileSync(join(dir, f), 'utf8')).join(' ')
+  expect(css).toContain('.consent-settings')
 })
 test('reopen button is present', () => {
   expect(html).toContain('data-consent-open')
