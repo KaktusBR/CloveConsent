@@ -337,12 +337,10 @@
     background: var(--consent-primary-fg);
   }
   /* Some services in the group allowed, some not. */
-  .consent-switch[data-state='mixed'],
-  .consent-switch[aria-checked='mixed'] {
+  .consent-switch[data-state='mixed'] {
     background: color-mix(in srgb, var(--consent-primary) 55%, var(--consent-muted-fg));
   }
-  .consent-switch[data-state='mixed']::before,
-  .consent-switch[aria-checked='mixed']::before {
+  .consent-switch[data-state='mixed']::before {
     inset-inline-start: calc((var(--consent-switch-w) - var(--consent-knob)) / 2 - 1px);
     background: var(--consent-primary-fg);
   }
@@ -367,14 +365,12 @@
       background: CanvasText;
     }
     .consent-switch:checked,
-    .consent-switch[data-state='mixed'],
-    .consent-switch[aria-checked='mixed'] {
+    .consent-switch[data-state='mixed'] {
       background: Highlight;
       border-color: Highlight;
     }
     .consent-switch:checked::before,
-    .consent-switch[data-state='mixed']::before,
-    .consent-switch[aria-checked='mixed']::before {
+    .consent-switch[data-state='mixed']::before {
       background: HighlightText;
     }
     .consent-switch:disabled {

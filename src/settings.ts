@@ -80,12 +80,13 @@ function category(view: View, c: ViewCategory, allowed: ReadonlySet<string>, int
   const ids = c.services.map((s) => s.id)
   const state: SwitchState = c.readOnly ? 'on' : groupState(allowed, ids)
   const id = `consent-group-${c.id}`
+  const stateId = `${id}-state`
   const count = !c.readOnly && ids.length > 0
     ? `<span class="consent-category__count">${e(format(m.servicesAllowed, { allowed: String(ids.filter((x) => allowed.has(x)).length), total: String(ids.length) }))}</span>`
     : ''
   const status = c.readOnly
-    ? `<span class="consent-category__state">${e(m.alwaysActive)}</span>`
-    : `<span class="consent-category__state" data-mixed-label="${e(m.stateMixed)}">${state === 'mixed' ? e(m.stateMixed) : ''}</span>`
+    ? `<span class="consent-category__state" id="${e(stateId)}">${e(m.alwaysActive)}</span>`
+    : `<span class="consent-category__state" id="${e(stateId)}" data-mixed-label="${e(m.stateMixed)}">${state === 'mixed' ? e(m.stateMixed) : ''}</span>`
   const open = view.ui.manager.details === 'open'
   const details = c.services.length === 0
     ? ''
@@ -93,7 +94,7 @@ function category(view: View, c: ViewCategory, allowed: ReadonlySet<string>, int
       + `<summary data-show="${e(m.showDetails)}" data-hide="${e(m.hideDetails)}">${e(open ? m.hideDetails : m.showDetails)}</summary>`
       + c.services.map((s) => service(view, c, s, allowed, interactive)).join('') + `</details>`
   return `<div class="consent-category" data-category="${e(c.id)}"><div class="consent-category__head">`
-    + `<input type="checkbox" role="switch" class="consent-switch" id="${e(id)}" data-consent-group="${e(c.id)}" data-state="${state}"`
+    + `<input type="checkbox" role="switch" class="consent-switch" id="${e(id)}" data-consent-group="${e(c.id)}" data-state="${state}" aria-describedby="${e(stateId)}"`
     + `${state === 'on' ? ' checked' : ''}${c.readOnly || !interactive ? ' disabled' : ''}>`
     + `<label for="${e(id)}" class="consent-category__title">${e(c.title)}</label>${status}${count}</div>`
     + `<p class="consent-category__text">${e(c.description)}</p>${details}</div>`

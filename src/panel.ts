@@ -28,9 +28,13 @@ function syncSummary(details: Element): void {
   const text = details.hasAttribute('open') ? summary.getAttribute('data-hide') : summary.getAttribute('data-show')
   if (text) summary.textContent = text
 }
-function syncMixed(group: Element): void {
-  if (group.getAttribute('data-state') === 'mixed') group.setAttribute('aria-checked', 'mixed')
-  else group.removeAttribute('aria-checked')
+/**
+ * A switch has no mixed state in ARIA (`aria-checked="mixed"` is not valid on `role="switch"`), so a partly accepted group keeps
+ * `role="switch"`, is set `indeterminate` (shown by browsers that render it) and is described by the visible "Some allowed" text
+ * (`aria-describedby`, rendered by `renderSettings`). The look follows `data-state`.
+ */
+function syncMixed(group: HTMLInputElement): void {
+  group.indeterminate = group.getAttribute('data-state') === 'mixed'
 }
 
 /**
@@ -97,7 +101,7 @@ export function bindSettings(consent: Consent, root: HTMLElement): () => void {
       if (details && open.has(cat.getAttribute('data-category'))) details.setAttribute('open', '')
       if (details) syncSummary(details)
     })
-    root.querySelectorAll('input[data-consent-group]').forEach(syncMixed)
+    root.querySelectorAll<HTMLInputElement>('input[data-consent-group]').forEach(syncMixed)
     if (focused) {
       const again = findControl(root, focused) ?? findControl(root, ['data-consent-action', 'save'])
       if (again && doc.activeElement !== again) again.focus()
