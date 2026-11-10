@@ -40,7 +40,8 @@ async function acceptAll(page: Page): Promise<void> {
 const runs = (page: Page) => page.evaluate(() => window.__trackerRuns ?? null)
 
 const scriptCases = [
-  { name: '(a) script tags in the HTML after the runtime tag', path: '/parsed.html', cases: ['parsed', 'parsed-body'] },
+  { name: '(a) script tags in the HTML after the runtime tag', path: '/parsed.html', cases: ['parsed', 'parsed-body'],
+    limit: 'Chromium preload scanner requests a <script src> written in the HTML before any script runs; execution is still blocked (asserted above)' },
   { name: '(b) createElement, src, appendChild', path: '/dynamic.html?case=append', cases: ['append'] },
   { name: '(b) createElement, setAttribute("src"), appendChild', path: '/dynamic.html?case=setattribute', cases: ['setattribute'] },
   { name: '(c) innerHTML of a container', path: '/dynamic.html?case=innerhtml', cases: ['innerhtml'] },
@@ -60,6 +61,8 @@ for (const c of scriptCases) {
   })
 
   test(`tracker script, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page }) => {
+    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A)
+    test.fail(!!c.limit, c.limit)
     const requests = await open(page, c.path)
     expect(requests).toEqual([])
 
@@ -73,7 +76,8 @@ for (const c of scriptCases) {
 const frameCases = [
   { name: '(e) created with createElement and appended later', path: '/dynamic.html?case=iframe', case: 'iframe' },
   { name: '(e) inserted later by innerHTML', path: '/dynamic.html?case=iframe-html', case: 'iframe-html' },
-  { name: 'placed in the HTML after the runtime tag', path: '/parsed-iframe.html', case: 'parsed-iframe' },
+  { name: 'placed in the HTML after the runtime tag', path: '/parsed-iframe.html', case: 'parsed-iframe',
+    limit: 'Chromium sends the request of a parser-inserted <iframe src> before any script runs; its load is still stopped (asserted above)' },
 ]
 const loadedFrame = (page: Page, c: string) => page.frameLocator(`iframe[src="${frame(c)}"]`).locator('#tracker-frame')
 
@@ -90,6 +94,8 @@ for (const c of frameCases) {
   })
 
   test(`tracker iframe, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page }) => {
+    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A)
+    test.fail(!!c.limit, c.limit)
     const requests = await open(page, c.path)
     expect(requests).toEqual([])
 
