@@ -7,6 +7,12 @@
     var s = document.createElement('script')
     s.src = url
     document.head.appendChild(s)
+  } else if (c === 'consent-attr') {
+    // data-consent alone does not make a marked tag: the script is still runnable
+    var m = document.createElement('script')
+    m.dataset.consent = 'x'
+    m.src = url
+    document.head.appendChild(m)
   } else if (c === 'setattribute') {
     var t = document.createElement('script')
     t.setAttribute('src', url)

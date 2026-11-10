@@ -101,8 +101,12 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     const t = trackerFor(raw)
     return t && (!t.configured || !allowed(el, t.id)) ? t : null
   }
-  /** A script that would run: not marked by the site (a marked tag is the site's own decision) and of a JavaScript type. */
-  const runnable = (s: HTMLScriptElement) => !nat.has.call(s, 'data-consent') && isJsType(attr(s, 'type'))
+  /**
+   * A script that would run: one of a JavaScript type. `data-consent` alone grants nothing; a marked tag is inert because of
+   * its type (`text/plain`), and that is what leaves it alone. A marked iframe is inert because it has no `src` of its own
+   * (the source waits in `data-consent-src`): any iframe whose `src` is a tracker is blocked, marked or not.
+   */
+  const runnable = (s: HTMLScriptElement) => isJsType(attr(s, 'type'))
   const report = (el: Element, t: Tracker) => {
     if (reported.has(el)) return
     reported.add(el)
@@ -141,8 +145,8 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   /** A source being set by code on an element from the patched factories; true when it was held back. */
   const intercept = (el: Target, raw: string): boolean => {
     try {
-      // a marked tag the site built itself, or a script that never runs: left as written
-      if (!nat.has.call(el, AUTO) && (isScript(el) ? !runnable(el) : nat.has.call(el, 'data-consent'))) return false
+      // a script that never runs (a marked tag the site built itself, or data) is left as written
+      if (isScript(el) && !nat.has.call(el, AUTO) && !runnable(el)) return false
       const t = blockFor(el, raw)
       if (!t) return false
       if (isScript(el)) {
@@ -230,7 +234,6 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
 
   // elements the parser or markup insertion put in the page
   const check = (el: Element) => {
-    if (nat.has.call(el, 'data-consent')) return
     const raw = attr(el, 'src')
     if (raw === null) return
     if (isScript(el)) {
@@ -284,7 +287,7 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   const restoreMarkup = installMarkupGuard(doc, win, () => stopped, (root) => {
     let held = false
     root.querySelectorAll('iframe[src]').forEach((f) => {
-      if (nat.has.call(f, 'data-consent') || !isFrame(f)) return
+      if (!isFrame(f)) return
       const raw = attr(f, 'src')!
       const t = blockFor(f, raw)
       if (t) { neutralizeFrame(f, raw, t); held = true }

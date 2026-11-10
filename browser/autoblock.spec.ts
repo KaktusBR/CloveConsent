@@ -44,6 +44,7 @@ const scriptCases = [
     limit: 'Chromium preload scanner requests a <script src> written in the HTML before any script runs; execution is still blocked (asserted above)' },
   { name: '(b) createElement, src, appendChild', path: '/dynamic.html?case=append', cases: ['append'] },
   { name: '(b) createElement, setAttribute("src"), appendChild', path: '/dynamic.html?case=setattribute', cases: ['setattribute'] },
+  { name: '(b) createElement with data-consent but a runnable type', path: '/dynamic.html?case=consent-attr', cases: ['consent-attr'] },
   { name: '(c) innerHTML of a container', path: '/dynamic.html?case=innerhtml', cases: ['innerhtml'] },
   { name: '(d) insertAdjacentHTML', path: '/dynamic.html?case=adjacent', cases: ['adjacent'] },
 ]

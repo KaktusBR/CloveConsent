@@ -157,6 +157,60 @@ describe('marked tags and non-JavaScript scripts built by code', () => {
     }
     expect(blocked).toEqual([])
   })
+  test('data-consent alone grants nothing: a script of a JavaScript type with a tracker src is blocked', () => {
+    install()
+    const s = document.createElement('script')
+    s.dataset.consent = 'x'
+    s.src = TRACKER
+    document.head.appendChild(s)
+    neutralizedScript(s)
+    expect(blocked).toEqual([{ id: 'tracker', el: s, configured: true }])
+  })
+  test('a marked script switched to a JavaScript type before insertion is blocked', () => {
+    install()
+    const byProp = document.createElement('script')
+    byProp.type = 'text/plain'
+    byProp.dataset.consent = 'x'
+    byProp.src = TRACKER
+    byProp.type = 'text/javascript'
+    const byRemoval = document.createElement('script')
+    byRemoval.setAttribute('type', 'text/plain')
+    byRemoval.setAttribute('data-consent', 'x')
+    byRemoval.setAttribute('src', TRACKER)
+    byRemoval.removeAttribute('type')
+    document.head.append(byProp, byRemoval)
+    neutralizedScript(byProp)
+    expect(byProp.getAttribute('data-type')).toBe('text/javascript')
+    neutralizedScript(byRemoval)
+  })
+  test('an iframe with data-consent and a tracker src of its own is blocked', () => {
+    install()
+    const byProp = document.createElement('iframe')
+    byProp.dataset.consent = 'x'
+    byProp.src = FRAME
+    const byAttr = document.createElement('iframe')
+    byAttr.setAttribute('data-consent', 'x')
+    byAttr.setAttribute('src', FRAME)
+    document.body.append(byProp, byAttr)
+    for (const f of [byProp, byAttr]) {
+      expect(f.hasAttribute('src')).toBe(false)
+      expect(f.getAttribute('data-consent-src')).toBe(FRAME)
+      expect(f.getAttribute('data-consent')).toBe('tracker')
+    }
+  })
+  test('markup: data-consent on a runnable script or on an iframe with a src does not escape', async () => {
+    install()
+    const box = document.createElement('div')
+    document.body.appendChild(box)
+    box.innerHTML = `<iframe data-consent="x" src="${FRAME}"></iframe>`
+    expect(box.querySelector('iframe')!.hasAttribute('src')).toBe(false)
+    box.insertAdjacentHTML('beforeend', `<script data-consent="x" src="${TRACKER}"></script><script data-consent="x" type="module" src="${TRACKER}"></script>`)
+    await flush()
+    const [a, b] = Array.from(box.querySelectorAll('script'))
+    neutralizedScript(a!)
+    neutralizedScript(b!)
+    expect(b!.getAttribute('data-type')).toBe('module')
+  })
   test('a marked iframe the site builds itself is left as written', () => {
     install()
     const f = document.createElement('iframe')
