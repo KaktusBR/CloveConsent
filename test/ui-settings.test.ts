@@ -58,6 +58,13 @@ describe('theme tokens', () => {
   ])('rejects %j as a colour', (v) => {
     expect(() => resolveUi(theme({ primary: v }))).toThrow(ConsentConfigError)
   })
+  // pinned for the README's advice on channel-style (Tailwind v3 shadcn) tokens
+  test('channel-style tokens: a function around var() is rejected, a pointer to a complete colour is accepted', () => {
+    expect(() => resolveUi(theme({ primary: 'hsl(var(--primary))' }))).toThrow(ConsentConfigError)
+    expect(resolveUi(theme({ primary: 'var(--consent-site-primary)', primaryForeground: 'var(--consent-site-primary-fg)' })).theme.tokens)
+      .toEqual({ primary: 'var(--consent-site-primary)', primaryForeground: 'var(--consent-site-primary-fg)' })
+    expect(resolveUi(theme({ primary: 'hsl(222 47% 11%)' })).theme.tokens.primary).toBe('hsl(222 47% 11%)')
+  })
   test('rejects a value over 100 characters even when it looks valid', () => {
     expect(() => resolveUi(theme({ primary: `rgb(${'0 '.repeat(60)})` }))).toThrow(ConsentConfigError)
   })

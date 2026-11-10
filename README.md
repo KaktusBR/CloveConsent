@@ -231,9 +231,19 @@ It reads your site's colour tokens, the shadcn-style names that Tailwind themes 
 | `--border` | borders and separators | `#d1d5db` / `#374151` |
 | `--ring` | focus outline | `#2563eb` / `#60a5fa` |
 
+**The tokens must be complete colour values**, as Tailwind v4 and current shadcn define them (`--primary: oklch(0.21 0.03 265)`, `--primary: #193637`). Classic shadcn on Tailwind v3 defines bare HSL channels instead (`--primary: 222 47% 11%`); read with `var()` that is not a colour, the declaration is invalid and, for example, the primary buttons turn transparent. With channel-style tokens, set every colour in `ui.theme.tokens`. The validator does not accept `hsl(var(--primary))` (a function around `var()`), so either give literal colours (`primary: 'hsl(222 47% 11%)'`) or define complete colours in your own CSS and point at them:
+
+```css
+:root { --consent-site-primary: hsl(var(--primary)); --consent-site-primary-fg: hsl(var(--primary-foreground)); /* ... */ }
+```
+
+```ts
+ui: { theme: { tokens: { primary: 'var(--consent-site-primary)', primaryForeground: 'var(--consent-site-primary-fg)' /* ... */ } } }
+```
+
 `--radius` (fallback `0.5rem`) and `--font-family` (fallback: inherit the page font) are read too. If your site defines none of these, the neutral fallbacks apply and the result is still readable. Dark mode follows the `.dark` class on `<html>`, the usual Tailwind setup (`darkMode`, default on, keeps the engine's own `.cc--darkmode` class in step). Set the tokens in both modes as you already do for the rest of your site.
 
-Layers: the stylesheet declares `@layer theme, base, components, utilities`, the same order Tailwind uses, and puts its `.consent-*` rules in `components`. It therefore works alongside Tailwind's preflight, and your own utility classes (`<ConsentSettings class="mt-8">`) still override it. The class names are stable: `consent-settings`, `consent-preferences`, `consent-processors`, `consent-placeholder`, `consent-reopen`, `consent-category`, `consent-service`, `consent-receipt`, `consent-btn`, `consent-switch` and `consent-table`.
+Layers: the stylesheet declares `@layer theme, base, components, utilities`, the same order Tailwind uses, and puts its `.consent-*` rules in `components`. With Tailwind v4, which puts its own CSS in those cascade layers, it therefore works alongside the preflight, and your utility classes (`<ConsentSettings class="mt-8">`) still override it. With Tailwind v3, or any site CSS that is not in a layer, this does not hold: unlayered rules beat every layered rule, so a site rule such as `button { ... }` or `input { ... }` can override the `.consent-*` styles. Put such rules in a layer, or scope them away from the consent components. The class names are stable: `consent-settings`, `consent-preferences`, `consent-processors`, `consent-placeholder`, `consent-reopen`, `consent-category`, `consent-service`, `consent-receipt`, `consent-btn`, `consent-switch` and `consent-table`.
 
 To override colours without touching your site's tokens, set `ui.theme.tokens`. Names: `background`, `foreground`, `primary`, `primaryForeground`, `muted`, `mutedForeground`, `border`, `ring` (a colour: hex, `rgb()`, `hsl()`, `oklch()`, `oklab()` or `var(--name)`), `radius` (a length such as `0.5rem` or `8px`) and `fontFamily` (letters, digits, spaces, commas and quotes, or `inherit`). Each value is at most 100 characters and is validated strictly; anything else, including anything that looks like CSS, throws at build time. The values are applied to `<html>` as `--consent-override-<name>` custom properties with `style.setProperty` (never as CSS text), and again after each Astro view transition. An override beats your site's token, which beats the fallback.
 
@@ -310,6 +320,12 @@ Each also accepts an optional `category` to override the default. These entries 
 - `window.CookieConsent` is frozen and exposes only `acceptAll()`, `rejectAll()` and `getState()`.
 - The logger refuses non-https endpoints (except http between localhost addresses), credentials in the URL and cross-origin paths, and sends no cookies (`credentials: 'omit'`).
 - Install with `npm ci --ignore-scripts`; CI also runs `npm audit --omit=dev --audit-level=high`.
+
+## Changes
+
+- **Message key `embedAccept` is now `embedAllow`** (the embed placeholder's "Allow {service}" button). A site that overrides `embedAccept` in its own language pack must rename the key. There is no alias: the old key is now an unknown message key, and building the configuration throws (`... .messages.embedAccept: unknown message key`).
+- `acceptCategory` and `acceptService` (the embed "Allow" button) keep only consent that is stored and current. A service the visitor refused stays refused, and a service held back by re-consent (new, revised or a bumped site `revision`) is not re-granted by answering for another service.
+- `createConsentLogger`: the record also carries `services`, `timestamp` and, when you pass the `DecisionInfo`, `kind`, `changed`, `changedServices` and `locale`.
 
 ## Local development
 
