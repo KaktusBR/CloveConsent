@@ -270,6 +270,19 @@ describe('per-service API', () => {
     c.acceptService('youtube')
     expect(d.acceptServices).toHaveBeenCalledWith({ media: ['youtube'], functional: ['theme'] })
   })
+  test('acceptCategory goes through the per-service path and keeps a partial choice in another category', () => {
+    const d = fakeDriver(withServices({ media: ['openstreetmap'], functional: [] }, ['necessary', 'media'])); const c = createConsent(conf(), { driver: drv(d) }); c.init()
+    c.acceptCategory('functional')
+    expect(d.acceptCategories).not.toHaveBeenCalled()
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['openstreetmap'], functional: ['theme'] })
+  })
+  test('acceptService does not carry a service whose catalogRevision was bumped', () => {
+    const d = fakeDriver(withServices({ media: ['openstreetmap'], functional: ['theme'] }))
+    const conf2 = () => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [turnstile(), { ...theme(), catalogRevision: 2 }, youtube(), openStreetMap()] })
+    const c = createConsent(conf2(), { driver: drv(d) }); c.init()
+    c.acceptService('youtube')
+    expect(d.acceptServices).toHaveBeenCalledWith({ media: ['openstreetmap', 'youtube'], functional: [] })
+  })
   test('acceptService before any decision selects only that service; unknown id throws', () => {
     const d = fakeDriver(); const c = createConsent(conf(), { driver: drv(d) }); c.init()
     c.acceptService('youtube')

@@ -16,6 +16,10 @@ export interface Consent {
   acceptAll(): void
   rejectAll(): void
   open(): void
+  /**
+   * Accept every service of this category, keeping the services already accepted (stored and current, as `acceptedServices`).
+   * A service held back by re-consent is not re-granted by this call.
+   */
   acceptCategory(c: Category): void
   /** Exactly these optional services are accepted afterwards (an empty list accepts none). Throws for an unknown id; ids of necessary services are ignored. */
   setServices(ids: string[]): void
@@ -25,7 +29,10 @@ export interface Consent {
    * `catalogRevision` or site `revision`). Use it to show what the visitor has actually chosen.
    */
   acceptedServices(): string[]
-  /** Accept one more service, keeping the ones already accepted. */
+  /**
+   * Accept one more service, keeping the ones already accepted (stored and current, as `acceptedServices`). A service held back
+   * by re-consent is not carried over: it is recorded as not accepted and stays blocked until the visitor turns it on.
+   */
   acceptService(id: string): void
   /** Withdraw all consent. Reported as a decision of kind `withdraw`. */
   withdraw(): void
@@ -117,6 +124,24 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     }
     lastAccepted = acceptedIds()
   }
+  /**
+   * What a decision about one service or category keeps of the earlier choice: only consent that is stored and current. A service
+   * held back by re-consent (new, revised, or a bumped site revision) is not carried, so answering for another service can never
+   * re-grant it. Without service toggles the unit of consent is the category: a category is kept only when every service the
+   * stored choice accepts in it is still current; one revised service holds back the whole category, as it does in `isAllowed`.
+   */
+  const carryOver = (): string[] => {
+    const current = acceptedServices()
+    if (perService) return current
+    const raw = acceptedIds()
+    const out: string[] = []
+    for (const c of optionalCategories()) {
+      const inRaw = raw.filter((id) => find(id)!.category === c)
+      const inCurrent = current.filter((id) => find(id)!.category === c)
+      if (inCurrent.length > 0 && inCurrent.length === inRaw.length) out.push(...inCurrent)
+    }
+    return out
+  }
   const select = (ids: string[]) => {
     const selection: Record<string, string[]> = Object.fromEntries(optionalCategories().map((c) => [c, [] as string[]]))
     for (const id of new Set(ids)) selection[find(id)!.category]!.push(id)
@@ -174,8 +199,8 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
     },
     open: () => driver.open(),
     acceptCategory(c) {
-      const have = state()?.categories ?? ['necessary']
-      driver.acceptCategories([...new Set<Category>([...have, c])])
+      // through the per-service path: the engine's own acceptCategory would enable every service of every category listed
+      api.setServices([...carryOver(), ...config.services.filter((s) => s.category === c).map((s) => s.id)])
     },
     setServices(ids) {
       for (const id of ids) if (!find(id)) throw new Error(`[consent] unknown service ${id}`)
@@ -185,16 +210,7 @@ export function createConsent(config: ConsentConfig, deps: { driver: ConsentDriv
       const s = find(id)
       if (!s) throw new Error(`[consent] unknown service ${id}`)
       if (s.category === 'necessary') return
-      const st = state(); const ids: string[] = []
-      if (st) {
-        // keep the services that are already accepted, in the order the engine stored them
-        for (const c of optionalCategories()) {
-          if (!st.categories.includes(c)) continue
-          const inCategory = config.services.filter((x) => x.category === c).map((x) => x.id)
-          ids.push(...(st.services === null || !perService ? inCategory : (st.services[c] ?? []).filter((x) => inCategory.includes(x))))
-        }
-      }
-      api.setServices([...ids, id])
+      api.setServices([...carryOver(), id])
     },
     allowOnce(id) {
       const s = find(id)

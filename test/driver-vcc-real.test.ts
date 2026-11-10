@@ -5,7 +5,7 @@ import { defineConsent } from '../src/config'
 import { createConsent, type Consent } from '../src/client'
 import { createVccDriver } from '../src/driver-vcc'
 import { parseConsent, readCookieValue } from '../src/state'
-import { openStreetMap, theme, youtube } from '../src/catalog'
+import { googleTagManager, metaPixel, openStreetMap, theme, youtube } from '../src/catalog'
 import sk from '../src/locales/sk'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
@@ -396,6 +396,151 @@ describe('real vanilla-cookieconsent: layout and dialog from ui', () => {
       await flush()
       expect(stored()!.categories).toEqual(['necessary'])
       expect(c.isAllowed('youtube')).toBe(false)
+    })
+  })
+})
+
+describe('real vanilla-cookieconsent: programmatic accepts never grant what the visitor did not choose', () => {
+  // media: youtube; marketing: google-tag-manager + meta-pixel
+  const mk = (pixelRev = 1) => [theme(), youtube(), googleTagManager({ containerId: 'GTM-ABCD12' }), { ...metaPixel({ pixelId: '123456' }), catalogRevision: pixelRev }]
+  const three = () => [theme(), youtube(), openStreetMap()]
+  const noToggles = { manager: { serviceToggles: false } }
+  const cookie = (o: Record<string, unknown>) => {
+    document.cookie = `cc_cookie=${enc({
+      revision: 0, consentTimestamp: '2026-10-01T10:00:00.000Z', lastConsentTimestamp: '2026-10-01T10:00:00.000Z',
+      consentId: 'abc-12345678', languageCode: 'sk', expirationTime: Date.now() + 1e9, ...o,
+    })}; path=/`
+  }
+
+  test('acceptCategory keeps a stored refusal of another service in another category', async () => {
+    const c = await load(2, mk())
+    c.setServices(['meta-pixel'])
+    await flush()
+    expect(c.acceptedServices()).toEqual(['meta-pixel'])
+    c.acceptCategory('media')
+    await flush()
+    expect(stored()!.services!.marketing).toEqual(['meta-pixel'])
+    expect(c.isAllowed('google-tag-manager')).toBe(false)
+    expect(c.isAllowed('meta-pixel')).toBe(true)
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.acceptedServices().sort()).toEqual(['meta-pixel', 'youtube'])
+  })
+
+  test('acceptCategory accepts every service of that category', async () => {
+    const c = await load(2, mk())
+    c.acceptCategory('marketing')
+    await flush()
+    expect(c.acceptedServices().sort()).toEqual(['google-tag-manager', 'meta-pixel'])
+    expect(banner()).toBe(false)
+  })
+
+  test('acceptCategory does not re-grant a revised service', async () => {
+    let c = await load(2, mk(1))
+    c.setServices(['meta-pixel'])
+    await flush()
+    c = await load(2, mk(2))
+    expect(c.isAllowed('meta-pixel')).toBe(false)
+    c.acceptCategory('media')
+    await flush()
+    expect(c.isAllowed('meta-pixel')).toBe(false)
+    expect(c.isAllowed('youtube')).toBe(true)
+  })
+
+  test('acceptService (embed "Allow") does not re-grant a revised service', async () => {
+    let c = await load(2, mk(1))
+    c.setServices(['meta-pixel'])
+    await flush()
+    c = await load(2, mk(2))
+    expect(c.isAllowed('meta-pixel')).toBe(false)
+    expect(banner()).toBe(true)
+    c.acceptService('youtube')
+    await flush()
+    expect(c.isAllowed('meta-pixel')).toBe(false)
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.acceptedServices()).toEqual(['youtube'])
+    // the revised service is now recorded as not accepted: it stays blocked on the next load, and the banner is answered
+    c = await load(2, mk(2))
+    expect(c.isAllowed('meta-pixel')).toBe(false)
+    expect(stored()!.services!.marketing ?? []).toEqual([])
+    expect(banner()).toBe(false)
+  })
+
+  test('acceptService keeps the services that are still current', async () => {
+    const c = await load(2, mk())
+    c.setServices(['meta-pixel'])
+    await flush()
+    c.acceptService('youtube')
+    await flush()
+    expect(c.acceptedServices().sort()).toEqual(['meta-pixel', 'youtube'])
+    expect(c.isAllowed('google-tag-manager')).toBe(false)
+  })
+
+  test('an old-format cookie plus acceptService does not grant a service added later', async () => {
+    // written before per-service consent and before OpenStreetMap was added: no services field, no revision for it
+    cookie({ categories: ['necessary', 'functional', 'media'], data: { siteRevision: 2, revisions: { theme: 1, youtube: 1 } } })
+    const c = await load(2, three())
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('openstreetmap')).toBe(false)
+    c.acceptService('theme')
+    await flush()
+    expect(c.isAllowed('openstreetmap')).toBe(false)
+    expect(c.isAllowed('youtube')).toBe(true)
+    expect(c.isAllowed('theme')).toBe(true)
+  })
+
+  test('the dialog shows a partial choice as it was stored', async () => {
+    let c = await load(2, mk())
+    c.setServices(['meta-pixel'])
+    await flush()
+    c = await load(2, mk())
+    c.open()
+    await flush()
+    const on = [...document.querySelectorAll<HTMLInputElement>('.pm input.section__toggle[data-category]')].filter((i) => i.checked).map((i) => i.value)
+    expect(on).toEqual(['meta-pixel'])
+  })
+
+  describe('without service toggles', () => {
+    test('acceptService does not widen a stored per-service list to the whole category', async () => {
+      // accepted while toggles were on: only OpenStreetMap of media
+      cookie({ categories: ['necessary', 'media'], data: { siteRevision: 2, revisions: { theme: 1, youtube: 1, openstreetmap: 1 } }, services: { necessary: [], media: ['openstreetmap'], functional: [] } })
+      const c = await load(2, three(), noToggles)
+      expect(c.isAllowed('youtube')).toBe(false)
+      c.acceptService('theme')
+      await flush()
+      expect(c.isAllowed('theme')).toBe(true)
+      expect(c.isAllowed('youtube')).toBe(false)
+    })
+    test('acceptService carries over only the categories that are currently accepted', async () => {
+      let c = await load(2, mk(1), noToggles)
+      c.acceptCategory('marketing')
+      await flush()
+      expect(c.isAllowed('meta-pixel')).toBe(true)
+      c = await load(2, mk(2), noToggles)
+      expect(c.isAllowed('meta-pixel')).toBe(false)
+      c.acceptService('youtube')
+      await flush()
+      expect(c.isAllowed('youtube')).toBe(true)
+      expect(c.isAllowed('meta-pixel')).toBe(false)
+      expect(c.isAllowed('google-tag-manager')).toBe(false)
+    })
+    test('acceptCategory does not re-grant a category held back by a revised service', async () => {
+      let c = await load(2, mk(1), noToggles)
+      c.acceptCategory('marketing')
+      await flush()
+      c = await load(2, mk(2), noToggles)
+      c.acceptCategory('media')
+      await flush()
+      expect(c.isAllowed('youtube')).toBe(true)
+      expect(c.isAllowed('meta-pixel')).toBe(false)
+    })
+    test('acceptCategory keeps the categories already accepted', async () => {
+      const c = await load(2, mk(), noToggles)
+      c.acceptCategory('marketing')
+      await flush()
+      c.acceptCategory('media')
+      await flush()
+      expect(stored()!.categories.sort()).toEqual(['marketing', 'media', 'necessary'])
+      expect(['youtube', 'google-tag-manager', 'meta-pixel'].map((id) => c.isAllowed(id))).toEqual([true, true, true])
     })
   })
 })
