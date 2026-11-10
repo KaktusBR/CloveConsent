@@ -64,3 +64,41 @@ test('switch is operable and focusable, with visible focus, and motion is option
 test('no tailwind directives', () => {
   expect(stripped).not.toMatch(/@tailwind|@apply/)
 })
+
+test('color-mix in --cc-* custom properties is gated by @supports and has a plain fallback', () => {
+  const start = stripped.indexOf('@supports (color: color-mix(')
+  expect(start).toBeGreaterThan(-1)
+  let depth = 0
+  let end = -1
+  for (let i = stripped.indexOf('{', start); i < stripped.length; i++) {
+    if (stripped[i] === '{') depth++
+    else if (stripped[i] === '}' && --depth === 0) { end = i; break }
+  }
+  expect(end).toBeGreaterThan(start)
+  const inside = stripped.slice(start, end)
+  const outside = stripped.slice(0, start) + stripped.slice(end)
+  const mixed = [...stripped.matchAll(/(--cc-[a-z-]+)\s*:\s*[^;]*color-mix\(/g)].map((m) => m[1]!)
+  expect(mixed.length).toBeGreaterThan(0)
+  for (const prop of mixed) {
+    expect(inside, `${prop} mixed inside @supports`).toMatch(new RegExp(String.raw`${prop}\s*:\s*color-mix\(`))
+    expect(outside, `${prop} plain fallback outside`).toMatch(new RegExp(String.raw`${prop}\s*:\s*(?!color-mix)[^;]+;`))
+    expect(outside, `${prop} not mixed outside`).not.toMatch(new RegExp(String.raw`${prop}\s*:\s*[^;]*color-mix\(`))
+  }
+})
+
+test('forced-colors keeps the switch visible: checked, disabled and focus', () => {
+  const start = stripped.indexOf('@media (forced-colors: active)')
+  expect(start).toBeGreaterThan(-1)
+  let depth = 0
+  let end = -1
+  for (let i = stripped.indexOf('{', start); i < stripped.length; i++) {
+    if (stripped[i] === '{') depth++
+    else if (stripped[i] === '}' && --depth === 0) { end = i; break }
+  }
+  const block = stripped.slice(start, end)
+  expect(block).toContain('.consent-switch:checked')
+  expect(block).toContain('.consent-switch:disabled')
+  expect(block).toContain('.consent-switch:focus-visible')
+  expect(block).toMatch(/border:\s*1px solid CanvasText/)
+  for (const k of ['Highlight', 'HighlightText', 'GrayText']) expect(block).toContain(k)
+})

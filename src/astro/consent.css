@@ -42,9 +42,9 @@
   --cc-btn-primary-bg: var(--consent-primary);
   --cc-btn-primary-color: var(--consent-primary-fg);
   --cc-btn-primary-border-color: var(--consent-primary);
-  --cc-btn-primary-hover-bg: color-mix(in srgb, var(--consent-primary) 85%, var(--consent-bg));
+  --cc-btn-primary-hover-bg: var(--consent-primary);
   --cc-btn-primary-hover-color: var(--consent-primary-fg);
-  --cc-btn-primary-hover-border-color: color-mix(in srgb, var(--consent-primary) 85%, var(--consent-bg));
+  --cc-btn-primary-hover-border-color: var(--consent-primary);
   /* Secondary (Settings) is outlined, with the same size, weight and padding. */
   --cc-btn-secondary-bg: transparent;
   --cc-btn-secondary-color: var(--consent-fg);
@@ -66,7 +66,7 @@
   --cc-toggle-readonly-knob-icon-color: var(--consent-muted-fg);
   --cc-cookie-category-block-bg: var(--consent-muted);
   --cc-cookie-category-block-border: var(--consent-border);
-  --cc-cookie-category-block-hover-bg: color-mix(in srgb, var(--consent-muted) 88%, var(--consent-fg));
+  --cc-cookie-category-block-hover-bg: var(--consent-muted);
   --cc-cookie-category-block-hover-border: var(--consent-border);
   --cc-cookie-category-expanded-block-bg: transparent;
   --cc-cookie-category-expanded-block-hover-bg: var(--consent-muted);
@@ -75,6 +75,19 @@
   --cc-footer-bg: var(--consent-muted);
   --cc-footer-color: var(--consent-muted-fg);
   --cc-footer-border-color: var(--consent-border);
+}
+
+/*
+ * color-mix() inside a custom property is stored as raw tokens, so without
+ * support the engine's var() would be invalid at computed-value time. The plain
+ * colors above are the fallback; the mixed ones apply only where supported.
+ */
+@supports (color: color-mix(in srgb, red, blue)) {
+  #cc-main {
+    --cc-btn-primary-hover-bg: color-mix(in srgb, var(--consent-primary) 85%, var(--consent-bg));
+    --cc-btn-primary-hover-border-color: color-mix(in srgb, var(--consent-primary) 85%, var(--consent-bg));
+    --cc-cookie-category-block-hover-bg: color-mix(in srgb, var(--consent-muted) 88%, var(--consent-fg));
+  }
 }
 
 /* Dark: the driver puts .cc--darkmode on <html> when the site has .dark. */
@@ -340,6 +353,49 @@
   .consent-switch:focus-visible {
     outline: 2px solid var(--consent-ring);
     outline-offset: 2px;
+  }
+
+  /* Windows High Contrast: backgrounds are overridden, so the switch must
+     show track, knob and state with system colors and borders. */
+  @media (forced-colors: active) {
+    .consent-switch {
+      background: Canvas;
+      border: 1px solid CanvasText;
+      forced-color-adjust: none;
+    }
+    .consent-switch::before {
+      background: CanvasText;
+    }
+    .consent-switch:checked,
+    .consent-switch[data-state='mixed'],
+    .consent-switch[aria-checked='mixed'] {
+      background: Highlight;
+      border-color: Highlight;
+    }
+    .consent-switch:checked::before,
+    .consent-switch[data-state='mixed']::before,
+    .consent-switch[aria-checked='mixed']::before {
+      background: HighlightText;
+    }
+    .consent-switch:disabled {
+      opacity: 1;
+      background: Canvas;
+      border-color: GrayText;
+    }
+    .consent-switch:disabled::before {
+      background: GrayText;
+    }
+    .consent-switch:disabled:checked {
+      background: GrayText;
+      border-color: GrayText;
+    }
+    .consent-switch:disabled:checked::before {
+      background: Canvas;
+    }
+    .consent-switch:focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
+    }
   }
 
   /* ---- Storage table ---- */
