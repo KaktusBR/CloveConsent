@@ -128,7 +128,17 @@ Reference, time and policy version come from the `ConsentState`, not from `Decis
 
 ### Optional consent logging
 
-`createConsentLogger` returns an async function that POSTs the consent id, revisions and the per-category decision to your endpoint. It does not send the per-service list or the `DecisionInfo` fields: if you need a service-level record, send your own request from the `decision` event as shown above. The endpoint must be a same-origin path or an https URL.
+`createConsentLogger` returns an async function `log(state, config, info?)` that POSTs one consent record to your endpoint:
+
+| Field | Meaning |
+| --- | --- |
+| `siteSlug` | the `siteSlug` option, when set |
+| `consentId`, `siteRevision`, `revisions`, `timestamp` | from the `ConsentState` |
+| `categories` | category id -> `true` when the category is accepted at all. A category can be accepted for only some of its services, so read `services` for what consent was given for |
+| `services` | ids of the optional services the stored choice accepts |
+| `kind`, `changed`, `changedServices`, `locale` | from the `DecisionInfo`, when you pass it as `info`. Without it a withdrawal cannot be told apart from a refusal |
+
+The endpoint must be a same-origin path or an https URL.
 
 ```ts
 import { createConsentLogger, getConsent } from 'cloveconsent'
@@ -138,7 +148,7 @@ const log = createConsentLogger({ endpoint: '/api/consent-log', siteSlug: 'mysit
 const wire = () => {
   const consent = getConsent() // null until the banner has booted
   if (!consent) return
-  consent.on('decision', () => void log(consent.getState(), consent.config))
+  consent.on('decision', (info) => void log(consent.getState(), consent.config, info))
 }
 if (getConsent()) wire()
 else document.addEventListener('DOMContentLoaded', wire, { once: true })

@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createConsentLogger } from '../src/log'
 import { defineConsent } from '../src/config'
-import { theme } from '../src/catalog'
+import { googleTagManager, metaPixel, theme } from '../src/catalog'
 import sk from '../src/locales/sk'
 import { parseConsent } from '../src/state'
 
@@ -39,9 +39,35 @@ describe('request', () => {
     expect(url).toBe('/api/consent')
     expect(init.method).toBe('POST'); expect(init.credentials).toBe('omit')
     expect(JSON.parse(init.body)).toEqual({
-      siteSlug: 'my-site', consentId: 'abc-12345678', siteRevision: 1, revisions: { theme: 1 },
+      siteSlug: 'my-site', consentId: 'abc-12345678', siteRevision: 1, revisions: { theme: 1 }, timestamp: null,
       categories: { necessary: true, functional: true, media: false, social: false, analytics: false, marketing: false },
+      services: ['theme'],
     })
+  })
+  test('records the accepted services, not only the category, and the time', async () => {
+    const two = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [googleTagManager({ containerId: 'GTM-ABCD12' }), metaPixel({ pixelId: '123456' })] })
+    const st = parseConsent(encodeURIComponent(JSON.stringify({
+      consentId: 'abc-12345678', categories: ['necessary', 'marketing'], lastConsentTimestamp: '2026-11-09T10:00:00.000Z',
+      data: { siteRevision: 1, revisions: { 'google-tag-manager': 1, 'meta-pixel': 1 } }, services: { necessary: [], marketing: ['meta-pixel'] },
+    })))!
+    const f = vi.fn().mockResolvedValue({ ok: true })
+    await createConsentLogger({ endpoint: '/x', fetchImpl: f as any, location: loc })(st, two)
+    const body = JSON.parse(f.mock.calls[0]![1].body)
+    expect(body.categories.marketing).toBe(true)
+    expect(body.services).toEqual(['meta-pixel'])
+    expect(body.timestamp).toBe('2026-11-09T10:00:00.000Z')
+  })
+  test('records the decision info when given: a withdrawal is not a refusal', async () => {
+    const f = vi.fn().mockResolvedValue({ ok: true })
+    const none = parseConsent(encodeURIComponent(JSON.stringify({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { theme: 1 } } })))!
+    await createConsentLogger({ endpoint: '/x', fetchImpl: f as any, location: loc })(none, config, { kind: 'withdraw', changed: ['functional'], changedServices: ['theme'], locale: 'sk' })
+    const body = JSON.parse(f.mock.calls[0]![1].body)
+    expect(body).toMatchObject({ kind: 'withdraw', changed: ['functional'], changedServices: ['theme'], locale: 'sk', services: [] })
+  })
+  test('without decision info the record has no kind', async () => {
+    const f = vi.fn().mockResolvedValue({ ok: true })
+    await createConsentLogger({ endpoint: '/x', fetchImpl: f as any, location: loc })(state, config)
+    expect(JSON.parse(f.mock.calls[0]![1].body)).not.toHaveProperty('kind')
   })
   test('does not follow redirects and uses keepalive', async () => {
     const f = vi.fn().mockResolvedValue({ ok: true })
