@@ -450,6 +450,16 @@
   .consent-btn--secondary:hover {
     background: var(--consent-muted);
   }
+  .consent-btn--link {
+    background: transparent;
+    color: var(--consent-muted-fg);
+    border-color: transparent;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+  .consent-btn--link:hover {
+    color: var(--consent-fg);
+  }
   .consent-btn:focus-visible {
     outline: 2px solid var(--consent-ring);
     outline-offset: 2px;
@@ -534,11 +544,19 @@
     border: 1px solid var(--consent-border);
     border-radius: var(--consent-radius);
   }
-  .consent-placeholder p {
+  .consent-placeholder__text {
     margin: 0;
   }
   .consent-placeholder > .consent-btn {
     align-self: stretch;
+  }
+  /* a known size is kept (set inline from the element it replaces); it never overflows its container */
+  .consent-placeholder {
+    max-inline-size: 100%;
+  }
+  .consent-placeholder--min {
+    min-inline-size: 16rem;
+    min-block-size: 9rem;
   }
 
   .consent-reopen {

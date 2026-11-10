@@ -9,7 +9,7 @@ export interface Messages {
   catSocial: string; catSocialText: string
   catAnalytics: string; catAnalyticsText: string
   catMarketing: string; catMarketingText: string
-  embedBlocked: string; embedLoadOnce: string; embedAllow: string
+  embedBlocked: string; embedHint: string; embedLoadOnce: string; embedAllow: string
   clearWarning: string
   receiptTitle: string; receiptNone: string; receiptCopy: string; receiptCopied: string; receiptSaved: string
   receiptPolicy: string; receiptLanguage: string; receiptChoice: string
@@ -31,7 +31,7 @@ export const en: Messages = {
   catSocial: 'Social', catSocialText: 'Embedded content from social networks.',
   catAnalytics: 'Analytics', catAnalyticsText: 'Help us understand how the site is used.',
   catMarketing: 'Marketing', catMarketingText: 'Used to measure and target advertising.',
-  embedBlocked: 'Content from {provider} is blocked until you allow it.', embedLoadOnce: 'Load once', embedAllow: 'Allow {service}',
+  embedBlocked: '{service} is turned off because of your cookie choice.', embedHint: 'Turn on {category} cookies to see it.', embedLoadOnce: 'Load once', embedAllow: 'Allow {service}',
   clearWarning: 'Some third-party files cannot be removed from this site. Delete them in your browser settings.',
   receiptTitle: 'Your consent reference', receiptNone: 'No choice saved yet.', receiptCopy: 'Copy', receiptCopied: 'Copied', receiptSaved: 'Saved',
   receiptPolicy: 'Policy version', receiptLanguage: 'Language', receiptChoice: 'Choice',

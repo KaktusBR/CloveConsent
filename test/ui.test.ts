@@ -16,7 +16,7 @@ const config = defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk]
 const page = `
 <button data-consent-open>Settings</button>
 <div data-consent-embed data-consent-service="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc" data-consent-title="Video">
-  <div data-consent-placeholder><button data-consent-action="once">once</button><button data-consent-action="accept">accept</button></div>
+  <div data-consent-placeholder-for="youtube"><button data-consent-action="once">once</button><button data-consent-action="accept">accept</button></div>
 </div>`
 beforeEach(() => { document.body.innerHTML = page })
 
@@ -45,7 +45,7 @@ test('withdrawing consent restores the placeholder', () => {
   d.set(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
   d.hooks().onChange(['media'], [])
   expect(document.querySelector('iframe')).toBeNull()
-  expect(document.querySelector('[data-consent-placeholder]')).not.toBeNull()
+  expect(document.querySelector('[data-consent-placeholder-for]')).not.toBeNull()
 })
 test('an embed whose service has no stored revision stays a placeholder until a decision', () => {
   const stale = enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: { siteRevision: 1, revisions: {} } })
@@ -55,7 +55,7 @@ test('an embed whose service has no stored revision stays a placeholder until a 
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   d.hooks().onConsent()
   expect(document.querySelector('iframe')).toBeNull()
-  expect(document.querySelector('[data-consent-placeholder]')).not.toBeNull()
+  expect(document.querySelector('[data-consent-placeholder-for]')).not.toBeNull()
   d.hooks().onDecision()
   expect(document.querySelector('iframe')).not.toBeNull()
 })
@@ -157,13 +157,22 @@ test('load once then reject removes the iframe and restores the placeholder', ()
   d.hooks().onChange(['media'], [])
   expect(c.isAllowed('youtube')).toBe(false)
   expect(document.querySelector('iframe')).toBeNull()
-  expect(document.querySelector('[data-consent-placeholder]')).not.toBeNull()
+  expect(document.querySelector('[data-consent-placeholder-for]')).not.toBeNull()
 })
 test('fallback content is intact on a plain sync while not allowed', () => {
   document.body.innerHTML = '<div data-consent-embed data-consent-service="youtube"><p id="fb">fallback</p></div>'
   const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
   d.hooks().onConsent()
   expect(document.querySelector('#fb')).not.toBeNull()
+})
+test('an iframe the page put there itself gets the shared placeholder, at its size, when consent is withdrawn', () => {
+  document.body.innerHTML = '<div data-consent-embed data-consent-service="youtube"><iframe width="560" height="315"></iframe></div>'
+  const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  d.hooks().onConsent()
+  expect(document.querySelector('iframe')).toBeNull()
+  const ph = document.querySelector<HTMLElement>('[data-consent-placeholder-for="youtube"]')!
+  expect(ph.style.inlineSize).toBe('560px')
+  expect(ph.querySelector('[data-consent-action="once"]')).not.toBeNull()
 })
 test('bindDom is idempotent', () => {
   const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c); bindDom(c)

@@ -9,6 +9,7 @@ export { createConsent, getConsent, type Consent, type ConsentEvent } from './cl
 export { bindDom, bootFromDom } from './ui'
 export { bindSettings, bindSettingsFromDom, applyTheme } from './panel'
 export { renderSettings } from './settings'
+export { renderPlaceholder } from './placeholder'
 export { buildView, type View } from './view'
 export { hostAllowed } from './gating'
 export { createConsentLogger } from './log'

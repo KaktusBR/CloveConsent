@@ -38,7 +38,7 @@ test('banner blob has the expected services, locales, locale attribute and no ho
 })
 test('embed renders as a placeholder, not an iframe, with the exact src', () => {
   expect(html).toContain('data-consent-embed')
-  expect(html).toContain('data-consent-placeholder')
+  expect(html).toContain('data-consent-placeholder-for="youtube"')
   expect(html).toContain('data-consent-src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"')
   expect(html).not.toContain('<iframe')
 })

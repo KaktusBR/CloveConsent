@@ -1,6 +1,8 @@
 import { createConsent, getConsent, type Consent } from './client'
 import { fromPublicJson } from './config'
 import { createEmbed } from './gating'
+import { measure, mountPlaceholder, renderPlaceholder } from './placeholder'
+import { buildView } from './view'
 import { createVccDriver } from './driver-vcc'
 import { applyTheme, bindSettingsFromDom } from './panel'
 import type { ConsentDriver } from './driver'
@@ -17,7 +19,7 @@ function syncEmbeds(consent: Consent, doc: Document): void {
     if (consent.isAllowed(id) && !hasFrame) {
       try {
         const frame = createEmbed(doc, entry as ClientEntry, box.dataset.consentSrc ?? '', box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en)
-        const ph = box.querySelector('[data-consent-placeholder]')
+        const ph = box.querySelector('[data-consent-placeholder-for]')
         if (ph) placeholders.set(box, ph)
         box.replaceChildren(frame)
       } catch (err) { /* disallowed src: keep the placeholder */ void err }
@@ -25,8 +27,14 @@ function syncEmbeds(consent: Consent, doc: Document): void {
       // unloadService may already have removed the iframe; only touch boxes we swapped ourselves
       const ph = placeholders.get(box)
       const frame = box.querySelector('iframe')
-      if (frame) frame.remove()
-      if (ph && !box.contains(ph)) box.replaceChildren(ph)
+      if (ph) {
+        frame?.remove()
+        if (!box.contains(ph)) box.replaceChildren(ph)
+      } else if (frame) {
+        // an iframe the page put there itself: give it the same placeholder, at the same size
+        const label = box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en
+        mountPlaceholder(frame, renderPlaceholder(buildView(consent.config, consent.locale), id, label), measure(frame))
+      }
       placeholders.delete(box)
     }
   })

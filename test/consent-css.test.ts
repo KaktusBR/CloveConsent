@@ -48,7 +48,7 @@ test('every class in the contract appears', () => {
     'consent-settings', 'consent-receipt', 'consent-receipt__id', 'consent-receipt__meta', 'consent-category',
     'consent-category__head', 'consent-service', 'consent-switch', 'consent-table', 'consent-actions',
     'consent-status', 'consent-btn', 'consent-btn--primary', 'consent-btn--secondary', 'consent-placeholder',
-    'consent-processors', 'consent-preferences',
+    'consent-processors', 'consent-preferences', 'consent-placeholder__text', 'consent-placeholder--min', 'consent-btn--link',
   ]
   for (const c of classes) expect(stripped, c).toContain(`.${c}`)
 })

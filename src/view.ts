@@ -3,7 +3,7 @@ import type { Messages } from './messages'
 import type { UiSettings } from './ui-settings'
 import { isRtl } from './i18n/rtl'
 
-export interface ViewService { id: string; title: string; description: string; provider: string | null; storage: { name: string; type: string; expiry: string; purpose: string }[] }
+export interface ViewService { id: string; title: string; description: string; provider: string | null; iframe: boolean; storage: { name: string; type: string; expiry: string; purpose: string }[] }
 export interface ViewCategory { id: Category; title: string; description: string; readOnly: boolean; services: ViewService[] }
 export interface ViewProcessor { id: string; provider: string; privacyUrl: string; purpose: string; dataCategories: string[]; location: string; dpaUrl: string | null; transfers: string | null }
 export interface View { locale: Locale; dir: 'ltr' | 'rtl'; m: Messages; cookieName: string; darkMode: boolean; privacyHref: string | null; categories: ViewCategory[]; processors: ViewProcessor[]; ui: UiSettings }
@@ -29,6 +29,7 @@ export function buildView(config: ConsentConfig, requested: Locale): View {
       services: entries.map((s) => ({
         id: s.id, title: text(s.messages.title), description: text(s.messages.description),
         provider: s.kind === 'client' ? s.provider.name : null,
+        iframe: s.kind === 'client' && s.gating.type === 'iframe',
         storage: s.storage.map((x) => ({ name: x.name, type: x.type, expiry: text(x.expiry), purpose: text(x.purpose) })),
       })),
     })

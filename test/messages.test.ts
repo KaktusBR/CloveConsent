@@ -26,7 +26,7 @@ test('format does not interpret replacement patterns', () => {
 const NEW_KEYS = [
   'receiptTitle', 'receiptNone', 'receiptCopy', 'receiptCopied', 'receiptSaved', 'receiptPolicy', 'receiptLanguage', 'receiptChoice',
   'choiceAll', 'choiceNecessary', 'choiceCustom', 'settingsTitle', 'settingsIntro', 'settingsSaved', 'withdraw', 'showDetails', 'hideDetails',
-  'servicesAllowed', 'stateMixed', 'noStorage', 'embedAllow',
+  'servicesAllowed', 'stateMixed', 'noStorage', 'embedAllow', 'embedHint',
 ] as const
 
 test('consent manager texts exist in English with the exact wording', () => {
@@ -35,6 +35,10 @@ test('consent manager texts exist in English with the exact wording', () => {
   expect(en.settingsIntro).toBe('Choose what you allow. Necessary items are always on. You can change or withdraw your choice at any time.')
   expect(en.servicesAllowed).toBe('{allowed} of {total} allowed')
   expect(en.embedAllow).toBe('Allow {service}')
+})
+test('placeholder texts name the service and the category', () => {
+  expect(en.embedBlocked).toBe('{service} is turned off because of your cookie choice.')
+  expect(en.embedHint).toBe('Turn on {category} cookies to see it.')
 })
 test('embedAccept is gone, replaced by embedAllow', () => {
   expect(MESSAGE_KEYS as readonly string[]).not.toContain('embedAccept')
@@ -52,6 +56,9 @@ describe.each([['sk', sk], ['fr', fr], ['de', de]])('%s pack', (_name, pack) => 
     expect(m.servicesAllowed).toMatch(/\{allowed\}/)
     expect(m.servicesAllowed).toMatch(/\{total\}/)
     expect(m.embedAllow).toMatch(/\{service\}/)
+    expect(m.embedBlocked).toMatch(/\{service\}/)
+    expect(m.embedBlocked).not.toMatch(/\{provider\}/)
+    expect(m.embedHint).toMatch(/\{category\}/)
     for (const k of NEW_KEYS) expect(m[k]!.trim().length, k).toBeGreaterThan(0)
   })
   test('is accepted by the strict policy', () => {
