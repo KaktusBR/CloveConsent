@@ -39,16 +39,18 @@ function serviceOf(consent: Consent, el: Element, attr: string, opts: MarkedOpti
 const sourceAllowed = (entry: ServiceEntry, url: string): boolean => entry.kind === 'client' && hostAllowed(entry, url)
 
 /**
+ * Scripts run on persisted consent only: a one-time allowance ("load once") is for iframes and widget containers, whose effects
+ * end with the page view; a script's side effects cannot be undone.
+ */
+const scriptAllowed = (consent: Consent, entry: ServiceEntry): boolean =>
+  entry.category === 'necessary' || (consent.acceptedServices().includes(entry.id) && consent.isAllowed(entry.id))
+
+/**
  * Replaces a marked script with a new script element: one the parser created as text/plain never runs after its type changes.
  * The new element keeps the original attributes except the marking; its type comes from `data-type`. An inline script is the
  * site owner's own code and keeps its text. The replaced element is gone, so a script is activated at most once per page view.
  */
-function activateScript(doc: Document, el: HTMLScriptElement, entry: ServiceEntry): void {
-  const src = el.getAttribute('src')
-  if (src !== null && !sourceAllowed(entry, src)) {
-    warnOnce(el, `marked script for "${entry.id}" not activated: ${src} is not one of its origins`)
-    return
-  }
+function activateScript(doc: Document, el: HTMLScriptElement, entry: ServiceEntry): HTMLScriptElement {
   const s = doc.createElement('script')
   for (const a of Array.from(el.attributes)) {
     if (a.name === 'type' || a.name === 'data-type' || a.name.startsWith('data-consent')) continue
@@ -58,12 +60,61 @@ function activateScript(doc: Document, el: HTMLScriptElement, entry: ServiceEntr
   if (el.nonce) s.nonce = el.nonce
   const type = el.getAttribute('data-type')
   if (type) s.setAttribute('type', type)
-  if (src === null) s.text = el.text
-  // inserted scripts are async by default: keep the page's order unless the tag asked for async
+  if (!el.hasAttribute('src')) s.text = el.text
+  // inserted scripts are async by default; the queue below keeps the order, unless the tag asked for async
   else if (!el.hasAttribute('async')) s.async = false
   // lets unloadService find it when consent is withdrawn
   s.dataset.consentService = entry.id
   el.replaceWith(s)
+  return s
+}
+
+/**
+ * Marked scripts run in document order, as the parser would have run them: a script waits until the external script before it
+ * has loaded or failed (one with `async` is not waited for). One queue per document, across services and syncs.
+ */
+interface QueuedScript { el: HTMLScriptElement; entry: ServiceEntry; consent: Consent }
+interface ScriptQueue { items: QueuedScript[]; waitingFor: HTMLScriptElement | null }
+const queues = new WeakMap<Document, ScriptQueue>()
+const queued = new WeakSet<Element>()
+
+function runQueue(doc: Document, q: ScriptQueue): void {
+  // a script removed before it loaded (unloaded on withdrawal, page swapped) never reports back: stop waiting for it
+  if (q.waitingFor && !q.waitingFor.isConnected) q.waitingFor = null
+  while (!q.waitingFor && q.items.length > 0) {
+    const { el, entry, consent } = q.items.shift()!
+    queued.delete(el)
+    // consent may have changed while it waited; a later sync queues it again
+    if (!el.isConnected || !scriptAllowed(consent, entry)) continue
+    const s = activateScript(doc, el, entry)
+    if (!s.hasAttribute('src') || s.hasAttribute('async')) continue
+    q.waitingFor = s
+    const next = () => {
+      if (q.waitingFor !== s) return
+      q.waitingFor = null
+      runQueue(doc, q)
+    }
+    s.addEventListener('load', next, { once: true })
+    s.addEventListener('error', next, { once: true })
+  }
+}
+
+function syncScripts(consent: Consent, doc: Document, opts: MarkedOptions): void {
+  let q = queues.get(doc)
+  if (!q) queues.set(doc, (q = { items: [], waitingFor: null }))
+  doc.querySelectorAll<HTMLScriptElement>('script[type="text/plain"][data-consent]').forEach((el) => {
+    if (queued.has(el)) return
+    const entry = serviceOf(consent, el, 'data-consent', opts)
+    if (!entry || !scriptAllowed(consent, entry)) return
+    const src = el.getAttribute('src')
+    if (src !== null && !sourceAllowed(entry, src)) {
+      warnOnce(el, `marked script for "${entry.id}" not activated: ${src} is not one of its origins`)
+      return
+    }
+    queued.add(el)
+    q.items.push({ el, entry, consent })
+  })
+  runQueue(doc, q)
 }
 
 function syncContainers(consent: Consent, doc: Document, view: () => View, opts: MarkedOptions): void {
@@ -125,16 +176,14 @@ export function syncMarked(consent: Consent, doc: Document, opts: MarkedOptions 
   // containers first: a widget script must find its container empty when it runs
   syncContainers(consent, doc, view, opts)
   syncFrames(consent, doc, view, opts)
-  doc.querySelectorAll<HTMLScriptElement>('script[type="text/plain"][data-consent]').forEach((el) => {
-    const entry = serviceOf(consent, el, 'data-consent', opts)
-    if (entry && consent.isAllowed(entry.id)) activateScript(doc, el, entry)
-  })
+  syncScripts(consent, doc, opts)
 }
 
 /**
  * Activates marked scripts, iframes and widget containers when their service is allowed, and keeps them in line with every later
- * decision, one-time allowance and Astro page swap. Withdrawing puts placeholders back; scripts that already ran are unloaded by
- * the client (`unloadService`), which reports storage it cannot clear in `consent.leftovers`. Returns an unbind.
+ * decision, one-time allowance (iframes and containers only) and Astro page swap. Withdrawing puts placeholders back; scripts
+ * that already ran are unloaded by the client (`unloadService`), which reports storage it cannot clear in `consent.leftovers`.
+ * Returns an unbind.
  */
 export function bindMarked(consent: Consent, doc: Document, opts: MarkedOptions = {}): () => void {
   const releaseActions = bindPlaceholderActions(consent, doc)

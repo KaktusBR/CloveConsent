@@ -10,7 +10,7 @@ import type { ClientEntry } from '../src/schema'
 
 const enc = (o: unknown) => encodeURIComponent(JSON.stringify(o))
 const cookie = (categories: string[]) =>
-  enc({ consentId: 'abc-12345678', categories, data: { siteRevision: 1, revisions: { youtube: 1, chat: 1 } } })
+  enc({ consentId: 'abc-12345678', categories, data: { siteRevision: 1, revisions: { youtube: 1, chat: 1, helper: 1 } } })
 function fakeDriver(initial: string | null = null) {
   let raw = initial; let hooks!: DriverHooks
   return {
@@ -25,15 +25,31 @@ const chat: ClientEntry = {
   storage: [{ name: 'stubborn', type: 'cookie', expiry: { en: 'x' }, purpose: { en: 'y' } }],
   messages: { title: { en: 'Chat' }, description: { en: 'Chat widget' } },
 }
-const config = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [youtube(), chat] })
+// a library another service's script uses, accepted in the same category
+const helper: ClientEntry = { ...chat, id: 'helper', origins: ['lib.example'], storage: [], messages: { title: { en: 'Helper' }, description: { en: 'Library' } } }
+const config = defineConsent({ locales: ['en'], defaultLocale: 'en', revision: 1, services: [youtube(), chat, helper] })
 const start = (raw: string | null = null, doc: Document = document) => {
   const d = fakeDriver(raw); const c = createConsent(config, { driver: d as never, doc }); c.init()
   return { d, c }
 }
 // the test environment's document does not run scripts: a page that does, to see an activated script actually run
-const { JSDOM } = createRequire(import.meta.url)('jsdom') as { JSDOM: new (html: string, o: object) => { window: Window } }
-const runnable = (body: string) => {
-  const win = new JSDOM(`<!DOCTYPE html><html><head></head><body>${body}</body></html>`, { runScripts: 'dangerously', url: 'https://site.example/' }).window
+// external scripts are served from `files` (a status number makes the load fail); nothing reaches the network
+const jsdom = createRequire(import.meta.url)('jsdom') as {
+  JSDOM: new (html: string, o: object) => { window: Window }
+  VirtualConsole: new () => object
+  requestInterceptor(fn: (req: Request) => Response | undefined): unknown
+}
+const runnable = (body: string, files: Record<string, string | number> = {}) => {
+  const resources = {
+    interceptors: [jsdom.requestInterceptor((req) => {
+      const f = files[req.url]
+      return typeof f === 'string'
+        ? new Response(f, { headers: { 'Content-Type': 'application/javascript' } })
+        : new Response('', { status: f ?? 404 })
+    })],
+  }
+  const win = new jsdom.JSDOM(`<!DOCTYPE html><html><head></head><body>${body}</body></html>`,
+    { runScripts: 'dangerously', resources, url: 'https://site.example/', virtualConsole: new jsdom.VirtualConsole() }).window
   return { doc: win.document, ran: () => (win as unknown as Record<string, unknown>).__marked }
 }
 let unbind: (() => void) | undefined
@@ -115,6 +131,43 @@ describe('marked scripts', () => {
     d.set(cookie(['necessary'])); d.hooks.onChange(['functional'], [])
     d.set(cookie(['necessary', 'functional'])); d.hooks.onChange(['functional'], [])
     expect(ran()).toBe(1)
+  })
+})
+
+describe('script order', () => {
+  const page = '<script type="text/plain" data-consent="helper" src="https://lib.example/lib.js"></script>'
+    + '<script type="text/plain" data-consent="chat">window.__marked = window.lib</script>'
+  test('an inline script after an external one waits until it has loaded, across services', async () => {
+    const { doc, ran } = runnable(page, { 'https://lib.example/lib.js': 'window.lib = "ready"' })
+    const { d, c } = start(null, doc); unbind = bindMarked(c, doc)
+    d.set(cookie(['necessary', 'functional'])); d.hooks.onFirstConsent()
+    // the inline script is still waiting, even through another sync
+    syncMarked(c, doc)
+    expect(doc.querySelector('script[data-consent="chat"]')!.getAttribute('type')).toBe('text/plain')
+    await vi.waitFor(() => expect(ran()).toBe('ready'))
+  })
+  test('a failed load does not stall the scripts after it', async () => {
+    const { doc, ran } = runnable(page, { 'https://lib.example/lib.js': 404 })
+    const { c } = start(cookie(['necessary', 'functional']), doc); unbind = bindMarked(c, doc)
+    await vi.waitFor(() => expect(doc.querySelector('script[data-consent]')).toBeNull())
+    expect(ran()).toBeUndefined()
+  })
+  test('an external script that throws does not stall the scripts after it', async () => {
+    const { doc, ran } = runnable(page.replace('window.lib', '"after"'), { 'https://lib.example/lib.js': 'throw new Error("broken")' })
+    const { c } = start(cookie(['necessary', 'functional']), doc); unbind = bindMarked(c, doc)
+    await vi.waitFor(() => expect(ran()).toBe('after'))
+  })
+})
+
+describe('one-time allowance', () => {
+  test('"load once" loads the iframe but never a script of the same service', () => {
+    const { doc, ran } = runnable('<iframe data-consent="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc"></iframe>'
+      + '<script type="text/plain" data-consent="youtube">window.__marked = 1</script>')
+    const { c } = start(null, doc); unbind = bindMarked(c, doc)
+    c.allowOnce('youtube')
+    expect(doc.querySelector('iframe')!.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
+    expect(doc.querySelector('script')!.getAttribute('type')).toBe('text/plain')
+    expect(ran()).toBeUndefined()
   })
 })
 
