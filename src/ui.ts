@@ -1,7 +1,7 @@
 import { createConsent, getConsent, type Consent } from './client'
 import { fromPublicJson } from './config'
 import { createEmbed } from './gating'
-import { measure, mountPlaceholder, renderPlaceholder } from './placeholder'
+import { bindPlaceholderActions, measure, mountPlaceholder, renderPlaceholder } from './placeholder'
 import { buildView } from './view'
 import { createVccDriver } from './driver-vcc'
 import { applyTheme, bindSettingsFromDom } from './panel'
@@ -47,17 +47,7 @@ export function bindDom(consent: Consent, doc: Document = document): void {
   if (!set) { set = new WeakSet(); bound.set(doc, set) }
   if (set.has(consent)) return
   set.add(consent)
-  doc.addEventListener('click', (ev) => {
-    if (!(ev.target instanceof Element)) return
-    const t = ev.target.closest<HTMLElement>('[data-consent-open],[data-consent-action]')
-    if (!t) return
-    if (t.hasAttribute('data-consent-open')) { consent.open(); return }
-    const box = t.closest<HTMLElement>('[data-consent-embed]')
-    const entry = consent.config.services.find((s) => s.id === box?.dataset.consentService)
-    if (!entry) return
-    if (t.dataset.consentAction === 'once') consent.allowOnce(entry.id)
-    else if (t.dataset.consentAction === 'accept') consent.acceptService(entry.id)
-  })
+  bindPlaceholderActions(consent, doc)
   const sync = () => syncEmbeds(consent, doc)
   consent.on('ready', sync); consent.on('decision', sync); consent.on('once', sync)
   // Astro view transitions swap the page without a reload: embeds on the new page must be checked again

@@ -1,3 +1,4 @@
+import type { Consent } from './client'
 import { escapeHtml } from './html'
 import { format } from './messages'
 import type { View } from './view'
@@ -56,4 +57,44 @@ export function measure(el: HTMLElement): PlaceholderSize | null {
   const width = side(el, 'width', box.width)
   const height = side(el, 'height', box.height)
   return width && height ? { width, height } : null
+}
+
+interface ActionBinding { users: number; release(): void }
+const actionBindings = new WeakMap<Document, WeakMap<Consent, ActionBinding>>()
+
+/**
+ * The one delegated click listener for placeholder buttons and `[data-consent-open]` links, shared by everything that shows
+ * placeholders (embed boxes, marked iframes, widget containers): bound once per document and client however many callers ask,
+ * so a click is handled once. A button acts for the service of its placeholder (`data-consent-placeholder-for`), or, for
+ * custom markup inside an embed box, for the box's service. Returns a release; the listener goes when its last user releases it.
+ */
+export function bindPlaceholderActions(consent: Consent, doc: Document): () => void {
+  const perDoc = actionBindings.get(doc) ?? new WeakMap<Consent, ActionBinding>()
+  actionBindings.set(doc, perDoc)
+  let binding = perDoc.get(consent)
+  if (!binding) {
+    const onClick = (ev: Event) => {
+      if (!(ev.target instanceof Element)) return
+      const t = ev.target.closest<HTMLElement>('[data-consent-open],[data-consent-action]')
+      if (!t) return
+      if (t.hasAttribute('data-consent-open')) { consent.open(); return }
+      const id = t.closest('[data-consent-placeholder-for]')?.getAttribute('data-consent-placeholder-for')
+        ?? t.closest<HTMLElement>('[data-consent-embed]')?.dataset.consentService
+      const entry = consent.config.services.find((s) => s.id === id)
+      if (!entry) return
+      if (t.dataset.consentAction === 'once') consent.allowOnce(entry.id)
+      else if (t.dataset.consentAction === 'accept') consent.acceptService(entry.id)
+    }
+    doc.addEventListener('click', onClick)
+    const created: ActionBinding = { users: 0, release: () => { doc.removeEventListener('click', onClick); perDoc.delete(consent) } }
+    perDoc.set(consent, (binding = created))
+  }
+  const b = binding
+  b.users++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    if (--b.users === 0) b.release()
+  }
 }
