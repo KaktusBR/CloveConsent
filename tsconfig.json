@@ -6,5 +6,5 @@
     "skipLibCheck": true, "declaration": true, "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "browser/**/*.ts"]
 }
