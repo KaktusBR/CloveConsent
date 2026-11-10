@@ -32,7 +32,7 @@ export function formatSaved(timestamp: string | null, locale: string): string {
   }
 }
 
-function receipt(view: View, state: ConsentState | null, allowed: ReadonlySet<string>): string {
+function receipt(view: View, state: ConsentState | null, allowed: ReadonlySet<string>, interactive: boolean): string {
   const m = view.m
   const head = `<h3 class="consent-receipt__title">${e(m.receiptTitle)}</h3>`
   if (!state) return `<div class="consent-receipt">${head}<p class="consent-receipt__meta">${e(m.receiptNone)}</p></div>`
@@ -42,7 +42,8 @@ function receipt(view: View, state: ConsentState | null, allowed: ReadonlySet<st
   const policy = state.siteRevision === null ? '—' : String(state.siteRevision)
   return `<div class="consent-receipt">${head}`
     + `<div class="consent-receipt__ref"><code class="consent-receipt__id" dir="ltr">${e(state.consentId)}</code>`
-    + `<button type="button" class="consent-btn consent-btn--secondary" data-consent-action="copy" data-copied="${e(m.receiptCopied)}">${e(m.receiptCopy)}</button></div>`
+    + (interactive ? `<button type="button" class="consent-btn consent-btn--secondary" data-consent-action="copy" data-copied="${e(m.receiptCopied)}">${e(m.receiptCopy)}</button>` : '')
+    + `</div>`
     + `<dl class="consent-receipt__meta">`
     + `<div><dt>${e(m.receiptSaved)}</dt><dd>${e(formatSaved(state.timestamp, view.locale))}</dd></div>`
     + `<div><dt>${e(m.receiptPolicy)}</dt><dd>${e(policy)}</dd></div>`
@@ -61,20 +62,20 @@ function storage(view: View, s: ViewService): string {
     + `<th scope="col">${e(m.tableExpiry)}</th><th scope="col">${e(m.tablePurpose)}</th></tr></thead><tbody>${rows}</tbody></table>`
 }
 
-function service(view: View, c: ViewCategory, s: ViewService, allowed: ReadonlySet<string>): string {
+function service(view: View, c: ViewCategory, s: ViewService, allowed: ReadonlySet<string>, interactive: boolean): string {
   const { serviceToggles, storageTables } = view.ui.manager
   const title = s.provider ? `${s.title} (${s.provider})` : s.title
   const id = `consent-service-${s.id}`
   const on = c.readOnly || allowed.has(s.id)
   const toggle = serviceToggles
-    ? `<input type="checkbox" role="switch" class="consent-switch" id="${e(id)}" data-consent-service="${e(s.id)}"${on ? ' checked' : ''}${c.readOnly ? ' disabled' : ''}>`
+    ? `<input type="checkbox" role="switch" class="consent-switch" id="${e(id)}" data-consent-service="${e(s.id)}"${on ? ' checked' : ''}${c.readOnly || !interactive ? ' disabled' : ''}>`
       + `<label for="${e(id)}" class="consent-service__title">${e(title)}</label>`
     : `<span class="consent-service__title">${e(title)}</span>`
   return `<div class="consent-service" data-service="${e(s.id)}"><div class="consent-service__head">${toggle}</div>`
     + `<p class="consent-service__text">${e(s.description)}</p>${storageTables ? storage(view, s) : ''}</div>`
 }
 
-function category(view: View, c: ViewCategory, allowed: ReadonlySet<string>): string {
+function category(view: View, c: ViewCategory, allowed: ReadonlySet<string>, interactive: boolean): string {
   const m = view.m
   const ids = c.services.map((s) => s.id)
   const state: SwitchState = c.readOnly ? 'on' : groupState(allowed, ids)
@@ -90,10 +91,10 @@ function category(view: View, c: ViewCategory, allowed: ReadonlySet<string>): st
     ? ''
     : `<details class="consent-category__details"${open ? ' open' : ''}>`
       + `<summary data-show="${e(m.showDetails)}" data-hide="${e(m.hideDetails)}">${e(open ? m.hideDetails : m.showDetails)}</summary>`
-      + c.services.map((s) => service(view, c, s, allowed)).join('') + `</details>`
+      + c.services.map((s) => service(view, c, s, allowed, interactive)).join('') + `</details>`
   return `<div class="consent-category" data-category="${e(c.id)}"><div class="consent-category__head">`
     + `<input type="checkbox" role="switch" class="consent-switch" id="${e(id)}" data-consent-group="${e(c.id)}" data-state="${state}"`
-    + `${state === 'on' ? ' checked' : ''}${c.readOnly ? ' disabled' : ''}>`
+    + `${state === 'on' ? ' checked' : ''}${c.readOnly || !interactive ? ' disabled' : ''}>`
     + `<label for="${e(id)}" class="consent-category__title">${e(c.title)}</label>${status}${count}</div>`
     + `<p class="consent-category__text">${e(c.description)}</p>${details}</div>`
 }
@@ -111,19 +112,25 @@ function processors(view: View): string {
   return `<section class="consent-processors"><h3>${e(m.processorsHeading)}</h3><ul>${items}</ul></section>`
 }
 
-/** The interactive settings panel as an HTML string. Pure: `allowed` and `state` come from the caller. */
-export function renderSettings(view: View, state: ConsentState | null, allowed: ReadonlySet<string>): string {
+export interface RenderSettingsOptions {
+  /** `false` renders a read-only list (every switch disabled, no action or copy buttons) for a page without script. Default `true`. */
+  interactive?: boolean
+}
+
+/** The settings panel as an HTML string. Pure: `allowed` and `state` come from the caller. */
+export function renderSettings(view: View, state: ConsentState | null, allowed: ReadonlySet<string>, opts: RenderSettingsOptions = {}): string {
+  const interactive = opts.interactive !== false
   const m = view.m
   const ui = view.ui.manager
   const btn = (action: string, cls: string, text: string) =>
     `<button type="button" class="consent-btn consent-btn--${cls}" data-consent-action="${action}">${e(text)}</button>`
-  const actions = btn('accept-all', 'primary', m.acceptAll) + btn('reject-all', 'primary', m.rejectAll) + btn('save', 'secondary', m.savePrefs)
+  const actions = !interactive ? '' : btn('accept-all', 'primary', m.acceptAll) + btn('reject-all', 'primary', m.rejectAll) + btn('save', 'secondary', m.savePrefs)
     + (ui.withdraw && allowed.size > 0 ? btn('withdraw', 'secondary', m.withdraw) : '')
   return `<section class="consent-settings" data-consent-settings>`
     + `<h2 class="consent-settings__title">${e(m.settingsTitle)}</h2><p class="consent-settings__intro">${e(m.settingsIntro)}</p>`
-    + (ui.receipt ? receipt(view, state, allowed) : '')
-    + view.categories.map((c) => category(view, c, allowed)).join('')
+    + (ui.receipt ? receipt(view, state, allowed, interactive) : '')
+    + view.categories.map((c) => category(view, c, allowed, interactive)).join('')
     + (ui.processors ? processors(view) : '')
-    + `<div class="consent-actions">${actions}</div>`
+    + (actions ? `<div class="consent-actions">${actions}</div>` : '')
     + `<div class="consent-status" aria-live="polite"></div></section>`
 }

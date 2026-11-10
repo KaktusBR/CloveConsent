@@ -111,6 +111,44 @@ test('bootFromDom binds a settings panel that is in the page', async () => {
   expect(root.querySelector('[data-consent-action="save"]')).not.toBeNull()
   expect(root.querySelector<HTMLInputElement>('input[data-consent-group="media"]')!.disabled).toBe(false)
 })
+const themedConfig = () => defineConsent({ locales: ['sk'], defaultLocale: 'sk', packs: [sk], revision: 1, services: [youtube()], ui: { theme: { tokens: { primary: '#123456' } } } })
+const themedPage = () => { document.body.innerHTML = `<script type="application/json" id="consent-config" data-locale="sk">${toPublicJson(themedConfig(), 'sk')}</script>` }
+test('theme overrides are reapplied on astro:page-load and by a second bootFromDom call', async () => {
+  document.documentElement.removeAttribute('style')
+  themedPage()
+  const bootFromDom = await freshBoot()
+  expect(bootFromDom(document, driver() as any)).not.toBeNull()
+  const style = document.documentElement.style
+  expect(style.getPropertyValue('--consent-override-primary')).toBe('#123456')
+  // a view transition swaps the root attributes and can wipe the inline style
+  document.documentElement.removeAttribute('style')
+  expect(style.getPropertyValue('--consent-override-primary')).toBe('')
+  document.dispatchEvent(new Event('astro:page-load'))
+  expect(style.getPropertyValue('--consent-override-primary')).toBe('#123456')
+  document.documentElement.removeAttribute('style')
+  themedPage()
+  expect(bootFromDom(document, driver() as any)).not.toBeNull()
+  expect(style.getPropertyValue('--consent-override-primary')).toBe('#123456')
+  document.documentElement.removeAttribute('style')
+})
+test('a failure while theming or binding the panel does not stop the banner or log "banner not started"', async () => {
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+  themedPage()
+  vi.resetModules()
+  vi.doMock('../src/panel', async (orig) => ({ ...(await orig<typeof import('../src/panel')>()), bindSettingsFromDom: () => { throw new Error('boom') } }))
+  try {
+    const { bootFromDom } = await import('../src/ui')
+    const c = bootFromDom(document, driver() as any)
+    expect(c).not.toBeNull()
+    const messages = err.mock.calls.map((x) => String(x[0]))
+    expect(messages.some((x) => x.includes('banner not started'))).toBe(false)
+    expect(messages.some((x) => x.includes('[consent]'))).toBe(true)
+  } finally {
+    vi.doUnmock('../src/panel')
+    err.mockRestore()
+    document.documentElement.removeAttribute('style')
+  }
+})
 test('load once then reject removes the iframe and restores the placeholder', () => {
   const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
   const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)

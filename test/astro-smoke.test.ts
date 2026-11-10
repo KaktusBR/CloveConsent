@@ -63,6 +63,7 @@ test('settings panel renders without script, read-only, with a reference block a
   const switches = panel.match(/<input[^>]*role="switch"[^>]*>/g) ?? []
   expect(switches.length).toBeGreaterThan(0)
   for (const s of switches) expect(s, s).toMatch(/\sdisabled[\s>]/)
+  expect(panel.slice(0, panel.indexOf('consent-processors'))).not.toContain('data-consent-action')
 })
 test('the built stylesheet carries the settings panel styles', () => {
   const dir = join(site, 'dist', '_astro')

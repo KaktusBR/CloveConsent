@@ -57,10 +57,31 @@ export function bindDom(consent: Consent, doc: Document = document): void {
   sync()
 }
 
+const themed = new WeakSet<Document>()
+
+/**
+ * Puts the theme overrides on the document root (an ancestor of both the engine's #cc-main and the settings panel) and keeps them
+ * there: Astro view transitions swap the root's attributes, which can wipe the inline style, so they are applied again on every
+ * `astro:page-load`. A failure is logged and never reaches the caller: the banner is already running.
+ */
+function applyThemeSafely(consent: Consent, doc: Document): void {
+  try {
+    if (doc.documentElement) applyTheme(doc.documentElement, consent.config.ui.theme.tokens)
+  } catch (err) {
+    console.error('[consent] theme overrides not applied', err)
+  }
+  if (themed.has(doc)) return
+  themed.add(doc)
+  doc.addEventListener('astro:page-load', () => {
+    const current = getConsent()
+    if (current) applyThemeSafely(current, doc)
+  })
+}
+
 export function bootFromDom(doc: Document = document, driver?: ConsentDriver): Consent | null {
   // a second call (e.g. the component rendered twice) must not start a second client
   const existing = getConsent()
-  if (existing) return existing
+  if (existing) { applyThemeSafely(existing, doc); return existing }
   const el = doc.getElementById('consent-config')
   if (!el?.textContent) return null
   try {
@@ -69,9 +90,12 @@ export function bootFromDom(doc: Document = document, driver?: ConsentDriver): C
     const consent = createConsent(config, { driver: driver ?? createVccDriver(), doc, locale: want ?? undefined })
     consent.init()
     bindDom(consent, doc)
-    // the overrides sit on the document root: an ancestor of both the engine's #cc-main and the settings panel
-    if (doc.documentElement) applyTheme(doc.documentElement, config.ui.theme.tokens)
-    bindSettingsFromDom(doc)
+    applyThemeSafely(consent, doc)
+    try {
+      bindSettingsFromDom(doc)
+    } catch (err) {
+      console.error('[consent] settings panel not bound', err)
+    }
     return consent
   } catch (err) {
     console.error('[consent] invalid configuration, banner not started', err)

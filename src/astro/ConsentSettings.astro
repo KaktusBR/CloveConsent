@@ -6,8 +6,8 @@ interface Props { config: ConsentConfig; locale: Locale; class?: string }
 const { config, locale, class: className } = Astro.props
 assertValidatedConfig(config, 'ConsentSettings')
 const view = buildView(config, locale)
-// Without JavaScript nothing can save a choice, so the switches are rendered disabled (a read-only list). The binder renders the
-// panel again on the client, which enables them.
-const html = renderSettings(view, null, new Set()).replace(/<input (?![^>]*\sdisabled)/g, '<input disabled ')
+// Without JavaScript nothing can save a choice: the panel is a read-only list (switches disabled, no buttons). The binder renders
+// the interactive version on the client.
+const html = renderSettings(view, null, new Set(), { interactive: false })
 ---
 <div class={className} dir={view.dir} lang={view.locale} set:html={html} />

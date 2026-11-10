@@ -92,6 +92,26 @@ describe('renderSettings', () => {
     expect(doc.querySelectorAll('[data-consent-group]:not([disabled])').length).toBe(2)
     expect(doc.querySelectorAll('div.consent-service').length).toBeGreaterThan(0)
   })
+  test('interactive false renders a read-only list: every switch disabled, no action or copy buttons', () => {
+    const view = buildView(make(), 'en')
+    const doc = new DOMParser().parseFromString(`<body>${renderSettings(view, state, new Set(['theme']), { interactive: false })}</body>`, 'text/html')
+    const switches = [...doc.querySelectorAll('input[role="switch"]')]
+    expect(switches.length).toBeGreaterThan(3)
+    expect(switches.every((i) => i.hasAttribute('disabled'))).toBe(true)
+    expect(doc.querySelectorAll('[data-consent-action]').length).toBe(0)
+    expect(doc.querySelector('button')).toBeNull()
+    expect(doc.querySelector('.consent-receipt__id')).not.toBeNull()
+    expect(doc.querySelector('[data-consent-settings]')).not.toBeNull()
+  })
+  test('the default output is the interactive panel, unchanged', () => {
+    const view = buildView(make(), 'en')
+    const html = renderSettings(view, state, new Set(['theme']))
+    expect(renderSettings(view, state, new Set(['theme']), {})).toBe(html)
+    expect(renderSettings(view, state, new Set(['theme']), { interactive: true })).toBe(html)
+    const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+    expect(doc.querySelectorAll('[data-consent-action]').length).toBeGreaterThan(3)
+    expect(doc.querySelector('[data-consent-group="functional"]')!.hasAttribute('disabled')).toBe(false)
+  })
   test('the receipt shows the consent id exactly as stored, escaped', () => {
     const { doc } = render(undefined, { ...state, consentId: 'a<b>&"c' })
     expect(doc.querySelector('.consent-receipt__id')!.textContent).toBe('a<b>&"c')
