@@ -3,7 +3,8 @@ import { canonicalLocale, localePrefixes } from './i18n/locale'
 import { validatePack, type LocalePack } from './i18n/pack'
 import { createResolver, mapEntryText, slotLabel, type LocalisedText, type Slot } from './i18n/resolve'
 import type { ConsentConfig, ConsentConfigInput, Localised } from './schema'
-import { ConsentConfigError, assertText, assertUrl, validateProcessor, validateService } from './validate'
+import { ConsentConfigError, assertHost, assertText, assertUrl, endpointProblem, validateProcessor, validateService } from './validate'
+import { MAX_COOKIE_LENGTH, maxCookieBytes } from './state'
 import { isDev } from './dev'
 import { resolveUi } from './ui-settings'
 
@@ -33,6 +34,15 @@ function canonicalList(v: unknown, path: string): string[] {
   return out
 }
 
+function validateRecords(v: unknown): { url: string } {
+  if (!isObject(v)) throw new ConsentConfigError('records', 'must be an object with a url')
+  for (const k of Object.keys(v)) if (k !== 'url') throw new ConsentConfigError(`records.${k}`, 'unknown key')
+  assertText(v.url, 'records.url', { max: 2000 })
+  const problem = endpointProblem(v.url, null)
+  if (problem) throw new ConsentConfigError('records.url', problem)
+  return { url: v.url }
+}
+
 export function defineConsent(input: ConsentConfigInput): ConsentConfig {
   return define(input, true)
 }
@@ -49,6 +59,8 @@ function define(input: ConsentConfigInput, warn: boolean): ConsentConfig {
   const cookieName = input.cookieName ?? 'cc_cookie'
   if (!COOKIE_NAME.test(cookieName)) throw new ConsentConfigError('cookieName', 'must match ^[A-Za-z0-9_-]{1,64}$')
   if (input.privacyHref != null) assertUrl(input.privacyHref, 'privacyHref')
+  if (input.cookieDomain != null) assertHost(input.cookieDomain, 'cookieDomain')
+  const records = input.records == null ? null : validateRecords(input.records)
 
   // language packs: every pack is validated before it is used
   const packs = new Map<string, LocalePack>()
@@ -123,12 +135,18 @@ function define(input: ConsentConfigInput, warn: boolean): ConsentConfig {
   const unreviewed = locales.filter((l) => l !== 'en' && localePrefixes(l).some((t) => packs.get(t)?.reviewed === false))
   if (warn && isDev() && unreviewed.length > 0) console.warn(`[consent] unreviewed translations in use for: ${unreviewed.join(', ')}`)
 
-  const config: ConsentConfig = deepFreeze({
+  const config: ConsentConfig = {
     locales, defaultLocale, revision: input.revision,
-    cookieName, darkMode: input.darkMode ?? true, privacyHref: input.privacyHref ?? null,
+    cookieName, cookieDomain: input.cookieDomain ?? null, records,
+    darkMode: input.darkMode ?? true, privacyHref: input.privacyHref ?? null,
     services, processors: resolvedProcessors, hooks: { ...input.hooks },
     messages, unreviewed, ui: resolveUi(input.ui, 'ui'),
-  })
+  }
+  const cookieBytes = maxCookieBytes(config)
+  if (cookieBytes > MAX_COOKIE_LENGTH) {
+    throw new ConsentConfigError('services', `with every service accepted the consent cookie would take up to ${cookieBytes} bytes, over the ${MAX_COOKIE_LENGTH}-byte limit browsers allow. Use fewer services or shorter ids, or turn off ui.manager.serviceToggles`)
+  }
+  deepFreeze(config)
   validated.add(config)
   return config
 }

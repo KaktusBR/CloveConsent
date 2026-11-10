@@ -103,6 +103,13 @@ export interface ConsentConfigInput {
   defaultLocale: Locale
   revision: number
   cookieName?: string
+  /**
+   * Hostname the consent cookie is shared across (for example `example.com` for `www.example.com` and `shop.example.com`).
+   * Used only when the page's host is that name or a subdomain of it; otherwise it is ignored with a dev warning.
+   */
+  cookieDomain?: string
+  /** Where the browser posts consent records: an https URL or a path on the page's own origin (plain http only for localhost). */
+  records?: { url: string }
   darkMode?: boolean
   privacyHref?: string
   services: ServiceEntry[]
@@ -122,6 +129,8 @@ export interface ConsentConfig {
   readonly defaultLocale: Locale
   readonly revision: number
   readonly cookieName: string
+  readonly cookieDomain: string | null
+  readonly records: { readonly url: string } | null
   readonly darkMode: boolean
   readonly privacyHref: string | null
   readonly services: readonly ServiceEntry[]

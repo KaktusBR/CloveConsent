@@ -34,6 +34,32 @@ export function assertUrl(v: unknown, path: string): asserts v is string {
   if (!u.hostname) throw new ConsentConfigError(path, 'URL needs a host')
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * Why a consent-record endpoint (the logger's or `records.url`) is not acceptable, or null when it is: an https URL, or a
+ * single-slash path on the page's own origin. Plain http only counts for a local development host. `page` is where the endpoint
+ * will be called from; without one (while validating a config) the page checks are skipped and any local http host is allowed.
+ */
+export function endpointProblem(endpoint: string, page: { origin: string; hostname: string } | null): string | null {
+  if (/[\u0000- \u007F\\]/.test(endpoint)) return 'must not contain control characters, spaces or backslashes'
+  if (endpoint.startsWith('/')) {
+    if (endpoint.startsWith('//')) return 'must be a single-slash path or https URL'
+    if (page?.origin) {
+      let same = false
+      try { same = new URL(endpoint, page.origin).origin === page.origin } catch { /* invalid */ }
+      if (!same) return 'path must stay on the page origin'
+    }
+    return null
+  }
+  let u: URL
+  try { u = new URL(endpoint) } catch { return 'is not a valid URL' }
+  const localDev = u.protocol === 'http:' && LOCAL_HOSTS.has(u.hostname) && (page === null || LOCAL_HOSTS.has(page.hostname))
+  if (u.protocol !== 'https:' && !localDev) return 'must use https'
+  if (u.username || u.password) return 'must not contain credentials'
+  return null
+}
+
 export function assertHost(v: unknown, path: string): asserts v is string {
   if (typeof v !== 'string' || !HOST.test(v)) throw new ConsentConfigError(path, 'must be a lowercase hostname such as www.example.com')
 }

@@ -6,7 +6,7 @@ import { isRtl } from './i18n/rtl'
 export interface ViewService { id: string; title: string; description: string; provider: string | null; iframe: boolean; storage: { name: string; type: string; expiry: string; purpose: string }[] }
 export interface ViewCategory { id: Category; title: string; description: string; readOnly: boolean; services: ViewService[] }
 export interface ViewProcessor { id: string; provider: string; privacyUrl: string; purpose: string; dataCategories: string[]; location: string; dpaUrl: string | null; transfers: string | null }
-export interface View { locale: Locale; dir: 'ltr' | 'rtl'; m: Messages; cookieName: string; darkMode: boolean; privacyHref: string | null; categories: ViewCategory[]; processors: ViewProcessor[]; ui: UiSettings }
+export interface View { locale: Locale; dir: 'ltr' | 'rtl'; m: Messages; cookieName: string; cookieDomain: string | null; darkMode: boolean; privacyHref: string | null; categories: ViewCategory[]; processors: ViewProcessor[]; ui: UiSettings }
 
 const CAT_TEXT: Record<Category, [keyof Messages, keyof Messages]> = {
   necessary: ['catNecessary', 'catNecessaryText'], functional: ['catFunctional', 'catFunctionalText'],
@@ -35,7 +35,7 @@ export function buildView(config: ConsentConfig, requested: Locale): View {
     })
   }
   return {
-    locale, dir: isRtl(locale) ? 'rtl' : 'ltr', m, cookieName: config.cookieName, darkMode: config.darkMode, privacyHref: config.privacyHref, categories,
+    locale, dir: isRtl(locale) ? 'rtl' : 'ltr', m, cookieName: config.cookieName, cookieDomain: config.cookieDomain, darkMode: config.darkMode, privacyHref: config.privacyHref, categories,
     ui: config.ui,
     processors: config.processors.map((p) => ({
       id: p.id, provider: p.provider.name, privacyUrl: p.provider.privacyUrl, purpose: text(p.purpose),

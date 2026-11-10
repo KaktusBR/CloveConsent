@@ -1,5 +1,6 @@
 import { CATEGORIES, type ConsentConfig, type ConsentState, type DecisionInfo } from './schema'
 import { serviceAccepted } from './state'
+import { endpointProblem } from './validate'
 
 export interface LoggerOptions {
   endpoint: string
@@ -9,26 +10,11 @@ export interface LoggerOptions {
   location?: { origin: string; hostname: string }
 }
 
-const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]'])
-
 export function createConsentLogger(opts: LoggerOptions) {
   const loc = opts.location ?? (typeof location !== 'undefined' ? location : { origin: '', hostname: '' })
   const { endpoint } = opts
-  if (/[\u0000- \u007F\\]/.test(endpoint)) throw new Error('[consent] logger endpoint must not contain control characters, spaces or backslashes')
-  if (endpoint.startsWith('/')) {
-    if (endpoint.startsWith('//')) throw new Error('[consent] logger endpoint must be a single-slash path or https URL')
-    if (loc.origin) {
-      let same = false
-      try { same = new URL(endpoint, loc.origin).origin === loc.origin } catch { /* invalid */ }
-      if (!same) throw new Error('[consent] logger endpoint path must stay on the page origin')
-    }
-  } else {
-    let u: URL
-    try { u = new URL(endpoint) } catch { throw new Error('[consent] logger endpoint is not a valid URL') }
-    const localDev = u.protocol === 'http:' && LOCAL.has(u.hostname) && LOCAL.has(loc.hostname)
-    if (u.protocol !== 'https:' && !localDev) throw new Error('[consent] logger endpoint must use https')
-    if (u.username || u.password) throw new Error('[consent] logger endpoint must not contain credentials')
-  }
+  const problem = endpointProblem(endpoint, loc)
+  if (problem) throw new Error(`[consent] logger endpoint ${problem}`)
   const timeoutMs = opts.timeoutMs ?? 5000
   const doFetch = opts.fetchImpl ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined)
 

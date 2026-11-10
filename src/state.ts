@@ -78,3 +78,30 @@ export function buildStoredData(config: ConsentConfig): { siteRevision: number; 
   for (const s of config.services) revisions[s.id] = s.catalogRevision
   return { siteRevision: config.revision, revisions }
 }
+
+/**
+ * The most bytes the consent cookie can take in the browser (name, `=` and the percent-encoded value) once the visitor accepted every
+ * optional service: the engine's cookie format, every revision, the longest enabled language, the longest possible timestamps and id.
+ * Browsers drop cookies over MAX_COOKIE_LENGTH bytes, which would silently lose the visitor's choice.
+ */
+export function maxCookieBytes(config: ConsentConfig): number {
+  const perService = config.ui.manager.serviceToggles
+  const categories: string[] = ['necessary']
+  const services: Record<string, string[]> = { necessary: [] }
+  for (const c of CATEGORIES) {
+    if (c === 'necessary') continue
+    const ids = config.services.filter((s) => s.category === c).map((s) => s.id)
+    if (ids.length === 0) continue
+    categories.push(c)
+    // without service toggles the engine knows no services and stores an empty list per category
+    services[c] = perService ? ids : []
+  }
+  const timestamp = '0000-00-00T00:00:00.000Z'
+  const value = JSON.stringify({
+    categories, revision: 0, data: buildStoredData(config),
+    consentTimestamp: timestamp, consentId: '00000000-0000-0000-0000-000000000000', services,
+    languageCode: config.locales.reduce((a, b) => (b.length > a.length ? b : a), ''),
+    lastConsentTimestamp: timestamp, expirationTime: 9_999_999_999_999,
+  })
+  return config.cookieName.length + 1 + encodeURIComponent(value).length
+}

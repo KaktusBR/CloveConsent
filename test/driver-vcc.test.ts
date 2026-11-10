@@ -1,7 +1,7 @@
-import { expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { defineConsent } from '../src/config'
 import { buildView } from '../src/view'
-import { buildVccConfig } from '../src/driver-vcc'
+import { buildVccConfig, cookieDomainFor } from '../src/driver-vcc'
 import { theme, youtube } from '../src/catalog'
 import sk from '../src/locales/sk'
 
@@ -101,4 +101,25 @@ test('without service toggles a changed category stands for all its services', (
   const c: any = buildVccConfig(withUi({ manager: { serviceToggles: false } }), { ...hooks, onChange: (...a: unknown[]) => { calls.push(a) } }, false)
   c.onChange({ changedCategories: ['media'], changedServices: {} })
   expect(calls).toEqual([[['media'], ['youtube']]])
+})
+
+describe('cookie domain', () => {
+  const viewWith = (cookieDomain: string | null) => ({ ...view, cookieDomain })
+  test.each([
+    ['example.com', 'example.com', 'example.com'],
+    ['example.com', 'www.example.com', 'example.com'],
+    ['example.com', 'a.b.example.com', 'example.com'],
+    ['example.com', 'notexample.com', null],
+    ['example.com', 'example.com.evil.test', null],
+    ['www.example.com', 'example.com', null],
+    ['example.com', '', null],
+    [null, 'example.com', null],
+  ])('cookieDomainFor(%j, %j) is %j', (configured, hostname, expected) => {
+    expect(cookieDomainFor(configured, hostname)).toBe(expected)
+  })
+  test('is passed to the engine cookie options only when given', () => {
+    expect((buildVccConfig(viewWith('example.com'), hooks, true, 'example.com') as any).cookie).toMatchObject({ name: 'cc_cookie', domain: 'example.com' })
+    expect((buildVccConfig(viewWith('example.com'), hooks, true, null) as any).cookie.domain).toBeUndefined()
+    expect((buildVccConfig(viewWith('example.com'), hooks, true) as any).cookie.domain).toBeUndefined()
+  })
 })

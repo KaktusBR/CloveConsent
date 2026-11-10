@@ -3,9 +3,16 @@ import type { Category } from './schema'
 import type { ConsentDriver, DriverHooks, StoredData } from './driver'
 import { escapeHtml as esc } from './html'
 import { readCookieValue } from './state'
+import { isDev } from './dev'
 import type { View } from './view'
 
-export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean): Record<string, unknown> {
+/** The configured cookie domain when the page's host is that name or a subdomain of it; otherwise null (the engine then uses the page's own host). */
+export function cookieDomainFor(configured: string | null, hostname: string): string | null {
+  return configured !== null && (hostname === configured || hostname.endsWith(`.${configured}`)) ? configured : null
+}
+
+/** `cookieDomain` is the already-checked domain from `cookieDomainFor`. */
+export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean, cookieDomain: string | null = null): Record<string, unknown> {
   const m = view.m
   const categories: Record<string, unknown> = {}
   for (const c of view.categories) {
@@ -39,7 +46,7 @@ export function buildVccConfig(view: View, hooks: DriverHooks, secure: boolean):
   const footer = view.privacyHref ? `<a href="${esc(view.privacyHref)}" class="cc__link">${esc(m.privacyLink)}</a>` : ''
   return {
     revision: 0,
-    cookie: { name: view.cookieName, path: '/', sameSite: 'Lax', expiresAfterDays: 182, secure },
+    cookie: { name: view.cookieName, path: '/', sameSite: 'Lax', expiresAfterDays: 182, secure, ...(cookieDomain ? { domain: cookieDomain } : {}) },
     guiOptions: {
       consentModal: { ...view.ui.banner },
       preferencesModal: { ...view.ui.dialog, equalWeightButtons: true, flipButtons: false },
@@ -110,7 +117,11 @@ export function createVccDriver(): ConsentDriver {
         sync()
         new MutationObserver(sync).observe(html, { attributeFilter: ['class'] })
       }
-      Promise.resolve(CC.run(buildVccConfig(view, batched, location.protocol === 'https:') as never)).catch((e) => console.error('[consent] vanilla-cookieconsent failed to start', e))
+      const cookieDomain = cookieDomainFor(view.cookieDomain, location.hostname)
+      if (view.cookieDomain !== null && cookieDomain === null && isDev()) {
+        console.warn(`[consent] cookieDomain "${view.cookieDomain}" does not cover this page (${location.hostname}), so it is ignored and the cookie stays on this host.`)
+      }
+      Promise.resolve(CC.run(buildVccConfig(view, batched, location.protocol === 'https:', cookieDomain) as never)).catch((e) => console.error('[consent] vanilla-cookieconsent failed to start', e))
     },
     readRaw() { try { return readCookieValue(document.cookie, cookieName) } catch { return null } },
     writeData(data: StoredData) { CC.setCookieData({ value: data, mode: 'overwrite' } as never) },

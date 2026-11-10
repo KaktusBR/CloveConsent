@@ -197,3 +197,59 @@ test.each([null, 5, 'x', []])('a %j entry gives a ConsentConfigError, not a Type
   expect(mk({ services: [bad] })).toThrow(ConsentConfigError)
   expect(mk({ processors: [bad] })).toThrow(ConsentConfigError)
 })
+
+describe('cookieDomain and records.url', () => {
+  const base = () => ({ ...(input() as any) })
+  test('default to null', () => {
+    const c = defineConsent(base())
+    expect(c.cookieDomain).toBeNull()
+    expect(c.records).toBeNull()
+  })
+  test('accept a hostname and an https or same-origin path records URL', () => {
+    expect(defineConsent({ ...base(), cookieDomain: 'example.com' }).cookieDomain).toBe('example.com')
+    expect(defineConsent({ ...base(), records: { url: 'https://records.example.com/consent' } }).records).toEqual({ url: 'https://records.example.com/consent' })
+    expect(defineConsent({ ...base(), records: { url: '/api/consent' } }).records).toEqual({ url: '/api/consent' })
+  })
+  test('accept plain http only to localhost', () => {
+    expect(() => defineConsent({ ...base(), records: { url: 'http://localhost:8787/c' } })).not.toThrow()
+    expect(() => defineConsent({ ...base(), records: { url: 'http://127.0.0.1:8787/c' } })).not.toThrow()
+    expect(() => defineConsent({ ...base(), records: { url: 'http://records.example.com/c' } })).toThrow(/records\.url.*https/)
+  })
+  test.each([
+    ['uppercase', 'Example.com'], ['scheme', 'https://example.com'], ['port', 'example.com:8080'], ['path', 'example.com/x'],
+    ['wildcard', '*.example.com'], ['leading dot', '.example.com'], ['empty', ''], ['not a string', 42],
+  ])('rejects a cookieDomain with %s', (_n, v) => {
+    expect(() => defineConsent({ ...base(), cookieDomain: v })).toThrow(/cookieDomain/)
+  })
+  test.each([
+    ['credentials', 'https://user:pw@records.example.com/c'],
+    ['protocol-relative', '//records.example.com/c'],
+    ['javascript', 'javascript:alert(1)'],
+    ['space', '/api/con sent'],
+    ['backslash', '/api\\consent'],
+    ['not a URL', 'records'],
+    ['empty', ''],
+  ])('rejects a records URL with %s', (_n, url) => {
+    expect(() => defineConsent({ ...base(), records: { url } })).toThrow(/records\.url/)
+  })
+  test('rejects a records value that is not an object with a url, or has other keys', () => {
+    expect(() => defineConsent({ ...base(), records: '/x' })).toThrow(/records/)
+    expect(() => defineConsent({ ...base(), records: {} })).toThrow(/records\.url/)
+    expect(() => defineConsent({ ...base(), records: { url: '/x', extra: 1 } })).toThrow(/records\.extra/)
+  })
+  test('both round-trip through the public JSON', () => {
+    const c = defineConsent({ ...base(), cookieDomain: 'example.com', records: { url: 'https://records.example.com/consent' } })
+    const back = fromPublicJson(toPublicJson(c, 'sk'))
+    expect(back.cookieDomain).toBe('example.com')
+    expect(back.records).toEqual({ url: 'https://records.example.com/consent' })
+    const bare = fromPublicJson(toPublicJson(defineConsent(base()), 'sk'))
+    expect(bare.cookieDomain).toBeNull()
+    expect(bare.records).toBeNull()
+  })
+  test('the public JSON is validated again for both fields', () => {
+    const snap = JSON.parse(toPublicJson(defineConsent(base()), 'sk'))
+    expect(() => fromPublicJson(JSON.stringify({ ...snap, cookieDomain: 'https://evil.example' }))).toThrow(/cookieDomain/)
+    expect(() => fromPublicJson(JSON.stringify({ ...snap, records: { url: 'http://evil.example/c' } }))).toThrow(/records\.url/)
+    expect(() => fromPublicJson(JSON.stringify({ ...snap, records: { url: 'https://u:p@evil.example/c' } }))).toThrow(/records\.url/)
+  })
+})
