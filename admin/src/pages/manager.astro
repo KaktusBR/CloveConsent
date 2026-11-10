@@ -1,0 +1,66 @@
+---
+import Admin from '../layouts/Admin.astro'
+import ConsentBanner from '../../../src/astro/ConsentBanner.astro'
+import ConsentSettings from '../../../src/astro/ConsentSettings.astro'
+import ProcessorList from '../../../src/astro/ProcessorList.astro'
+import GatedEmbed from '../../../src/astro/GatedEmbed.astro'
+import { listCatalog } from '../lib/catalog'
+import { loadPacks } from '../lib/languages'
+import { buildConfig, DEFAULT_STATE } from '../lib/playground'
+
+export const prerender = false
+
+// The Archibald Knox token sets a site would define on html; "none" defines nothing, so the library's own fallbacks show.
+const TOKENS = {
+  light: { background: '#ffffff', foreground: '#0f1b1b', primary: '#193637', 'primary-foreground': '#ffffff', muted: '#f1f4f4', 'muted-foreground': '#4a5c5c', border: '#d5dede', ring: '#193637' },
+  dark: { background: '#0f1616', foreground: '#e8efef', primary: '#86c5c6', 'primary-foreground': '#0f1616', muted: '#1a2424', 'muted-foreground': '#9fb4b4', border: '#2a3a3a', ring: '#86c5c6' },
+} as const
+const LAYOUTS = ['bar', 'box', 'cloud'] as const
+
+const q = Astro.url.searchParams
+const tokensParam = q.get('tokens')
+const tokens = tokensParam === 'light' || tokensParam === 'dark' ? tokensParam : 'none'
+const layoutParam = q.get('banner')
+const layout = LAYOUTS.find((l) => l === layoutParam) ?? 'bar'
+
+const packs = loadPacks().flatMap((p) => (p.pack ? [p.pack] : []))
+const { config, error } = buildConfig(DEFAULT_STATE, listCatalog(), packs, { banner: { layout } })
+const htmlStyle = tokens === 'none' ? undefined : Object.entries(TOKENS[tokens]).map(([k, v]) => `--${k}:${v}`).join(';')
+const link = (t: string, b: string) => `/manager?tokens=${t}&banner=${b}`
+const locale = DEFAULT_STATE.previewLocale
+---
+<Admin title="Manager" tab="manager" htmlClass={tokens === 'dark' ? 'dark' : undefined} htmlStyle={htmlStyle}>
+  <h1>Consent manager</h1>
+  <p class="hint">
+    The real banner, settings panel, processor list and gated embed with the playground's default config. View only; nothing is saved.
+    Tokens: {(['light', 'dark', 'none'] as const).map((t) => <><a href={link(t, layout)} aria-current={t === tokens ? 'true' : undefined}>{t}</a>{' '}</>)}
+    Banner: {LAYOUTS.map((l) => <><a href={link(tokens, l)} aria-current={l === layout ? 'true' : undefined}>{l}</a>{' '}</>)}
+  </p>
+  {config === null ? (
+    <pre style="color:#b91c1c;white-space:pre-wrap">{error}</pre>
+  ) : (
+    <div class="stage">
+      <ConsentBanner config={config} locale={locale} />
+      <h2>Settings</h2>
+      <ConsentSettings config={config} locale={locale} />
+      <h2>Processors</h2>
+      <ProcessorList config={config} locale={locale} />
+      <h2>Embed</h2>
+      <GatedEmbed config={config} locale={locale} serviceId="youtube" src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" />
+      <p><button type="button" id="reset-consent" data-cookie={config.cookieName}>Reset consent</button></p>
+      <script>
+        const btn = document.getElementById('reset-consent')
+        btn?.addEventListener('click', () => {
+          document.cookie = `${btn.dataset.cookie}=; Max-Age=0; path=/`
+          location.reload()
+        })
+      </script>
+    </div>
+  )}
+</Admin>
+<style is:global>
+  .stage { padding: 1rem; border-radius: 6px; background: var(--background, transparent); color: var(--foreground, inherit); }
+  .stage a { color: var(--primary, #1d4ed8); }
+  .stage .hint { color: var(--muted-foreground, #666); }
+  main a[aria-current='true'] { font-weight: 700; text-decoration: none; }
+</style>

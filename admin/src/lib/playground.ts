@@ -1,6 +1,7 @@
 import { defineConsent } from '../../../src/config'
 import type { LocalePack } from '../../../src/i18n/pack'
 import type { ConsentConfig } from '../../../src/schema'
+import type { UiSettingsInput } from '../../../src/ui-settings'
 import { SAMPLE_ARGS, type CatalogItem } from './catalog'
 
 export interface PlaygroundState {
@@ -60,7 +61,7 @@ export function toQuery(s: PlaygroundState): string {
 
 export interface BuildResult { config: ConsentConfig | null; error: string | null; warnings: string[] }
 
-export function buildConfig(s: PlaygroundState, catalog: CatalogItem[], packs: LocalePack[]): BuildResult {
+export function buildConfig(s: PlaygroundState, catalog: CatalogItem[], packs: LocalePack[], ui?: UiSettingsInput): BuildResult {
   const warnings: string[] = []
   const fail = (error: string): BuildResult => ({ config: null, error, warnings })
   const realWarn = console.warn
@@ -94,6 +95,7 @@ export function buildConfig(s: PlaygroundState, catalog: CatalogItem[], packs: L
       services: services as Extract<typeof services[number], { kind: 'client' | 'first-party' }>[],
       processors: processors as Extract<typeof processors[number], { kind: 'processor' }>[],
       packs,
+      ui,
     })
     return { config, error: null, warnings }
   } catch (e) {

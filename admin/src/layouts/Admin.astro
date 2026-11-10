@@ -1,14 +1,15 @@
 ---
-interface Props { title: string; tab: 'catalog' | 'languages' | 'playground' }
-const { title, tab } = Astro.props
+interface Props { title: string; tab: 'catalog' | 'languages' | 'playground' | 'manager'; htmlClass?: string; htmlStyle?: string }
+const { title, tab, htmlClass, htmlStyle } = Astro.props
 const tabs = [
   { id: 'catalog', label: 'Catalog', href: '/' },
   { id: 'languages', label: 'Languages', href: '/languages' },
   { id: 'playground', label: 'Playground', href: '/playground' },
+  { id: 'manager', label: 'Manager', href: '/manager' },
 ] as const
 ---
 <!doctype html>
-<html lang="en">
+<html lang="en" class={htmlClass} style={htmlStyle}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

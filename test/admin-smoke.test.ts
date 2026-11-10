@@ -87,3 +87,34 @@ test('/preview shows a bad config as an error', async () => {
 test('/preview honours the page theme', async () => {
   expect(await get('/preview?' + toQuery({ ...DEFAULT_STATE, theme: 'dark' }))).toContain('class="dark"')
 })
+
+test('/manager renders the settings panel, processors and the gated embed', async () => {
+  const html = await get('/manager?tokens=none')
+  for (const s of ['data-consent-settings', 'data-consent-embed', 'id="consent-config"', 'Manager']) expect(html).toContain(s)
+})
+
+test('/manager?tokens=dark puts the dark class and the dark tokens on html', async () => {
+  const html = await get('/manager?tokens=dark')
+  expect(html).toMatch(/<html[^>]*class="dark"/)
+  expect(html).toContain('#0f1616')
+  expect(html).toContain('#86c5c6')
+})
+
+test('/manager?tokens=light defines the light tokens without the dark class', async () => {
+  const html = await get('/manager?tokens=light')
+  expect(html).not.toMatch(/<html[^>]*class="dark"/)
+  expect(html).toContain('#193637')
+})
+
+test('/manager falls back to no tokens and the bar banner for invalid values', async () => {
+  const bad = await get('/manager?tokens=bogus&banner=nope')
+  const none = await get('/manager?tokens=none')
+  expect(bad).not.toMatch(/<html[^>]*class="dark"/)
+  for (const s of ['#193637', '#0f1616', '#86c5c6']) expect(bad).not.toContain(s)
+  expect(bad).toContain('"layout":"bar"')
+  expect(none).not.toContain('#193637')
+})
+
+test('/manager?banner=box passes the layout through the config', async () => {
+  expect(await get('/manager?banner=box')).toContain('"layout":"box"')
+})
