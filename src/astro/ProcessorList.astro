@@ -1,6 +1,7 @@
 ---
 import { assertValidatedConfig, buildView } from 'cloveconsent'
 import type { ConsentConfig, Locale } from 'cloveconsent'
+import './consent.css'
 interface Props { config: ConsentConfig; locale: Locale }
 const { config, locale } = Astro.props
 assertValidatedConfig(config, 'ProcessorList')

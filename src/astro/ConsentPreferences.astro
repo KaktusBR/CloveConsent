@@ -1,6 +1,7 @@
 ---
 import { assertValidatedConfig, buildView } from 'cloveconsent'
 import type { ConsentConfig, Locale } from 'cloveconsent'
+import './consent.css'
 interface Props { config: ConsentConfig; locale: Locale }
 const { config, locale } = Astro.props
 assertValidatedConfig(config, 'ConsentPreferences')
@@ -16,7 +17,7 @@ const view = buildView(config, locale)
           <h4>{s.title}{s.provider ? ` (${s.provider})` : ''}</h4>
           <p>{s.description}</p>
           {s.storage.length > 0 && (
-            <table>
+            <table class="consent-table">
               <thead><tr><th>{view.m.tableName}</th><th>{view.m.tableType}</th><th>{view.m.tableExpiry}</th><th>{view.m.tablePurpose}</th></tr></thead>
               <tbody>{s.storage.map((r) => (<tr><td>{r.name}</td><td>{r.type}</td><td>{r.expiry}</td><td>{r.purpose}</td></tr>))}</tbody>
             </table>
