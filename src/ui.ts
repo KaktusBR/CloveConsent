@@ -1,8 +1,8 @@
 import { createConsent, getConsent, type Consent } from './client'
 import { fromPublicJson } from './config'
-import { createEmbed } from './gating'
-import { bindPlaceholderActions, measure, mountPlaceholder, renderPlaceholder } from './placeholder'
-import { buildView } from './view'
+import { createEmbed, hostAllowed } from './gating'
+import { bindPlaceholderActions, measure, mountPlaceholder, renderPlaceholder, renderUnavailable, renewPlaceholder } from './placeholder'
+import { buildView, type View } from './view'
 import { createVccDriver } from './driver-vcc'
 import { applyTheme, bindSettingsFromDom } from './panel'
 import type { ConsentDriver } from './driver'
@@ -11,14 +11,23 @@ import type { ClientEntry, Locale } from './schema'
 const placeholders = new WeakMap<Element, Element>()
 
 function syncEmbeds(consent: Consent, doc: Document): void {
+  let cached: View | null = null
+  const view = () => (cached ??= buildView(consent.config, consent.locale))
   doc.querySelectorAll<HTMLElement>('[data-consent-embed]').forEach((box) => {
     const id = box.dataset.consentService ?? ''
     const entry = consent.config.services.find((s) => s.id === id)
     if (!entry || entry.kind !== 'client') return
+    const label = box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en
+    // the box's own placeholder (server-rendered by GatedEmbed, or anything put there) never acts: the runtime puts its own in
+    // its place, from the configuration; one whose source can never load shows the "not available" state
+    const shown = box.querySelector('[data-consent-placeholder-for]')
+    if (shown) {
+      renewPlaceholder(shown, () => hostAllowed(entry, box.dataset.consentSrc ?? '') ? renderPlaceholder(view(), id, label) : renderUnavailable(view(), id))
+    }
     const hasFrame = box.querySelector('iframe') !== null
     if (consent.isAllowed(id) && !hasFrame) {
       try {
-        const frame = createEmbed(doc, entry as ClientEntry, box.dataset.consentSrc ?? '', box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en)
+        const frame = createEmbed(doc, entry as ClientEntry, box.dataset.consentSrc ?? '', label)
         const ph = box.querySelector('[data-consent-placeholder-for]')
         if (ph) placeholders.set(box, ph)
         box.replaceChildren(frame)
@@ -32,8 +41,7 @@ function syncEmbeds(consent: Consent, doc: Document): void {
         if (!box.contains(ph)) box.replaceChildren(ph)
       } else if (frame) {
         // an iframe the page put there itself: give it the same placeholder, at the same size
-        const label = box.dataset.consentTitle ?? entry.messages.title[consent.locale] ?? entry.messages.title.en
-        mountPlaceholder(frame, renderPlaceholder(buildView(consent.config, consent.locale), id, label), measure(frame))
+        mountPlaceholder(frame, renderPlaceholder(view(), id, label), measure(frame))
       }
       placeholders.delete(box)
     }

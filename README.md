@@ -244,6 +244,8 @@ A blocked iframe or widget container shows a placeholder: what is blocked, its c
 
 An element that can never load on this site shows the same box in a "not available on this site" state: its text and the settings link, without "Allow" or "Load once", which would do nothing. That is a marked tag naming a service id the configuration does not have, a source outside its service's `origins` (for example a `www.youtube.com` embed when `youtube()` is configured with `www.youtube-nocookie.com` only), and an iframe auto-blocking holds for a tracker no configured service covers.
 
+Placeholder buttons act only in placeholders the runtime put in the page itself; the server-rendered placeholder of a `GatedEmbed` box is replaced by the runtime's own as soon as it starts. Markup that only looks like a placeholder (`data-consent-placeholder-for`, `data-consent-action`), for example in comments or other user content, grants nothing. `data-consent-open` works on any element.
+
 The placeholder keeps the size of the element it replaces: the element's laid-out border box (before any CSS transform, which applies to the placeholder too), with percentage `width`/`height` attributes kept as percentages. An element with no size (an empty widget container has no height) gets the minimum size, 16rem by 9rem, as a minimum: the placeholder grows with its text. Withdrawing consent puts the placeholders back; scripts that already ran stay in the page until it is reloaded (see "Withdrawal, one-time allowances and leftovers").
 
 ### Auto-blocking and its limits

@@ -305,6 +305,32 @@ describe('placeholder buttons', () => {
     document.querySelector<HTMLElement>('[data-consent-placeholder-for="chat"] [data-consent-open]')!.click()
     expect(d.open).toHaveBeenCalledTimes(1)
   })
+  // I3: injected markup (CMS content, comments; sanitizers keep data-*) must not be able to grant consent
+  test('a look-alike placeholder the runtime did not mount grants nothing', () => {
+    document.body.innerHTML = page
+    const { d, c } = start(); unbind = bindMarked(c, document)
+    const fake = document.createElement('div')
+    fake.innerHTML = '<div data-consent-placeholder-for="youtube"><button data-consent-action="accept">Play</button><button data-consent-action="once">Play once</button></div>'
+      + '<div data-consent-placeholder-for="chat"><button data-consent-action="accept"><span>Play</span></button></div>'
+      + '<div data-consent-embed data-consent-service="youtube"><button data-consent-action="accept">Play</button></div>'
+    document.body.append(fake)
+    fake.querySelectorAll<HTMLElement>('[data-consent-action], span').forEach((b) => b.click())
+    expect(d.acceptServices).not.toHaveBeenCalled()
+    expect(c.isAllowed('youtube')).toBe(false)
+    expect(c.isAllowed('chat')).toBe(false)
+    expect(document.querySelector('iframe[src]')).toBeNull()
+    // the runtime's own placeholders still work
+    document.querySelector<HTMLElement>('body > [data-consent-placeholder-for="youtube"] [data-consent-action="once"]')!.click()
+    expect(c.isAllowed('youtube')).toBe(true)
+  })
+  test('a copy of a mounted placeholder is not trusted either', () => {
+    document.body.innerHTML = page
+    const { d, c } = start(); unbind = bindMarked(c, document)
+    const copy = document.querySelector('[data-consent-placeholder-for="chat"]')!.cloneNode(true) as HTMLElement
+    document.body.append(copy)
+    copy.querySelector<HTMLElement>('[data-consent-action="accept"]')!.click()
+    expect(d.acceptServices).not.toHaveBeenCalled()
+  })
   test('a click is handled once when both bindDom and bindMarked are bound', () => {
     document.body.innerHTML = page
     const { d, c } = start(); bindDom(c, document); unbind = bindMarked(c, document)

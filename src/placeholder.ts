@@ -45,15 +45,35 @@ export function renderUnavailable(view: View, serviceId: string): string {
     + `</div>`
 }
 
-/** Replaces `target` with the placeholder built from `html`. A known size is kept; otherwise the minimum-size class applies. */
-export function mountPlaceholder(target: HTMLElement, html: string, size: PlaceholderSize | null): HTMLElement {
+/**
+ * Placeholders the runtime itself put in the page: the only ones whose buttons act. Markup that merely looks like one (injected
+ * CMS content or comments keep data-* attributes; a copy of a real one) grants nothing.
+ */
+const mounted = new WeakSet<Element>()
+
+function place(target: Element, html: string): HTMLElement {
   const tpl = target.ownerDocument.createElement('template')
   tpl.innerHTML = html
   const ph = tpl.content.firstElementChild as HTMLElement
+  target.replaceWith(ph)
+  mounted.add(ph)
+  return ph
+}
+
+/** Replaces `target` with the placeholder built from `html`. A known size is kept; otherwise the minimum-size class applies. */
+export function mountPlaceholder(target: HTMLElement, html: string, size: PlaceholderSize | null): HTMLElement {
+  const ph = place(target, html)
   if (size) { ph.style.inlineSize = size.width; ph.style.blockSize = size.height }
   else ph.classList.add('consent-placeholder--min')
-  target.replaceWith(ph)
   return ph
+}
+
+/**
+ * Replaces a placeholder the runtime did not mount (the server-rendered one of an embed box) with the one `html` builds, as it is
+ * (it fills its box, as the server-rendered one did). Does nothing to one the runtime mounted. Returns the placeholder in place.
+ */
+export function renewPlaceholder(old: Element, html: () => string): Element {
+  return mounted.has(old) ? old : place(old, html())
 }
 
 const ATTR_LENGTH = /^\d+(\.\d+)?%?$/
@@ -87,8 +107,8 @@ const actionBindings = new WeakMap<Document, WeakMap<Consent, ActionBinding>>()
 /**
  * The one delegated click listener for placeholder buttons and `[data-consent-open]` links, shared by everything that shows
  * placeholders (embed boxes, marked iframes, widget containers): bound once per document and client however many callers ask,
- * so a click is handled once. A button acts for the service of its placeholder (`data-consent-placeholder-for`), or, for
- * custom markup inside an embed box, for the box's service. Returns a release; the listener goes when its last user releases it.
+ * so a click is handled once. A button acts for the service of its placeholder (`data-consent-placeholder-for`), and only in a
+ * placeholder the runtime mounted (see `mounted`). Returns a release; the listener goes when its last user releases it.
  */
 export function bindPlaceholderActions(consent: Consent, doc: Document): () => void {
   const perDoc = actionBindings.get(doc) ?? new WeakMap<Consent, ActionBinding>()
@@ -100,8 +120,9 @@ export function bindPlaceholderActions(consent: Consent, doc: Document): () => v
       const t = ev.target.closest<HTMLElement>('[data-consent-open],[data-consent-action]')
       if (!t) return
       if (t.hasAttribute('data-consent-open')) { consent.open(); return }
-      const id = t.closest('[data-consent-placeholder-for]')?.getAttribute('data-consent-placeholder-for')
-        ?? t.closest<HTMLElement>('[data-consent-embed]')?.dataset.consentService
+      const ph = t.closest('[data-consent-placeholder-for]')
+      if (!ph || !mounted.has(ph)) return
+      const id = ph.getAttribute('data-consent-placeholder-for')
       const entry = consent.config.services.find((s) => s.id === id)
       if (!entry) return
       if (t.dataset.consentAction === 'once') consent.allowOnce(entry.id)

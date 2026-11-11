@@ -159,6 +159,46 @@ test('load once then reject removes the iframe and restores the placeholder', ()
   expect(document.querySelector('iframe')).toBeNull()
   expect(document.querySelector('[data-consent-placeholder-for]')).not.toBeNull()
 })
+// I3: the server-rendered placeholder of an embed box is replaced by one the runtime renders from the configuration, so
+// custom or injected buttons inside a box never act; the runtime's own buttons do
+test('an embed box\'s server-rendered placeholder is replaced by the runtime\'s own; look-alike buttons are gone', () => {
+  document.body.innerHTML = '<div data-consent-embed data-consent-service="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc" data-consent-title="Video">'
+    + '<div class="consent-placeholder" data-consent-placeholder-for="youtube"><button data-consent-action="accept" id="play">Play</button></div></div>'
+  const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  expect(document.getElementById('play')).toBeNull()
+  const ph = document.querySelector('[data-consent-embed] > [data-consent-placeholder-for="youtube"]')!
+  expect(ph.querySelector('[data-consent-action="accept"]')!.textContent).toBe('Povoliť Video')
+  expect(ph.hasAttribute('style')).toBe(false)
+  expect(ph.classList.contains('consent-placeholder--min')).toBe(false)
+})
+test('a look-alike embed box inserted after the sync grants nothing', () => {
+  const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  const fake = document.createElement('div')
+  fake.innerHTML = '<div data-consent-embed data-consent-service="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/x">'
+    + '<div data-consent-placeholder-for="youtube"><button data-consent-action="once" id="play">Play</button></div>'
+    + '<button data-consent-action="accept" id="play2">Play</button></div>'
+  document.body.append(fake)
+  document.getElementById('play')!.click()
+  document.getElementById('play2')!.click()
+  expect(c.isAllowed('youtube')).toBe(false)
+  expect(d.acceptServices).not.toHaveBeenCalled()
+})
+test('a placeholder kept across allow and withdraw stays the runtime\'s own, and its buttons work again', () => {
+  const d = driver(enc({ consentId: 'abc-12345678', categories: ['necessary', 'media'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
+  const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  expect(document.querySelector('iframe')).not.toBeNull()
+  d.set(enc({ consentId: 'abc-12345678', categories: ['necessary'], data: { siteRevision: 1, revisions: { youtube: 1 } } }))
+  d.hooks().onChange(['media'], [])
+  document.querySelector<HTMLElement>('[data-consent-action="once"]')!.click()
+  expect(document.querySelector('iframe')).not.toBeNull()
+})
+test('an embed box whose src is outside the service origins shows the unavailable placeholder', () => {
+  document.querySelector('[data-consent-embed]')!.setAttribute('data-consent-src', 'https://evil.com/x')
+  const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
+  const ph = document.querySelector('[data-consent-embed] > [data-consent-placeholder-for="youtube"]')!
+  expect(ph.hasAttribute('data-consent-unavailable')).toBe(true)
+  expect(ph.querySelectorAll('[data-consent-action]')).toHaveLength(0)
+})
 test('fallback content is intact on a plain sync while not allowed', () => {
   document.body.innerHTML = '<div data-consent-embed data-consent-service="youtube"><p id="fb">fallback</p></div>'
   const d = driver(); const c = createConsent(config, { driver: d as any }); c.init(); bindDom(c)
