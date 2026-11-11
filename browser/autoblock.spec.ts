@@ -114,6 +114,28 @@ for (const c of frameCases) {
   })
 }
 
+// R20 M2: markup holding an iframe is staged where nothing loads or runs, so an image in it is requested once and its inline
+// handler runs once, whether the staged copy is discarded (no tracker) or inserted (a tracker iframe held)
+test('markup staged for a held iframe loads its images and runs their handlers once, as the native call would', async ({ page }) => {
+  const images: string[] = []
+  page.on('request', (r) => { if (new URL(r.url()).pathname === '/missing.png') images.push(r.url()) })
+  await open(page, '/dynamic.html?case=none')
+  const counts = await page.evaluate(async () => {
+    const w = window as unknown as Record<string, number>
+    const box = document.getElementById('box')!
+    const img = (k: string) => `<img src="/missing.png?${k}" onerror="window.__${k} = (window.__${k} || 0) + 1">`
+    box.innerHTML = `${img('discarded')}<iframe title="blank"></iframe>`
+    box.insertAdjacentHTML('beforeend', `${img('held')}<iframe src="https://tracker.cloveconsent.test/frame.html?case=m2"></iframe>`)
+    await new Promise((r) => setTimeout(r, 300))
+    // with scripting on, <noscript> content is text, as the native call parses it
+    box.innerHTML = '<noscript><iframe src="https://tracker.cloveconsent.test/frame.html?case=noscript"></iframe></noscript>'
+      + '<iframe src="https://tracker.cloveconsent.test/frame.html?case=m2b"></iframe>'
+    return { discarded: w.__discarded, held: w.__held, noscript: box.querySelector('noscript')!.children.length }
+  })
+  expect(counts).toEqual({ discarded: 1, held: 1, noscript: 0 })
+  expect(images.sort()).toEqual(['/missing.png?discarded', '/missing.png?held'].map((p) => `http://localhost:4317${p}`))
+})
+
 // a host that no configured service has in its origins never loads: here youtube is configured (www.youtube-nocookie.com)
 // and accepted, and an embed from www.youtube.com, a known host of the same id, is inserted after Accept all
 test('a known host outside every configured origin stays blocked after Accept all, without a request', async ({ page }) => {

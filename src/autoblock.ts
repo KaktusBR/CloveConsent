@@ -350,12 +350,21 @@ function installMarkupGuard(
   if (!inner?.set || !outer?.set || !adjacentDesc) return () => {}
   const setInner = inner.set
 
-  /** Parses `markup` as children of a detached element like `context`; the staging element when a tracker iframe was held. */
+  let inert: Document | null = null
+  /**
+   * Parses `markup` as children of a detached element like `context`; the staging element when a tracker iframe was held. The
+   * staging element belongs to an inert document (no browsing context): nothing in the markup loads, runs an inline handler or
+   * constructs a custom element there, so a staged copy that is discarded leaves no trace, and one that is inserted acts once,
+   * when it is in the page. Markup with a `<noscript>` is staged in this document instead: without scripting, its content would
+   * parse as elements rather than as text.
+   */
   const stage = (context: Element | null, markup: unknown): Element | null => {
     if (stopped() || !context || context.ownerDocument !== doc || NO_FRAMES.has(context.localName)) return null
-    if (!MAY_HOLD_FRAME.test(String(markup))) return null
+    const text = String(markup)
+    if (!MAY_HOLD_FRAME.test(text)) return null
     try {
-      const staging = createNS.call(doc, context.namespaceURI, context.localName)
+      const where = /<noscript/i.test(text) ? doc : (inert ??= doc.implementation.createHTMLDocument(''))
+      const staging = createNS.call(where, context.namespaceURI, context.localName)
       setInner.call(staging, markup)
       return holdFrames(staging) ? staging : null
     } catch { return null }

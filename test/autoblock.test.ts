@@ -479,6 +479,25 @@ describe('elements inserted as markup', () => {
     expect(ta.value).toBe(`<iframe src="${FRAME}"></iframe>`)
     expect(() => box.insertAdjacentHTML('nowhere' as InsertPosition, `<iframe src="${FRAME}"></iframe>`)).toThrow()
   })
+  // R20 M2: the markup is staged where nothing runs: no custom element constructed, no image loaded, no inline handler run
+  test('staging parses the markup in an inert document: a custom element is constructed once, by the real insertion', () => {
+    let built = 0
+    const name = `x-staged-${Math.random().toString(36).slice(2)}`
+    customElements.define(name, class extends HTMLElement { constructor() { super(); built++ } })
+    install()
+    const box = document.createElement('div')
+    document.body.appendChild(box)
+    // no tracker iframe: the staged copy is discarded and the native call parses the markup again
+    box.innerHTML = `<${name}></${name}><iframe src="https://video.example.org/e"></iframe>`
+    expect(built).toBe(1)
+    expect(box.firstElementChild!.constructor.name).not.toBe('HTMLElement')
+    // a tracker iframe held: the staged nodes are inserted, and upgraded in the page
+    box.innerHTML = `<${name}></${name}><iframe src="${FRAME}"></iframe>`
+    expect(built).toBe(2)
+    expect(box.firstElementChild!.matches(':defined')).toBe(true)
+    expect(box.firstElementChild!.ownerDocument).toBe(document)
+    expect(box.querySelector('iframe')!.hasAttribute('src')).toBe(false)
+  })
   test('marked tags written by the site are left alone', async () => {
     install()
     document.body.innerHTML = `<script type="text/plain" data-consent="tracker" src="${TRACKER}"></script><iframe data-consent="tracker" data-consent-src="${FRAME}"></iframe>`
