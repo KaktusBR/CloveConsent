@@ -31,7 +31,7 @@ export const en: Messages = {
   catSocial: 'Social', catSocialText: 'Embedded content from social networks.',
   catAnalytics: 'Analytics', catAnalyticsText: 'Help us understand how the site is used.',
   catMarketing: 'Marketing', catMarketingText: 'Used to measure and target advertising.',
-  embedBlocked: '{service} is turned off because of your cookie choice.', embedHint: 'Turn on {category} cookies to see it.', embedLoadOnce: 'Load once', embedAllow: 'Allow {service}',
+  embedBlocked: 'Your cookie choice turned off {service}.', embedHint: 'Turn on {category} cookies to see it.', embedLoadOnce: 'Load once', embedAllow: 'Allow {service}',
   clearWarning: 'Some third-party files cannot be removed from this site. Delete them in your browser settings.',
   receiptTitle: 'Your consent reference', receiptNone: 'No choice saved yet.', receiptCopy: 'Copy', receiptCopied: 'Copied', receiptSaved: 'Saved',
   receiptPolicy: 'Policy version', receiptLanguage: 'Language', receiptChoice: 'Choice',

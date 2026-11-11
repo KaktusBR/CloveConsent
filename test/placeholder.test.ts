@@ -21,7 +21,7 @@ describe('renderPlaceholder', () => {
     expect(ph.tagName).toBe('DIV')
     expect(ph.getAttribute('data-consent-placeholder-for')).toBe('youtube')
     const text = ph.querySelector('p.consent-placeholder__text')!
-    expect(text.textContent).toBe('YouTube videos is turned off because of your cookie choice. Turn on Media cookies to see it.')
+    expect(text.textContent).toBe('Your cookie choice turned off YouTube videos. Turn on Media cookies to see it.')
   })
   test('names the translated category in the other languages', () => {
     const skView = buildView(config, 'sk')
@@ -48,7 +48,13 @@ describe('renderPlaceholder', () => {
     const host = html('youtube', '<img src=x onerror=alert(1)> & "q"')
     expect(host.querySelector('img')).toBeNull()
     expect(host.querySelector('[data-consent-action="accept"]')!.textContent).toBe('Allow <img src=x onerror=alert(1)> & "q"')
-    expect(host.querySelector('.consent-placeholder__text')!.textContent).toContain('<img src=x onerror=alert(1)> & "q" is turned off')
+    expect(host.querySelector('.consent-placeholder__text')!.textContent).toContain('turned off <img src=x onerror=alert(1)> & "q".')
+  })
+  test('a site override written for the old {provider} placeholder still names the provider (phase-1 sites)', () => {
+    const view = { ...en, m: { ...en.m, embedBlocked: 'Content from {provider} is blocked until you allow it.' } }
+    const text = html('youtube', undefined, view).querySelector('.consent-placeholder__text')!.textContent!
+    expect(text).toContain('Content from YouTube (Google) is blocked until you allow it.')
+    expect(text).not.toContain('{provider}')
   })
   test('escapes a service id in the attribute', () => {
     const view = { ...en, categories: en.categories.map((c) => ({ ...c, services: c.services.map((s) => (s.id === 'youtube' ? { ...s, id: 'a"b' } : s)) })) }

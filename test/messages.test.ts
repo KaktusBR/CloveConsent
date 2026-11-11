@@ -37,13 +37,19 @@ test('consent manager texts exist in English with the exact wording', () => {
   expect(en.embedAllow).toBe('Allow {service}')
 })
 test('placeholder texts name the service and the category', () => {
-  expect(en.embedBlocked).toBe('{service} is turned off because of your cookie choice.')
+  expect(en.embedBlocked).toBe('Your cookie choice turned off {service}.')
   expect(en.embedHint).toBe('Turn on {category} cookies to see it.')
 })
 test('embedAccept is gone, replaced by embedAllow', () => {
   expect(MESSAGE_KEYS as readonly string[]).not.toContain('embedAccept')
   expect(en.embedAllow).toContain('{service}')
 })
+// R19: the subject is the visitor's choice, so no verb agrees with the service title (catalog titles are plural)
+const EMBED_BLOCKED: Record<string, string> = {
+  sk: 'Vaša voľba cookies vypla {service}.',
+  fr: 'Votre choix de cookies a désactivé {service}.',
+  de: 'Ihre Cookie-Auswahl hat {service} deaktiviert.',
+}
 describe.each([['sk', sk], ['fr', fr], ['de', de]])('%s pack', (_name, pack) => {
   test('provides every message key and no removed key', () => {
     const keys = Object.keys(pack.messages)
@@ -58,6 +64,7 @@ describe.each([['sk', sk], ['fr', fr], ['de', de]])('%s pack', (_name, pack) => 
     expect(m.embedAllow).toMatch(/\{service\}/)
     expect(m.embedBlocked).toMatch(/\{service\}/)
     expect(m.embedBlocked).not.toMatch(/\{provider\}/)
+    expect(m.embedBlocked).toBe(EMBED_BLOCKED[pack.locale])
     expect(m.embedHint).toMatch(/\{category\}/)
     for (const k of NEW_KEYS) expect(m[k]!.trim().length, k).toBeGreaterThan(0)
   })

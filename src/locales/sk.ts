@@ -33,7 +33,7 @@ const pack: LocalePack = {
     "catAnalyticsText": "Pomáhajú pochopiť, ako sa stránka používa.",
     "catMarketing": "Marketingové",
     "catMarketingText": "Používajú sa na meranie a zacielenie reklamy.",
-    "embedBlocked": "{service} je vypnuté kvôli vašej voľbe cookies.",
+    "embedBlocked": "Vaša voľba cookies vypla {service}.",
     "embedHint": "Zapnite cookies kategórie {category}, aby ste to videli.",
     "embedLoadOnce": "Načítať raz",
     "embedAllow": "Povoliť {service}",

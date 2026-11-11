@@ -20,7 +20,8 @@ export function renderPlaceholder(view: View, serviceId: string, label?: string)
   if (!service || !category) throw new Error(`[consent] renderPlaceholder: unknown service "${serviceId}"`)
   const m = view.m
   const name = label ?? service.title
-  const text = `${format(m.embedBlocked, { service: name })} ${format(m.embedHint, { category: category.title })}`
+  // `provider`: the placeholder of phase 1, kept for sites that override embedBlocked with it
+  const text = `${format(m.embedBlocked, { service: name, provider: service.provider ?? name })} ${format(m.embedHint, { category: category.title })}`
   const once = service.iframe
     ? `<button type="button" class="consent-btn consent-btn--secondary" data-consent-action="once">${escapeHtml(m.embedLoadOnce)}</button>`
     : ''

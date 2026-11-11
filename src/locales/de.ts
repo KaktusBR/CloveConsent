@@ -33,7 +33,7 @@ const pack: LocalePack = {
     "catAnalyticsText": "Helfen uns zu verstehen, wie die Seite genutzt wird.",
     "catMarketing": "Marketing",
     "catMarketingText": "Dienen der Messung und Ausrichtung von Werbung.",
-    "embedBlocked": "{service} ist wegen Ihrer Cookie-Auswahl deaktiviert.",
+    "embedBlocked": "Ihre Cookie-Auswahl hat {service} deaktiviert.",
     "embedHint": "Aktivieren Sie die Cookies der Kategorie {category}, um es anzuzeigen.",
     "embedLoadOnce": "Einmal laden",
     "embedAllow": "{service} zulassen",
