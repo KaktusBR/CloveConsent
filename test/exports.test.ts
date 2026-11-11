@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
+import * as api from '../src/index'
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 test('every language pack is a package export', () => {
@@ -19,4 +20,12 @@ test('every exports target is produced by tsup or is an astro source file', () =
 test('the settings component and the stylesheet are package exports', () => {
   expect(pkg.exports['./astro/ConsentSettings.astro']).toBe('./src/astro/ConsentSettings.astro')
   expect(pkg.exports['./consent.css']).toBe('./src/astro/consent.css')
+})
+test('marked-tag activation is public API; auto-blocking stays internal (R18)', () => {
+  expect(typeof api.bindMarked).toBe('function')
+  expect(typeof api.syncMarked).toBe('function')
+  expect('installAutoBlocking' in api).toBe(false)
+  // the options type is exported with them
+  const opts: api.MarkedOptions = { onUnknown: () => {} }
+  expect(typeof opts.onUnknown).toBe('function')
 })

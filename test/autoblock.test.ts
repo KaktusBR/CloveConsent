@@ -547,4 +547,8 @@ describe('KNOWN_HOSTS', () => {
     for (const host of Object.keys(KNOWN_HOSTS)) expect(host).toMatch(/^[a-z0-9.-]+$/)
     expect(Object.isFrozen(KNOWN_HOSTS)).toBe(true)
   })
+  test('www.facebook.com serves page-plugin and social embeds, not the Meta Pixel (connect.facebook.net)', () => {
+    expect(KNOWN_HOSTS['www.facebook.com']).toBe('facebook-embed')
+    expect(Object.entries(KNOWN_HOSTS).filter(([, id]) => id === 'meta-pixel').map(([h]) => h)).toEqual(['connect.facebook.net'])
+  })
 })

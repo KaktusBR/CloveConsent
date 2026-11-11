@@ -25,7 +25,8 @@ export const KNOWN_HOSTS: Readonly<Record<string, string>> = Object.freeze({
   'ssl.google-analytics.com': 'google-analytics',
   'www.youtube.com': 'youtube',
   'youtube.com': 'youtube',
-  'www.facebook.com': 'meta-pixel',
+  // page plugins and social embeds (the Meta Pixel itself loads from connect.facebook.net)
+  'www.facebook.com': 'facebook-embed',
   'googleads.g.doubleclick.net': 'google-ads',
   'www.googleadservices.com': 'google-ads',
   'static.hotjar.com': 'hotjar',

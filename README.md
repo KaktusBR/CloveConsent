@@ -234,6 +234,8 @@ Leave the container empty: while the service is blocked, its contents are replac
 
 A marked tag that names a service id the configuration does not have stays blocked and gets no placeholder. The one-script runtime logs one console warning per unknown id (in every build) and reports it to `reportUrl` with `kind: "unknown"`. When you call `bindMarked` yourself, it goes to its `onUnknown` option, once per element (without one, a console warning in development).
 
+With the library instead of the one script (an Astro site, or a bundle of your own), marked tags work through `bindMarked(consent, document, { onUnknown })` from `cloveconsent`: call it once the client exists (for example with `getConsent()` once the banner has booted); it keeps the page in line with every later decision and returns an unbind. `syncMarked(consent, document)` applies the current consent once. Auto-blocking is part of the one-script runtime only: sites that use the Astro components do not get it yet (a planned follow-up), so there every tracker must be a marked tag or a `GatedEmbed`.
+
 The settings panel is `<div data-cloveconsent-settings></div>` (the same manager as `ConsentSettings`, see "Consent manager"). Any element with `data-consent-open` reopens the consent dialog.
 
 ### Placeholders
