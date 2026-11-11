@@ -29,6 +29,14 @@
       "types": "./dist/locales/de.d.ts",
       "import": "./dist/locales/de.js"
     },
+    "./standalone": {
+      "types": "./dist/standalone.d.ts",
+      "import": "./dist/standalone.js"
+    },
+    "./site-script": {
+      "types": "./dist/site-script.d.ts",
+      "import": "./dist/site-script.js"
+    },
     "./astro/ConsentBanner.astro": "./src/astro/ConsentBanner.astro",
     "./astro/ConsentPreferences.astro": "./src/astro/ConsentPreferences.astro",
     "./astro/GatedEmbed.astro": "./src/astro/GatedEmbed.astro",
