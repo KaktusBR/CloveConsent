@@ -135,6 +135,40 @@ test('placeholders have the size of the element they stand for, or the minimum s
   }
 })
 
+test('a placeholder for an embed smaller than its content keeps its size; its text and buttons stay reachable inside it', async ({ page }) => {
+  const { errors } = await open(page)
+  await page.evaluate(() => {
+    const f = document.createElement('iframe')
+    f.src = 'https://www.youtube-nocookie.com/embed/small'
+    f.width = '200'; f.height = '100'; f.setAttribute('frameborder', '0'); f.id = 'small'
+    document.body.prepend(f)
+  })
+  const ph = placeholder(page, 'youtube').first()
+  // sized like the element
+  await expect(ph).toHaveCSS('inline-size', '200px')
+  await expect(ph).toHaveCSS('block-size', '100px')
+  // the box scrolls instead of spilling over the page: the start of its text and each button, brought into view, are inside it
+  const reachable = await ph.evaluate((el) => {
+    const inside = (c: Element) => {
+      const box = el.getBoundingClientRect()
+      const r = c.getBoundingClientRect()
+      return { top: r.top >= box.top - 0.5, bottom: r.bottom <= box.bottom + 0.5 }
+    }
+    el.scrollTop = 0
+    const text = inside(el.firstElementChild!).top
+    const buttons = [...el.querySelectorAll('button')].map((b) => {
+      b.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      const r = inside(b)
+      return r.top && r.bottom
+    })
+    return { text, buttons, scrolls: el.scrollHeight > el.clientHeight }
+  })
+  expect(reachable).toEqual({ text: true, buttons: [true, true, true], scrolls: true })
+  await ph.locator('[data-consent-action="accept"]').click()
+  await expect(page.locator('iframe#small[src="https://www.youtube-nocookie.com/embed/small"]')).toHaveCount(1)
+  expect(errors).toEqual([])
+})
+
 test('Reject all keeps everything blocked; only the consent cookie is stored', async ({ page }) => {
   const { requests, reports, errors } = await open(page)
   await page.locator('.cm__btn[data-role="necessary"]').click()

@@ -102,3 +102,12 @@ test('forced-colors keeps the switch visible: checked, disabled and focus', () =
   expect(block).toMatch(/border:\s*1px solid CanvasText/)
   for (const k of ['Highlight', 'HighlightText', 'GrayText']) expect(block).toContain(k)
 })
+
+test('a placeholder with a fixed size smaller than its content scrolls, so its buttons stay reachable inside it', () => {
+  const rules = [...stripped.matchAll(/(^|[}\s])\.consent-placeholder\s*\{([^}]*)\}/g)].map((m) => m[2]!).join(';')
+  expect(rules).toMatch(/overflow:\s*auto/)
+  // centring with justify-content would put overflowing content above the box, where scrolling never reaches
+  expect(rules).not.toMatch(/justify-content:\s*center/)
+  expect(stripped).toMatch(/\.consent-placeholder > :first-child\s*\{\s*margin-block-start:\s*auto;?\s*\}/)
+  expect(stripped).toMatch(/\.consent-placeholder > :last-child\s*\{\s*margin-block-end:\s*auto;?\s*\}/)
+})

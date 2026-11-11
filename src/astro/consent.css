@@ -537,7 +537,6 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    justify-content: center;
     gap: 0.5rem;
     padding: 1rem;
     background: var(--consent-muted);
@@ -550,9 +549,18 @@
   .consent-placeholder > .consent-btn {
     align-self: stretch;
   }
-  /* a known size is kept (set inline from the element it replaces); it never overflows its container */
+  /* centred while it fits; when it does not, it starts at the top (auto margins drop to zero), where scrolling reaches it */
+  .consent-placeholder > :first-child {
+    margin-block-start: auto;
+  }
+  .consent-placeholder > :last-child {
+    margin-block-end: auto;
+  }
+  /* a known size is kept (set inline from the element it replaces); it never overflows its container. A size smaller than the
+     text and buttons keeps them inside: the box scrolls, so they stay reachable and never cover the content around it. */
   .consent-placeholder {
     max-inline-size: 100%;
+    overflow: auto;
   }
   .consent-placeholder--min {
     min-inline-size: 16rem;
