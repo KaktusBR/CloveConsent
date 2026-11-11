@@ -13,6 +13,6 @@ jobs:
       - run: npm test
       - run: npm run test:astro
       - run: npm run test:admin
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
       - run: npm audit --omit=dev --audit-level=high

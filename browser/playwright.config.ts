@@ -9,5 +9,10 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   webServer: { command: 'node fixtures/serve.mjs', url: `http://localhost:${port}/health`, env: { PORT: String(port) }, reuseExistingServer: false },
   use: { baseURL: `http://localhost:${port}` },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // R17: blocking is browser behaviour; every spec runs in the three engines
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
 })

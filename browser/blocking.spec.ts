@@ -1,4 +1,4 @@
-// End to end, in Chromium: one site script (buildSiteScript over the built runtime), first in <head>, on a page with a YouTube
+// End to end, in Chromium, Firefox and WebKit: one site script (buildSiteScript over the built runtime), first in <head>, on a page with a YouTube
 // and a map iframe, marked Google Analytics and Meta Pixel scripts, a widget container with its marked loader, a tracker tag
 // copied in unmarked below the snippet, and trackers inserted by the site's own code (one for a configured service, one for a
 // host no configured service covers). No tracker host is ever resolved: every request to one is recorded and fulfilled here.
@@ -16,7 +16,7 @@ const SCRIPT_HOSTS = [GTM, META, WIDGET, HOTJAR]
 const FRAME_HOSTS = [YOUTUBE, MAPS, VIMEO]
 const TRACKER_HOSTS = new Set([...SCRIPT_HOSTS, ...FRAME_HOSTS])
 /**
- * The unmarked tracker tag written in the HTML below the snippet. Chromium's preload scanner requests it before any script runs,
+ * The unmarked tracker tag written in the HTML below the snippet. The preload scanner (measured in all three engines) requests it before any script runs,
  * so no script can stop that request (measured; the strict check is an expected failure in autoblock.spec.ts). Auto-blocking
  * still keeps it from executing, which is asserted. It is the only request excluded from "no request before consent".
  */

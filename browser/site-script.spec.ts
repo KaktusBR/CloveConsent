@@ -1,5 +1,5 @@
 // The real per-site script (buildSiteScript over the built runtime, written in globalSetup), alone and first in <head>: the bottom
-// bar, blocking, Accept all and the settings panel, in Chromium. The fake tracker host and YouTube are never resolved: requests to
+// bar, blocking, Accept all and the settings panel, in Chromium, Firefox and WebKit. The fake tracker host and YouTube are never resolved: requests to
 // them are recorded and fulfilled here.
 import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
@@ -58,7 +58,10 @@ test('the settings panel allows one category: the tracker runs, the video stays 
   const { youtube, errors } = await open(page)
   const panel = page.locator('[data-cloveconsent-settings]')
   await panel.locator('input[data-consent-group="analytics"]').check()
-  await panel.locator('[data-consent-action="save"]').click()
+  const save = panel.locator('[data-consent-action="save"]')
+  // the visitor scrolls it clear of the banner bar, which stays at the bottom of the viewport (in WebKit it covers the button)
+  await save.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  await save.click()
   await page.waitForFunction(() => (window.__trackerRuns?.length ?? 0) >= 2)
   await page.waitForTimeout(300)
   expect(await runs(page)).toEqual(['marked', 'parsed'])

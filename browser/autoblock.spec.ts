@@ -1,5 +1,5 @@
 // Review Focus 2: a tracker placed after the runtime tag, or inserted later by another script, never executes or requests
-// before consent, in a real Chromium. The fake tracker host is never resolved: every request to it is recorded and fulfilled
+// before consent, in real Chromium, Firefox and WebKit (R17). The fake tracker host is never resolved: every request to it is recorded and fulfilled
 // here, so "no request" means none left the page.
 import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
@@ -41,7 +41,8 @@ const runs = (page: Page) => page.evaluate(() => window.__trackerRuns ?? null)
 
 const scriptCases = [
   { name: '(a) script tags in the HTML after the runtime tag', path: '/parsed.html', cases: ['parsed', 'parsed-body'],
-    limit: 'Chromium preload scanner requests a <script src> written in the HTML before any script runs; execution is still blocked (asserted above)' },
+    limit: 'the preload scanner requests a <script src> written in the HTML before any script runs; execution is still blocked (asserted above)',
+    limitIn: ['chromium', 'firefox', 'webkit'] },
   { name: '(b) createElement, src, appendChild', path: '/dynamic.html?case=append', cases: ['append'] },
   { name: '(b) createElement, setAttribute("src"), appendChild', path: '/dynamic.html?case=setattribute', cases: ['setattribute'] },
   { name: '(b) createElement with data-consent but a runnable type', path: '/dynamic.html?case=consent-attr', cases: ['consent-attr'] },
@@ -63,9 +64,9 @@ for (const c of scriptCases) {
     expect(await runs(page)).toEqual(c.cases)
   })
 
-  test(`tracker script, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page }) => {
-    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A)
-    test.fail(!!c.limit, c.limit)
+  test(`tracker script, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page, browserName }) => {
+    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A), per browser (R17)
+    test.fail(!!c.limit && !!c.limitIn?.includes(browserName), c.limit)
     const requests = await open(page, c.path)
     expect(requests).toEqual([])
 
@@ -85,7 +86,9 @@ const frameCases = [
   { name: 'written in the HTML, src set later by property', path: '/lazy.html?case=lazy-html-prop', case: 'lazy-html-prop' },
   { name: 'written in the HTML, src set later by setAttribute', path: '/lazy.html?case=lazy-html-attr', case: 'lazy-html-attr' },
   { name: 'placed in the HTML after the runtime tag', path: '/parsed-iframe.html', case: 'parsed-iframe',
-    limit: 'Chromium sends the request of a parser-inserted <iframe src> before any script runs; its load is still stopped (asserted above)' },
+    limit: 'Chromium sends the request of a parser-inserted <iframe src> before any script runs; its load is still stopped (asserted above)',
+    // measured: Firefox and WebKit run the observer before the request, and pass
+    limitIn: ['chromium'] },
 ]
 const loadedFrame = (page: Page, c: string) => page.frameLocator(`iframe[src="${frame(c)}"]`).locator('#tracker-frame')
 
@@ -101,9 +104,9 @@ for (const c of frameCases) {
     await expect(page.locator('iframe')).toHaveCount(1)
   })
 
-  test(`tracker iframe, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page }) => {
-    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A)
-    test.fail(!!c.limit, c.limit)
+  test(`tracker iframe, ${c.name}: no request reaches the tracker host before consent, one after Accept all`, async ({ page, browserName }) => {
+    // expected failure, measured: see task-3-report (Concern 1, controller ruling option A), per browser (R17)
+    test.fail(!!c.limit && !!c.limitIn?.includes(browserName), c.limit)
     const requests = await open(page, c.path)
     expect(requests).toEqual([])
 

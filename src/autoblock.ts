@@ -56,9 +56,11 @@ type Target = HTMLScriptElement | HTMLIFrameElement
  * - `innerHTML`, `outerHTML` and `insertAdjacentHTML` hold tracker iframes in markup before it is inserted (an iframe starts
  *   loading inside that call), see `installMarkupGuard`.
  *
- * Install it first, synchronously: tags placed before it are out of its reach. Limits, measured in Chromium: the browser's
- * preload scanner requests a `<script src>` written in the HTML before any script runs (it still never executes), and an
- * `<iframe src>` written in the HTML has sent its request before any observer runs (its load is stopped). What is replaced:
+ * Install it first, synchronously: tags placed before it are out of its reach. Limits, measured in Chromium, Firefox and WebKit:
+ * the preload scanner requests a `<script src>` written in the HTML before any script runs (it still never executes); in
+ * Chromium an `<iframe src>` written in the HTML has sent its request before any observer runs (its load is stopped); paths
+ * that set no intercepted member (attribute nodes, `createContextualFragment`, another window's document, shadow roots'
+ * `innerHTML`) are not intercepted, see the README. What is replaced:
  * those members of the script, iframe and element prototypes and the three markup members of `Element.prototype`; only
  * scripts and iframes are affected, everything else keeps its native behaviour, and no interception throws into host code
  * (a wrong receiver or argument fails exactly as natively).
