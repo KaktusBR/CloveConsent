@@ -324,6 +324,111 @@ describe('iframes created through document.createElement', () => {
   })
 })
 
+// I1: a lazy loader sets the source later on an element it did not build with document.createElement
+describe('a source set later on an element from the HTML or from markup', () => {
+  const fromMarkup = <T extends Element>(html: string): T => {
+    const box = document.createElement('div')
+    document.body.appendChild(box)
+    box.innerHTML = html
+    return box.firstElementChild as T
+  }
+  test('an iframe: src by property, by setAttribute (any case) and by setAttributeNS is held before it can load', () => {
+    install()
+    const byProp = fromMarkup<HTMLIFrameElement>('<iframe width="320" height="180"></iframe>')
+    const byAttr = fromMarkup<HTMLIFrameElement>('<iframe></iframe>')
+    const byNS = fromMarkup<HTMLIFrameElement>('<iframe></iframe>')
+    byProp.src = FRAME
+    byAttr.setAttribute('SRC', FRAME)
+    byNS.setAttributeNS(null, 'src', FRAME)
+    for (const f of [byProp, byAttr, byNS]) {
+      expect(f.hasAttribute('src')).toBe(false)
+      expect(f.getAttribute('data-consent-src')).toBe(FRAME)
+      expect(f.getAttribute('data-consent')).toBe('tracker')
+      expect(f.hasAttribute('data-consent-auto')).toBe(true)
+    }
+    expect(byProp.src).toBe(FRAME)
+    expect(blocked.map((b) => b.el)).toEqual([byProp, byAttr, byNS])
+  })
+  test('an iframe the parser created (in the page before installing) is held the same way', () => {
+    document.body.innerHTML = '<iframe id="lazy"></iframe>'
+    install()
+    const f = document.getElementById('lazy') as HTMLIFrameElement
+    f.src = FRAME
+    expect(f.hasAttribute('src')).toBe(false)
+    f.setAttribute('src', `${FRAME}#2`)
+    expect(f.hasAttribute('src')).toBe(false)
+    expect(f.getAttribute('data-consent-src')).toBe(`${FRAME}#2`)
+  })
+  test('a script from markup that gets a tracker src later is neutralized; its type is routed as for built ones', () => {
+    install()
+    const s = fromMarkup<HTMLScriptElement>('<script></script>')
+    s.src = TRACKER
+    neutralizedScript(s)
+    s.type = 'module'
+    expect(s.getAttribute('type')).toBe('text/plain')
+    expect(s.getAttribute('data-type')).toBe('module')
+    const t = fromMarkup<HTMLScriptElement>('<script type="text/x-template"></script>')
+    t.setAttribute('src', TRACKER)
+    expect(t.getAttribute('type')).toBe('text/x-template')
+    t.removeAttribute('type')
+    neutralizedScript(t)
+  })
+  test('an element of another document of this window is held too (moved into the page later)', () => {
+    install()
+    const other = document.implementation.createHTMLDocument('')
+    const s = other.createElement('script')
+    s.src = TRACKER
+    const f = other.createElement('iframe')
+    f.setAttribute('src', FRAME)
+    neutralizedScript(s)
+    expect(f.hasAttribute('src')).toBe(false)
+  })
+  test('allowed, non-tracker and marked elements keep their native behaviour', () => {
+    allowed.add('tracker')
+    install()
+    const ok = fromMarkup<HTMLIFrameElement>('<iframe></iframe>')
+    ok.src = FRAME
+    expect(ok.getAttribute('src')).toBe(FRAME)
+    const other = fromMarkup<HTMLIFrameElement>('<iframe></iframe>')
+    other.setAttribute('src', 'https://video.example.org/e')
+    expect(other.getAttribute('src')).toBe('https://video.example.org/e')
+    const marked = fromMarkup<HTMLScriptElement>('<script type="text/plain" data-consent="chat"></script>')
+    marked.src = 'https://connect.facebook.net/en_US/fbevents.js'
+    expect(marked.hasAttribute('data-consent-auto')).toBe(false)
+    expect(Object.hasOwn(ok, 'src')).toBe(false)
+    expect(blocked).toEqual([])
+  })
+  test('a src set through a path no setter covers (an attribute node) is caught by the observer: held and reported', async () => {
+    install()
+    const f = fromMarkup<HTMLIFrameElement>('<iframe></iframe>')
+    // the insertion has been observed: only the attribute change is left to see
+    await flush()
+    const a = document.createAttribute('src')
+    a.value = FRAME
+    f.setAttributeNode(a)
+    await flush()
+    expect(f.hasAttribute('src')).toBe(false)
+    expect(f.getAttribute('data-consent-src')).toBe(FRAME)
+    expect(blocked.map((b) => b.el)).toEqual([f])
+  })
+  test('the patched members behave natively for wrong receivers and arguments', () => {
+    const outcome = (fn: () => unknown) => { try { fn(); return 'ok' } catch (e) { return (e as Error).name } }
+    const calls = () => [
+      outcome(() => Element.prototype.setAttribute.call({} as Element, 'src', TRACKER)),
+      outcome(() => Element.prototype.setAttribute.call(null as unknown as Element, 'src', TRACKER)),
+      outcome(() => (Element.prototype.setAttributeNS as (...a: unknown[]) => void).call(document.createElement('iframe'), null, 'src')),
+      outcome(() => (document.createElement('iframe').setAttribute as (...a: unknown[]) => void)('src')),
+      outcome(() => (Element.prototype.removeAttribute as (...a: unknown[]) => void).call(document.createElement('script'))),
+      outcome(() => document.createElement('iframe').setAttribute('1 bad', 'x')),
+      outcome(() => Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src')!.set!.call({}, FRAME)),
+      outcome(() => Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'type')!.get!.call({})),
+    ]
+    const native = calls()
+    install()
+    expect(calls()).toEqual(native)
+  })
+})
+
 describe('elements inserted as markup', () => {
   test('scripts and iframes inserted by innerHTML and insertAdjacentHTML are neutralized', async () => {
     install()
@@ -456,13 +561,19 @@ describe('never throws into host code', () => {
 })
 
 describe('stop', () => {
-  test('restores document.createElement and leaves earlier elements native', () => {
+  test('restores the src, type and attribute members it patched and leaves earlier elements native', () => {
+    const members = [
+      [HTMLScriptElement.prototype, 'src'], [HTMLScriptElement.prototype, 'type'], [HTMLIFrameElement.prototype, 'src'],
+      [Element.prototype, 'setAttribute'], [Element.prototype, 'setAttributeNS'], [Element.prototype, 'removeAttribute'],
+    ] as const
+    const before = members.map(([p, k]) => Object.getOwnPropertyDescriptor(p, k))
     const native = document.createElement
     install()
-    expect(document.createElement).not.toBe(native)
+    members.forEach(([p, k], i) => expect(Object.getOwnPropertyDescriptor(p, k), k).not.toEqual(before[i]))
     const s = document.createElement('script')
     handle!.stop()
     handle = undefined
+    expect(members.map(([p, k]) => Object.getOwnPropertyDescriptor(p, k))).toEqual(before)
     expect(document.createElement).toBe(native)
     s.src = TRACKER
     document.body.appendChild(s)

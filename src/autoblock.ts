@@ -45,19 +45,23 @@ type Target = HTMLScriptElement | HTMLIFrameElement
  * iframes with `data-consent-src`, all with `data-consent` and `data-consent-auto`) that marked-tag activation runs on consent.
  *
  * Three mechanisms, because none alone is in time for every path:
+ * - the `src` and `type` accessors of scripts and iframes and `Element.prototype.setAttribute`, `setAttributeNS` and
+ *   `removeAttribute` are intercepted for every script and iframe of this window, whoever built it (code, the HTML parser,
+ *   markup, another document): a tracker source is held before the browser can request it (a script inserted by code fetches
+ *   at once, before any observer runs; a lazy loader sets `src` on an iframe that is already in the page);
  * - a MutationObserver on the document: the parser runs pending observers before it runs a script it has just inserted, so a
- *   parser-inserted script can still be made inert; it also marks scripts inserted as markup (which the browser never runs);
- * - `document.createElement` / `createElementNS` hand out scripts and iframes whose `src`, `type`, `setAttribute`,
- *   `setAttributeNS` and `removeAttribute` are intercepted on that element only, so a source set by code is caught before the
- *   element is inserted (a script inserted by code fetches at once, before any observer runs);
+ *   parser-inserted script can still be made inert; it also marks scripts inserted as markup (which the browser never runs),
+ *   and, as a net, neutralizes and reports a tracker `src` set on a script or iframe through a path no setter covers (an
+ *   attribute node): a script may have started by then, an iframe's load is stopped;
  * - `innerHTML`, `outerHTML` and `insertAdjacentHTML` hold tracker iframes in markup before it is inserted (an iframe starts
  *   loading inside that call), see `installMarkupGuard`.
  *
  * Install it first, synchronously: tags placed before it are out of its reach. Limits, measured in Chromium: the browser's
  * preload scanner requests a `<script src>` written in the HTML before any script runs (it still never executes), and an
  * `<iframe src>` written in the HTML has sent its request before any observer runs (its load is stopped). What is replaced:
- * the document's two factory methods and the three markup members of `Element.prototype`; only scripts and iframes of this
- * document are affected, everything else keeps its native behaviour, and no interception throws into host code.
+ * those members of the script, iframe and element prototypes and the three markup members of `Element.prototype`; only
+ * scripts and iframes are affected, everything else keeps its native behaviour, and no interception throws into host code
+ * (a wrong receiver or argument fails exactly as natively).
  */
 export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): AutoBlocking {
   const win = (doc.defaultView ?? globalThis) as Window & typeof globalThis
@@ -68,9 +72,11 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     const d = proto ? Object.getOwnPropertyDescriptor(proto, name) : undefined
     return d && typeof d.get === 'function' && typeof d.set === 'function' ? d : null
   }
-  const scriptSrc = accessor(win.HTMLScriptElement?.prototype, 'src')
-  const scriptType = accessor(win.HTMLScriptElement?.prototype, 'type')
-  const frameSrc = accessor(win.HTMLIFrameElement?.prototype, 'src')
+  const scriptProto = win.HTMLScriptElement?.prototype
+  const frameProto = win.HTMLIFrameElement?.prototype
+  const scriptSrc = accessor(scriptProto, 'src')
+  const scriptType = accessor(scriptProto, 'type')
+  const frameSrc = accessor(frameProto, 'src')
   const released = new Set<string>()
   const reported = new WeakSet<Element>()
   let stopped = false
@@ -79,6 +85,10 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   const setAttr = (el: Element, name: string, value: string) => nat.set.call(el, name, value)
   const isScript = (el: Element): el is HTMLScriptElement => el.localName === 'script' && el.namespaceURI === HTML_NS
   const isFrame = (el: Element): el is HTMLIFrameElement => el.localName === 'iframe' && el.namespaceURI === HTML_NS
+  /** The receiver of an intercepted member when it is a script or iframe of this window; null for anything else. */
+  const target = (el: unknown): Target | null => {
+    try { return el instanceof win.Element && (isScript(el) || isFrame(el)) ? el : null } catch { return null }
+  }
   const neutralized = (el: Element) => !stopped && nat.has.call(el, AUTO)
 
   const trackerFor = (raw: string): Tracker | null => {
@@ -148,11 +158,12 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     report(f, t)
   }
 
-  /** A source being set by code on an element from the patched factories; true when it was held back. */
-  const intercept = (el: Target, raw: string): boolean => {
+  /** A source being set by code on a script or iframe; true when it was held back. */
+  const intercept = (el: Target, value: unknown): boolean => {
     try {
       // a script that never runs (a marked tag the site built itself, or data) is left as written
       if (isScript(el) && !nat.has.call(el, AUTO) && !runnable(el)) return false
+      const raw = String(value)
       const t = blockFor(el, raw)
       if (!t) return false
       if (isScript(el)) {
@@ -178,69 +189,87 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
     } catch { /* never into host code */ }
   }
 
-  const patch = (el: Target) => {
-    const script = isScript(el)
-    const src = script ? scriptSrc : frameSrc
-    if (src) {
-      Object.defineProperty(el, 'src', {
-        configurable: true, enumerable: true,
-        get() {
-          if (!script && neutralized(el) && !nat.has.call(el, 'src')) {
+  // the attribute forms follow the same rules; the type of a neutralized script goes to data-type
+  const lower = (name: unknown): string | null => { try { return String(name).toLowerCase() } catch { return null } }
+  const routed = (el: Target, name: string | null, value: unknown): boolean => {
+    if (name === 'src') return intercept(el, value)
+    if (name === 'type' && isScript(el) && neutralized(el)) {
+      try { setAttr(el, 'data-type', String(value)); return true } catch { return false }
+    }
+    return false
+  }
+  const after = (el: Target, name: string | null) => { if (name === 'type' && isScript(el)) recheck(el) }
+
+  /** [prototype, name, the original descriptor, ours]: what `stop` puts back. */
+  const patched: Array<[object, string, PropertyDescriptor, PropertyDescriptor]> = []
+  const patch = (proto: object | undefined, name: string, ours: PropertyDescriptor) => {
+    const orig = proto && Object.getOwnPropertyDescriptor(proto, name)
+    if (!proto || !orig) return
+    const desc = { ...orig, ...ours }
+    Object.defineProperty(proto, name, desc)
+    patched.push([proto, name, orig, desc])
+  }
+  const method = (fn: (this: Element, ...args: never[]) => unknown): PropertyDescriptor => ({ value: fn })
+  // the native call gets the receiver and the arguments exactly as given, so it fails exactly as it would have
+  const native = (fn: (...args: never[]) => unknown, self: unknown, args: IArguments) => Reflect.apply(fn, self, args)
+
+  try {
+    if (frameSrc) {
+      patch(frameProto, 'src', {
+        get(this: unknown) {
+          const el = target(this)
+          if (el && neutralized(el) && !nat.has.call(el, 'src')) {
             const held = attr(el, 'data-consent-src') ?? ''
             try { return new URL(held, doc.baseURI).href } catch { return held }
           }
-          return src.get!.call(el)
+          return frameSrc.get!.call(this)
         },
-        set(v: unknown) { if (!intercept(el, String(v))) src.set!.call(el, v) },
+        set(this: unknown, v: unknown) { const el = target(this); if (!el || !intercept(el, v)) frameSrc.set!.call(this, v) },
       })
     }
-    if (script && scriptType) {
-      Object.defineProperty(el, 'type', {
-        configurable: true, enumerable: true,
-        get() { return neutralized(el) ? attr(el, 'data-type') ?? '' : scriptType.get!.call(el) },
-        set(v: unknown) {
-          if (neutralized(el)) { setAttr(el, 'data-type', String(v)); return }
-          scriptType.set!.call(el, v)
-          recheck(el as HTMLScriptElement)
+    if (scriptSrc) {
+      patch(scriptProto, 'src', {
+        set(this: unknown, v: unknown) { const el = target(this); if (!el || !intercept(el, v)) scriptSrc.set!.call(this, v) },
+      })
+    }
+    if (scriptType) {
+      patch(scriptProto, 'type', {
+        get(this: unknown) {
+          const el = target(this)
+          return el && neutralized(el) ? attr(el, 'data-type') ?? '' : scriptType.get!.call(this)
+        },
+        set(this: unknown, v: unknown) {
+          const el = target(this)
+          if (el && routed(el, 'type', v)) return
+          scriptType.set!.call(this, v)
+          if (el) after(el, 'type')
         },
       })
     }
-    // the same rules for the attribute forms; the type of a neutralized script goes to data-type
-    const routed = (name: string, value: string): boolean => {
-      if (name === 'src') return intercept(el, value)
-      if (name === 'type' && script && neutralized(el)) { setAttr(el, 'data-type', value); return true }
-      return false
-    }
-    const after = (name: string) => { if (script && name === 'type') recheck(el as HTMLScriptElement) }
-    Object.defineProperty(el, 'setAttribute', {
-      configurable: true, writable: true,
-      value(this: Element, name: string, value: string) {
-        const n = String(name).toLowerCase()
-        if (!routed(n, String(value))) { nat.set.call(this, name, value); after(n) }
-      },
-    })
-    Object.defineProperty(el, 'setAttributeNS', {
-      configurable: true, writable: true,
-      value(this: Element, ns: string | null, name: string, value: string) {
-        const n = String(name).toLowerCase()
-        if (ns || !routed(n, String(value))) { nat.setNS.call(this, ns, name, value); if (!ns) after(n) }
-      },
-    })
-    Object.defineProperty(el, 'removeAttribute', {
-      configurable: true, writable: true,
-      value(this: Element, name: string) {
-        const n = String(name).toLowerCase()
-        if (script && n === 'type' && neutralized(el)) nat.remove.call(this, 'data-type')
-        else { nat.remove.call(this, name); after(n) }
-      },
-    })
-  }
-  const watch = (el: unknown) => {
-    if (stopped || !(el instanceof win.Element)) return
-    try { if (isScript(el) || isFrame(el)) patch(el) } catch { /* left native */ }
-  }
+    patch(E, 'setAttribute', method(function setAttribute(this: Element, name: string, value: string) {
+      const el = target(this)
+      const n = el && arguments.length >= 2 ? lower(name) : null
+      if (el && routed(el, n, value)) return
+      native(nat.set, this, arguments)
+      if (el) after(el, n)
+    }))
+    patch(E, 'setAttributeNS', method(function setAttributeNS(this: Element, ns: string | null, name: string, value: string) {
+      const el = target(this)
+      const n = el && !ns && arguments.length >= 3 ? lower(name) : null
+      if (el && routed(el, n, value)) return
+      native(nat.setNS, this, arguments)
+      if (el) after(el, n)
+    }))
+    patch(E, 'removeAttribute', method(function removeAttribute(this: Element, name: string) {
+      const el = target(this)
+      const n = el && arguments.length >= 1 ? lower(name) : null
+      if (el && n === 'type' && isScript(el) && neutralized(el)) { nat.remove.call(el, 'data-type'); return }
+      native(nat.remove, this, arguments)
+      if (el) after(el, n)
+    }))
+  } catch { /* what could not be patched stays native: the observer still neutralizes */ }
 
-  // elements the parser or markup insertion put in the page
+  // elements the parser or markup insertion put in the page, and tracker sources set through a path no setter covers
   const check = (el: Element) => {
     const raw = attr(el, 'src')
     if (raw === null) return
@@ -255,6 +284,9 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
   }
   const observer = new win.MutationObserver((records) => {
     for (const r of records) {
+      try {
+        if (r.type === 'attributes') { if (r.target.nodeType === 1) check(r.target as Element); continue }
+      } catch { continue }
       r.addedNodes.forEach((n) => {
         if (n.nodeType !== 1) return
         const el = n as Element
@@ -265,33 +297,8 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
       })
     }
   })
-  observer.observe(doc, { childList: true, subtree: true })
+  observer.observe(doc, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] })
 
-  // the factories: wrapped on this document only, the native behaviour kept for everything else
-  const origCreate = doc.createElement
-  const origCreateNS = doc.createElementNS
-  const hadOwn = { create: hasOwn(doc, 'createElement'), createNS: hasOwn(doc, 'createElementNS') }
-  const createElement = function (this: Document, ...args: Parameters<Document['createElement']>) {
-    const el = Reflect.apply(origCreate, this, args)
-    watch(el)
-    return el
-  }
-  const createElementNS = function (this: Document, ...args: unknown[]) {
-    const el = Reflect.apply(origCreateNS, this, args)
-    watch(el)
-    return el
-  }
-  try {
-    Object.defineProperty(doc, 'createElement', { configurable: true, writable: true, value: createElement })
-    Object.defineProperty(doc, 'createElementNS', { configurable: true, writable: true, value: createElementNS })
-  } catch { /* a frozen document: the observer still covers parser-inserted tags */ }
-
-  const restore = (name: 'createElement' | 'createElementNS', ours: unknown, orig: unknown, own: boolean) => {
-    // someone wrapped ours since: leave their wrapper; ours passes through once stopped
-    if (doc[name] !== ours) return
-    if (own) Object.defineProperty(doc, name, { configurable: true, writable: true, value: orig })
-    else delete (doc as unknown as Record<string, unknown>)[name]
-  }
   const restoreMarkup = installMarkupGuard(doc, win, () => stopped, (root) => {
     let held = false
     root.querySelectorAll('iframe[src]').forEach((f) => {
@@ -309,11 +316,12 @@ export function installAutoBlocking(doc: Document, opts: AutoBlockOptions): Auto
       if (stopped) return
       stopped = true
       observer.disconnect()
-      try {
-        restore('createElement', createElement, origCreate, hadOwn.create)
-        restore('createElementNS', createElementNS, origCreateNS, hadOwn.createNS)
-        restoreMarkup()
-      } catch { /* left in place, passing through */ }
+      // only what is still ours: a wrapper someone installed over it stays, and ours passes through once stopped
+      const same = (a: PropertyDescriptor | undefined, b: PropertyDescriptor) => !!a && a.get === b.get && a.set === b.set && a.value === b.value
+      for (const [proto, name, orig, ours] of patched) {
+        try { if (same(Object.getOwnPropertyDescriptor(proto, name), ours)) Object.defineProperty(proto, name, orig) } catch { /* left, passing through */ }
+      }
+      try { restoreMarkup() } catch { /* left in place, passing through */ }
     },
   }
 }

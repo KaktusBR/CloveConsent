@@ -47,6 +47,8 @@ const scriptCases = [
   { name: '(b) createElement with data-consent but a runnable type', path: '/dynamic.html?case=consent-attr', cases: ['consent-attr'] },
   { name: '(c) innerHTML of a container', path: '/dynamic.html?case=innerhtml', cases: ['innerhtml'] },
   { name: '(d) insertAdjacentHTML', path: '/dynamic.html?case=adjacent', cases: ['adjacent'] },
+  // I1: not built with createElement
+  { name: 'an empty script written in the HTML, src set later by property', path: '/lazy.html?case=lazy-script', cases: ['lazy-script'] },
 ]
 
 for (const c of scriptCases) {
@@ -77,6 +79,11 @@ for (const c of scriptCases) {
 const frameCases = [
   { name: '(e) created with createElement and appended later', path: '/dynamic.html?case=iframe', case: 'iframe' },
   { name: '(e) inserted later by innerHTML', path: '/dynamic.html?case=iframe-html', case: 'iframe-html' },
+  // I1: a lazy loader sets the source on an iframe it did not build with createElement
+  { name: 'built by innerHTML, src set later by property', path: '/dynamic.html?case=lazy-markup-prop', case: 'lazy-markup-prop' },
+  { name: 'built by innerHTML, src set later by setAttribute', path: '/dynamic.html?case=lazy-markup-attr', case: 'lazy-markup-attr' },
+  { name: 'written in the HTML, src set later by property', path: '/lazy.html?case=lazy-html-prop', case: 'lazy-html-prop' },
+  { name: 'written in the HTML, src set later by setAttribute', path: '/lazy.html?case=lazy-html-attr', case: 'lazy-html-attr' },
   { name: 'placed in the HTML after the runtime tag', path: '/parsed-iframe.html', case: 'parsed-iframe',
     limit: 'Chromium sends the request of a parser-inserted <iframe src> before any script runs; its load is still stopped (asserted above)' },
 ]

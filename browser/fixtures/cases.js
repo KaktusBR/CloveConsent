@@ -27,6 +27,22 @@
     f.width = '320'
     f.height = '180'
     box.appendChild(f)
+  } else if (c === 'lazy-markup-prop' || c === 'lazy-markup-attr') {
+    // a lazy loader: an iframe built by markup (not createElement), its source set later
+    box.innerHTML = '<iframe title="Lazy" width="320" height="180"></iframe>'
+    var lf = box.firstChild
+    var lu = 'https://tracker.cloveconsent.test/frame.html?case=' + c
+    if (c === 'lazy-markup-prop') lf.src = lu
+    else lf.setAttribute('src', lu)
+  } else if (c === 'lazy-html-prop' || c === 'lazy-html-attr') {
+    // the same on an iframe written in the HTML (lazy.html)
+    var hf = document.getElementById('lazy-frame')
+    var hu = 'https://tracker.cloveconsent.test/frame.html?case=' + c
+    if (c === 'lazy-html-prop') hf.src = hu
+    else hf.setAttribute('src', hu)
+  } else if (c === 'lazy-script') {
+    // an empty script written in the HTML (lazy.html) never ran: given a source, it would load and run
+    document.getElementById('lazy-script').src = url
   } else if (c === 'iframe-html') {
     box.innerHTML = '<iframe src="https://tracker.cloveconsent.test/frame.html?case=iframe-html" width="320" height="180"></iframe>'
   }

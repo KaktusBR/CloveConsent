@@ -12,6 +12,7 @@ const files = {
   '/parsed.html': join(here, 'parsed.html'),
   '/parsed-iframe.html': join(here, 'parsed-iframe.html'),
   '/dynamic.html': join(here, 'dynamic.html'),
+  '/lazy.html': join(here, 'lazy.html'),
   '/cases.js': join(here, 'cases.js'),
   '/done.js': join(here, 'done.js'),
   '/harness.js': join(out, 'harness.js'),
@@ -28,7 +29,7 @@ createServer(async (req, res) => {
   const file = files[url.pathname]
   if (!file) { res.statusCode = 404; res.end(); return }
   let body = await readFile(file, 'utf8')
-  if (url.pathname === '/dynamic.html') body = body.replace('__CASE__', (url.searchParams.get('case') ?? '').replace(/[^a-z-]/g, ''))
+  if (url.pathname === '/dynamic.html' || url.pathname === '/lazy.html') body = body.replace('__CASE__', (url.searchParams.get('case') ?? '').replace(/[^a-z-]/g, ''))
   res.setHeader('Content-Type', types[extname(file)])
   res.setHeader('Cache-Control', 'no-store')
   res.end(body)
