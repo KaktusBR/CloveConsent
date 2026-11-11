@@ -1,9 +1,9 @@
 // Bundles the test harness (Ruling R2) to a classic script the fixture pages load first in <head>, and writes the real site
-// script (buildSiteScript over dist/standalone, built by `npm run test:browser`) for the site fixture.
+// scripts (buildSiteScript over dist/standalone, built by `npm run test:browser`) for the site and blocking fixtures.
 import { build } from 'esbuild'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { siteScript } from './fixtures/site'
+import { blockingSiteScript, siteScript } from './fixtures/site'
 
 export default async function globalSetup(): Promise<void> {
   await build({
@@ -13,4 +13,5 @@ export default async function globalSetup(): Promise<void> {
   })
   await mkdir(new URL('./.out/', import.meta.url), { recursive: true })
   await writeFile(new URL('./.out/site.js', import.meta.url), await siteScript())
+  await writeFile(new URL('./.out/blocking.js', import.meta.url), await blockingSiteScript())
 }

@@ -45,13 +45,22 @@ export function mountPlaceholder(target: HTMLElement, html: string, size: Placeh
 
 const ATTR_LENGTH = /^\d+(\.\d+)?%?$/
 
+/**
+ * One side of the size: a percentage attribute as written (it follows its container), else the rendered box (a pixel attribute
+ * sizes the content box only, so borders and padding would be lost), else a pixel attribute (an element not laid out).
+ */
 function side(el: HTMLElement, attr: 'width' | 'height', rendered: number): string | null {
   const a = el.getAttribute(attr)?.trim() ?? ''
-  if (ATTR_LENGTH.test(a) && parseFloat(a) > 0) return a.endsWith('%') ? a : `${a}px`
-  return rendered > 0 ? `${rendered}px` : null
+  const usable = ATTR_LENGTH.test(a) && parseFloat(a) > 0
+  if (usable && a.endsWith('%')) return a
+  if (rendered > 0) return `${rendered}px`
+  return usable ? `${a}px` : null
 }
 
-/** The size a blocked element should keep: its width/height attributes, else its rendered box. Null when it has none (0 by 0). */
+/**
+ * The size a blocked element should keep: its rendered box (the placeholder is border-box), with percentage width/height
+ * attributes kept as written; its width/height attributes when it is not laid out. Null when it has none (0 by 0).
+ */
 export function measure(el: HTMLElement): PlaceholderSize | null {
   const box = el.getBoundingClientRect()
   const width = side(el, 'width', box.width)

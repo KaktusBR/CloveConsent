@@ -10,6 +10,8 @@ npm ci --ignore-scripts
 
 Tags carry the built `dist/`; `main` does not. Install from a tag, never from `main`.
 
+Astro sites use the components below. Any other website uses one script tag: see "Any website: one script tag".
+
 ## Minimal Astro example
 
 `src/consent.config.ts`:
@@ -157,6 +159,105 @@ else document.addEventListener('DOMContentLoaded', wire, { once: true })
 Do **not** subscribe to `ready` (or `config.hooks.onReady`) to write a server-side record: it fires on every page load with a stored decision. Use `decision`.
 
 Astro view transitions: the settings panels and the theme are re-bound on `astro:page-load`. The banner script itself may not re-run on client-side navigations (not verified here); test your setup if you use them.
+
+## Any website: one script tag
+
+Outside Astro, a site runs on one script: the standalone runtime (banner, settings panel, placeholders, marked tags and auto-blocking, with its styles inlined) followed by that site's configuration. Nothing else is installed on the site.
+
+### Install
+
+Put the script **first in `<head>`**, as a classic script, without `defer` or `async`:
+
+```html
+<head>
+  <script src="/consent.js"></script>
+  <meta charset="utf-8">
+  ...
+</head>
+```
+
+It has to run before the rest of the page is parsed: it blocks only what comes after it. A tag above it is out of its reach.
+
+### Building the script: `buildSiteScript`
+
+`buildSiteScript` (Node only) takes the site's configuration from `defineConsent` and returns the script text: the runtime, then one call that boots it with the site key, the default locale and one public configuration per enabled locale (hooks are functions and are not included).
+
+```ts
+import { writeFile } from 'node:fs/promises'
+import { defineConsent } from 'cloveconsent'
+import { googleAnalytics, openStreetMap, youtube } from 'cloveconsent/catalog'
+import { buildSiteScript, readRuntime } from 'cloveconsent/site-script'
+
+const config = defineConsent({
+  locales: ['en', 'de'],
+  defaultLocale: 'en',
+  revision: 1,
+  services: [youtube(), openStreetMap(), googleAnalytics({ measurementId: 'G-XXXXXXXXXX' })],
+})
+
+// self-hosted: write it next to your pages and serve it as /consent.js
+await writeFile('public/consent.js', await buildSiteScript({ site: 'mysite', config }))
+```
+
+- `site` is the site key. It is sent with consent records and unconfigured-tracker reports.
+- `reportUrl` (optional, for a hosted service): where reports of trackers no configured service covers are sent, one per tracker and page view, with `sendBeacon`. A report carries the site key, the tracker's service id, the page path (no query, no hash) and the time; nothing about the visitor.
+- Hosted, for many sites: read the runtime once with `readRuntime()` and pass it to every call, `buildSiteScript({ site, config, reportUrl }, { runtime })`. When `cloveconsent/site-script` is bundled into an app, give `readRuntime` the path of `dist/standalone/cloveconsent.js`, because the default path is not found there.
+
+The script text is safe to serve as is: the configuration is embedded as JSON that cannot close the script element. Size: a site with 6 services in 2 languages is at most 46 KB gzipped (a test guards this; it is a growth limit, not a target).
+
+### Marked tags
+
+Mark every tracker written in your HTML. A marked tag stays inert until its service is allowed. The service id is the catalog entry's (`youtube`, `google-analytics`, `meta-pixel`, ...), and a `src` must be https on one of that service's `origins`, otherwise it is never activated.
+
+Scripts: `type="text/plain"` and `data-consent`. Activated, the script is recreated with the same attributes except the marking (`data-type`, when present, becomes its `type`, for example `data-type="module"`). Inline marked scripts keep their text. Marked scripts run in document order, each external one waiting for the one before it unless it has `async`.
+
+```html
+<script type="text/plain" data-consent="google-analytics" async
+  src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+```
+
+Iframes: `data-consent`, and the source in `data-consent-src` instead of `src`. While blocked, the iframe is replaced by a placeholder.
+
+```html
+<iframe data-consent="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/VIDEO_ID"
+  width="560" height="315" title="Video" frameborder="0"></iframe>
+```
+
+Widgets (a script that renders into an element of yours): an empty container with `data-consent-placeholder`, and the widget's loader as a marked script after it.
+
+```html
+<div data-consent-placeholder="widget-id"></div>
+<script type="text/plain" data-consent="widget-id" src="https://widget.example.com/loader.js"></script>
+```
+
+Leave the container empty: while the service is blocked, its contents are replaced by the placeholder. Once allowed, the placeholder is removed and the container is empty again before the widget's script runs.
+
+A marked tag that names a service id the configuration does not have stays blocked and gets no placeholder. It is reported once per element to the `onUnknown` option of `bindMarked` (without one, as a console warning in development). The one-script runtime passes no `onUnknown` and is not a development build, so there it is silent: check your ids.
+
+The settings panel is `<div data-cloveconsent-settings></div>` (the same manager as `ConsentSettings`, see "Consent manager"). Any element with `data-consent-open` reopens the consent dialog.
+
+### Placeholders
+
+A blocked iframe or widget container shows a placeholder: what is blocked, its category, an "Allow" button for that service, a link to the consent settings, and, for iframe services only (services whose entry loads in an iframe, such as `youtube`), a "Load once" button. "Allow" stores consent for that service and loads it in place, without a reload. "Load once" loads the iframe for this page view only and stores nothing; it is not offered for scripts, which need stored consent because their effects cannot be undone.
+
+The placeholder keeps the size of the element it replaces: the element's rendered box, with percentage `width`/`height` attributes kept as percentages. An element with no size (an empty widget container has no height) gets the minimum size, 16rem by 9rem, as a minimum: the placeholder grows with its text. Withdrawing consent puts the placeholders back; scripts that already ran stay in the page until it is reloaded (see "Withdrawal, one-time allowances and leftovers").
+
+### Auto-blocking and its limits
+
+Marked tags are the way to block. Auto-blocking is a safety net for tags you did not mark: it holds a `<script>` or `<iframe>` whose host is a known tracker (one of a configured service's `origins`, or a host on the package's list of known trackers) when it is added after the snippet, by the HTML parser or by other scripts (`createElement`, `innerHTML`, `insertAdjacentHTML`). A held tag becomes a marked tag and is activated with its service's consent.
+
+- **Tags above the snippet** are out of reach. Keep the script first in `<head>`.
+- **Unmarked tags written in the HTML**: the browser's preload scanner requests a `<script src>` or `<iframe src>` from the HTML before any script runs. Auto-blocking stops the script from executing and the iframe from loading, but cannot stop that first request, which already reaches the tracker's server. Trackers written in the HTML must be marked tags.
+- **Trackers no configured service covers** (a known tracker host that is not in the `origins` of any configured service, for example an embed from `www.youtube.com` when only `youtube()` with `www.youtube-nocookie.com` is configured) always stay blocked, whatever the visitor allows, and are reported to `reportUrl` when one is set.
+- Only scripts and iframes are held. Images, `fetch` and the requests a script makes once it runs are not.
+
+### Consent records, cookie domain and languages
+
+These are `defineConsent` options and work the same with the components.
+
+- `records: { url }`: the browser posts a consent record (with the site key) for each decision the visitor makes, in the format of "Optional consent logging". The URL must be https, or a path on the page's own origin (plain http only between localhost addresses).
+- `cookieDomain`: shares the consent cookie across subdomains, for example `example.com` for `www.example.com` and `shop.example.com`. It is used only on that host and its subdomains; elsewhere it is ignored (a development warning). Do not use a public suffix such as `co.uk` or `github.io`: the browser drops the cookie, so no decision is kept and the banner shows on every page.
+- Language: the first of these that matches an enabled locale: the page's `<html lang>`, then the visitor's browser languages in order, then `defaultLocale`. A tag matches exactly, then by its shorter prefixes, so a visitor's `de-AT` picks an enabled `de`. A prefix never matches a longer tag: a bare `pt` does not pick an enabled `pt-BR` (it falls through to the next language, then to `defaultLocale`).
 
 ## Consent manager
 

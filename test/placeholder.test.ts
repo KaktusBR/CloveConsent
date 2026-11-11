@@ -84,6 +84,18 @@ describe('measure', () => {
     el.getBoundingClientRect = () => rect(400, 200)
     expect(measure(el)).toEqual({ width: '400px', height: '200px' })
   })
+  test('a rendered element keeps its rendered size, borders included, over pixel attributes', () => {
+    const el = document.createElement('iframe')
+    el.setAttribute('width', '425'); el.setAttribute('height', '350')
+    el.getBoundingClientRect = () => rect(427, 352)
+    expect(measure(el)).toEqual({ width: '427px', height: '352px' })
+  })
+  test('a percentage attribute stays a percentage when rendered', () => {
+    const el = document.createElement('iframe')
+    el.setAttribute('width', '100%'); el.setAttribute('height', '315')
+    el.getBoundingClientRect = () => rect(800, 317)
+    expect(measure(el)).toEqual({ width: '100%', height: '317px' })
+  })
   test('returns null for 0x0', () => {
     expect(measure(document.createElement('div'))).toBeNull()
   })

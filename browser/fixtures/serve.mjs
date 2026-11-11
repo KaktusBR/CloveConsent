@@ -1,4 +1,4 @@
-// Static server for the browser fixtures: the pages, the site's scripts, the harness bundle and the site script built in globalSetup.
+// Static server for the browser fixtures: the pages, the site's scripts, the harness bundle and the site scripts built in globalSetup.
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -17,6 +17,9 @@ const files = {
   '/harness.js': join(out, 'harness.js'),
   '/site.html': join(here, 'site.html'),
   '/site.js': join(out, 'site.js'),
+  '/blocking.html': join(here, 'blocking.html'),
+  '/blocking.js': join(out, 'blocking.js'),
+  '/blocking-inserted.js': join(here, 'blocking-inserted.js'),
 }
 
 createServer(async (req, res) => {
