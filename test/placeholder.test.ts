@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import { defineConsent } from '../src/config'
 import { buildView } from '../src/view'
 import { googleAnalytics, youtube } from '../src/catalog'
-import { measure, mountPlaceholder, renderPlaceholder } from '../src/placeholder'
+import { measure, mountPlaceholder, renderPlaceholder, renderUnavailable } from '../src/placeholder'
 import sk from '../src/locales/sk'
 
 const config = defineConsent({ locales: ['sk', 'en'], defaultLocale: 'en', packs: [sk], revision: 1, services: [youtube(), googleAnalytics({ measurementId: 'G-ABCDEF1234' })] })
@@ -64,6 +64,27 @@ describe('renderPlaceholder', () => {
   })
   test('throws for a service that is not in the view', () => {
     expect(() => renderPlaceholder(en, 'nope')).toThrow(/nope/)
+  })
+})
+
+describe('renderUnavailable', () => {
+  test('the "not available on this site" state: its text and the settings link, no Allow or Load once', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderUnavailable(en, 'vimeo')
+    const ph = host.querySelector('.consent-placeholder')!
+    expect(host.children).toHaveLength(1)
+    expect(ph.getAttribute('data-consent-placeholder-for')).toBe('vimeo')
+    expect(ph.hasAttribute('data-consent-unavailable')).toBe(true)
+    expect(ph.querySelector('.consent-placeholder__text')!.textContent).toBe(en.m.embedUnavailable)
+    expect(ph.querySelectorAll('[data-consent-action]')).toHaveLength(0)
+    expect(ph.querySelector('[data-consent-open]')!.textContent).toBe(en.m.reopen)
+  })
+  test('works for an id the view does not have, escaped, in the view language', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderUnavailable(buildView(config, 'sk'), 'a"b<i>')
+    expect(host.querySelector('i')).toBeNull()
+    expect(host.firstElementChild!.getAttribute('data-consent-placeholder-for')).toBe('a"b<i>')
+    expect(host.textContent).toContain(sk.messages.embedUnavailable)
   })
 })
 

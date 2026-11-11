@@ -33,6 +33,18 @@ export function renderPlaceholder(view: View, serviceId: string, label?: string)
     + `</div>`
 }
 
+/**
+ * Markup for a blocked visual element that can never load on this site: a service id the configuration does not have, a tracker
+ * no configured service covers, or a source outside its service's origins. Nothing to allow, so no "Allow" or "Load once"; the
+ * settings link stays. Works for any id, also one the view does not have.
+ */
+export function renderUnavailable(view: View, serviceId: string): string {
+  return `<div class="consent-placeholder" data-consent-placeholder-for="${escapeHtml(serviceId)}" data-consent-unavailable>`
+    + `<p class="consent-placeholder__text">${escapeHtml(view.m.embedUnavailable)}</p>`
+    + `<button type="button" class="consent-btn consent-btn--link" data-consent-open>${escapeHtml(view.m.reopen)}</button>`
+    + `</div>`
+}
+
 /** Replaces `target` with the placeholder built from `html`. A known size is kept; otherwise the minimum-size class applies. */
 export function mountPlaceholder(target: HTMLElement, html: string, size: PlaceholderSize | null): HTMLElement {
   const tpl = target.ownerDocument.createElement('template')

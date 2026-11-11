@@ -1,12 +1,15 @@
 import type { Consent } from './client'
 import { isDev } from './dev'
 import { hostAllowed } from './gating'
-import { bindPlaceholderActions, measure, mountPlaceholder, renderPlaceholder } from './placeholder'
+import { bindPlaceholderActions, measure, mountPlaceholder, renderPlaceholder, renderUnavailable } from './placeholder'
 import type { ServiceEntry } from './schema'
 import { buildView, type View } from './view'
 
 export interface MarkedOptions {
-  /** A marked element names a service the configuration does not have. It stays blocked; reported once per element. */
+  /**
+   * A marked element names a service the configuration does not have. It stays blocked (an iframe or widget container shows the
+   * "not available on this site" placeholder); reported once per element.
+   */
   onUnknown?(serviceId: string, el: Element): void
 }
 
@@ -120,27 +123,24 @@ function syncScripts(consent: Consent, doc: Document, opts: MarkedOptions): void
 function syncContainers(consent: Consent, doc: Document, view: () => View, opts: MarkedOptions): void {
   doc.querySelectorAll<HTMLElement>('[data-consent-placeholder]').forEach((box) => {
     const entry = serviceOf(consent, box, 'data-consent-placeholder', opts)
-    if (!entry) return
     const ph = containerPlaceholders.get(box)
-    if (consent.isAllowed(entry.id)) {
+    if (entry && consent.isAllowed(entry.id)) {
       // empty, so the widget's script renders into it
       if (ph) { ph.remove(); containerPlaceholders.delete(box) }
     } else if (!ph || !box.contains(ph)) {
       const size = measure(box)
       const slot = doc.createElement('div')
       box.replaceChildren(slot)
-      containerPlaceholders.set(box, mountPlaceholder(slot, renderPlaceholder(view(), entry.id), size))
+      const html = entry ? renderPlaceholder(view(), entry.id) : renderUnavailable(view(), box.getAttribute('data-consent-placeholder') ?? '')
+      containerPlaceholders.set(box, mountPlaceholder(slot, html, size))
     }
   })
 }
 
 function syncFrames(consent: Consent, doc: Document, view: () => View, opts: MarkedOptions): void {
   const loadable = (frame: HTMLIFrameElement, entry: ServiceEntry): string | null => {
-    if (!consent.isAllowed(entry.id)) return null
     const src = frame.getAttribute('data-consent-src') ?? ''
-    if (sourceAllowed(entry, src)) return src
-    warnOnce(frame, `marked iframe for "${entry.id}" not activated: ${src} is not one of its origins`)
-    return null
+    return consent.isAllowed(entry.id) && sourceAllowed(entry, src) ? src : null
   }
   // blocked iframes waiting behind a placeholder
   doc.querySelectorAll('[data-consent-placeholder-for]').forEach((ph) => {
@@ -157,9 +157,15 @@ function syncFrames(consent: Consent, doc: Document, view: () => View, opts: Mar
   // marked iframes in the page: load the allowed ones, put a placeholder in place of the others
   doc.querySelectorAll<HTMLIFrameElement>('iframe[data-consent]').forEach((frame) => {
     const entry = serviceOf(consent, frame, 'data-consent', opts)
-    if (!entry) return
-    const src = loadable(frame, entry)
-    if (src !== null) {
+    const src = frame.getAttribute('data-consent-src') ?? ''
+    // one that can never load (unknown id, or a source outside the service's origins): never blank space, nothing to allow
+    if (!entry || !sourceAllowed(entry, src)) {
+      if (entry) warnOnce(frame, `marked iframe for "${entry.id}" not activated: ${src} is not one of its origins`)
+      mountPlaceholder(frame, renderUnavailable(view(), frame.getAttribute('data-consent') ?? ''), measure(frame))
+      frame.removeAttribute('src')
+      return
+    }
+    if (consent.isAllowed(entry.id)) {
       if (frame.getAttribute('src') !== src) frame.setAttribute('src', src)
       return
     }

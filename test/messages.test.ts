@@ -39,6 +39,7 @@ test('consent manager texts exist in English with the exact wording', () => {
 test('placeholder texts name the service and the category', () => {
   expect(en.embedBlocked).toBe('Your cookie choice turned off {service}.')
   expect(en.embedHint).toBe('Turn on {category} cookies to see it.')
+  expect(en.embedUnavailable).toBe('This content is not available on this site.')
 })
 test('embedAccept is gone, replaced by embedAllow', () => {
   expect(MESSAGE_KEYS as readonly string[]).not.toContain('embedAccept')

@@ -124,9 +124,8 @@ function bootIn(bundle: StandaloneBundle, doc: Document): Consent | null {
         if (!configured) {
           heldUnconfigured.add(el)
           if (c) report('unconfigured', id)
-          return
         }
-        // a neutralized iframe gets its placeholder once it is in the page
+        // a neutralized iframe gets its placeholder once it is in the page (the "not available" one when unconfigured)
         if (c && markedBound && el.localName === 'iframe') queueMicrotask(() => syncMarked(c, doc, { onUnknown }))
       },
     })

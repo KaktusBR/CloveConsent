@@ -28,6 +28,7 @@ const reportsOf = (kind: string) => beacon.mock.calls.map(([, data]) => JSON.par
 // what the boot itself reported and warned (mock calls do not outlive the hook that made them)
 let bootUnknownReports: Record<string, string>[] = []
 let bootWarnings: string[] = []
+let unknownFrame: Element
 
 beforeAll(async () => {
   clearCookie()
@@ -47,6 +48,7 @@ beforeAll(async () => {
     + '<iframe data-consent="vimeo" data-consent-src="https://player.vimeo.com/video/1" id="unknown-frame"></iframe>'
     + '<script type="text/plain" data-consent="chat-widget" src="https://chat.example/a.js" id="unknown-a"></script>'
     + '<script type="text/plain" data-consent="chat-widget" src="https://chat.example/b.js"></script>'
+  unknownFrame = document.getElementById('unknown-frame')!
   const warn = vi.spyOn(console, 'warn')
   consent = boot(bundle({ en: toPublicJson(config, 'en'), sk: toPublicJson(config, 'sk') }))
   await flush()
@@ -126,10 +128,27 @@ describe('boot', () => {
     expect(warnings).toHaveLength(2)
     expect(warnings.some((m) => m.includes('"chat-widget"'))).toBe(true)
     expect(warnings.some((m) => m.includes('"vimeo"'))).toBe(true)
-    // blocked, and no placeholder for a service the configuration cannot describe
-    expect(document.getElementById('unknown-frame')!.hasAttribute('src')).toBe(false)
+    // blocked, and in its place the "not available on this site" state (never blank space), with nothing to allow
+    expect(unknownFrame.hasAttribute('src')).toBe(false)
+    expect(unknownFrame.isConnected).toBe(false)
     expect(document.getElementById('unknown-a')!.getAttribute('type')).toBe('text/plain')
-    expect(document.querySelector('[data-consent-placeholder-for="vimeo"]')).toBeNull()
+    const ph = document.querySelector('[data-consent-placeholder-for="vimeo"]')!
+    expect(ph.hasAttribute('data-consent-unavailable')).toBe(true)
+    expect(ph.querySelectorAll('[data-consent-action]')).toHaveLength(0)
+  })
+
+  test('a tracker iframe held as unconfigured, inserted after boot, shows the unavailable placeholder', async () => {
+    // a host no configured service covers, under a configured id (youtube is configured with www.youtube-nocookie.com only)
+    const f = document.createElement('iframe')
+    f.src = 'https://www.youtube.com/embed/abc'
+    f.width = '320'; f.height = '180'
+    document.body.append(f)
+    await flush()
+    expect(f.isConnected).toBe(false)
+    const ph = document.querySelector<HTMLElement>('[data-consent-unavailable][data-consent-placeholder-for="youtube"]')!
+    expect(ph.style.inlineSize).toBe('320px')
+    expect(ph.querySelectorAll('[data-consent-action]')).toHaveLength(0)
+    expect(reportsOf('unknown')).toEqual([])
   })
 
   test('a decision in the panel posts one record to records.url with the site key, the consent reference and kind', async () => {

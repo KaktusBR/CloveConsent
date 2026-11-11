@@ -37,6 +37,7 @@ const pack: LocalePack = {
     "embedHint": "Zapnite cookies kategórie {category}, aby ste to videli.",
     "embedLoadOnce": "Načítať raz",
     "embedAllow": "Povoliť {service}",
+    "embedUnavailable": "Tento obsah nie je na tejto stránke dostupný.",
     "clearWarning": "Niektoré súbory od tretích strán nemožno z tejto stránky odstrániť. Zmažte ich v nastaveniach prehliadača.",
     "receiptTitle": "Váš doklad o súhlase",
     "receiptNone": "Zatiaľ nie je uložená žiadna voľba.",

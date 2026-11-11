@@ -37,6 +37,7 @@ const pack: LocalePack = {
     "embedHint": "Aktivieren Sie die Cookies der Kategorie {category}, um es anzuzeigen.",
     "embedLoadOnce": "Einmal laden",
     "embedAllow": "{service} zulassen",
+    "embedUnavailable": "Dieser Inhalt ist auf dieser Website nicht verfügbar.",
     "clearWarning": "Einige Dateien von Drittanbietern können von dieser Seite aus nicht entfernt werden. Löschen Sie sie in den Browsereinstellungen.",
     "receiptTitle": "Ihre Einwilligungsreferenz",
     "receiptNone": "Noch keine Auswahl gespeichert.",

@@ -98,9 +98,17 @@ test('before any decision: nothing tracks, nothing is stored, and every blocked 
     { kind: 'unconfigured', site: 'blocking-site', service: 'hotjar', path: '/blocking.html', timestamp: expect.any(String) },
     { kind: 'unknown', site: 'blocking-site', service: 'vimeo', path: '/blocking.html', timestamp: expect.any(String) },
   ])
-  // the unknown service has no placeholder: there is nothing to describe or allow
-  await expect(page.locator('iframe[data-consent="vimeo"]')).toHaveCount(1)
-  await expect(placeholder(page, 'vimeo')).toHaveCount(0)
+  // the unknown service can never load: never blank space, the "not available on this site" state at the iframe's size, with
+  // the settings link and nothing to allow
+  await expect(page.locator('iframe[data-consent="vimeo"]')).toHaveCount(0)
+  const unavailable = placeholder(page, 'vimeo')
+  await expect(unavailable).toBeVisible()
+  await expect(unavailable).toHaveAttribute('data-consent-unavailable', '')
+  await expect(unavailable.locator('[data-consent-action]')).toHaveCount(0)
+  await expect(unavailable.locator('[data-consent-open]')).toBeVisible()
+  const size = (await unavailable.boundingBox())!
+  expect(Math.abs(size.width - 320)).toBeLessThanOrEqual(1)
+  expect(Math.abs(size.height - 180)).toBeLessThanOrEqual(1)
   expect(errors).toEqual([])
 })
 
@@ -149,7 +157,8 @@ test('Accept all runs every configured tracker, the unmarked tag included, and n
   await expect(page.locator(`iframe[src="https://${MAPS}/embed.html?case=map"]`)).toHaveCount(1)
   await expect(page.locator('[data-consent-placeholder="widget"] .widget-rendered')).toHaveCount(1)
   // a marked iframe naming an unknown service id is never loaded
-  expect(await page.locator('iframe[data-consent="vimeo"]').getAttribute('src')).toBeNull()
+  await expect(page.locator('iframe[data-consent="vimeo"]')).toHaveCount(0)
+  await expect(placeholder(page, 'vimeo')).toHaveAttribute('data-consent-unavailable', '')
   // R8: a host no configured service covers stays blocked whatever is allowed
   expect(hostsOf(requests)).toEqual([GTM, META, MAPS, WIDGET, YOUTUBE].sort())
   expect(await cookieNames(page)).toEqual([CONSENT_COOKIE, 'fake_connect', 'fake_widget', 'fake_www'].sort())

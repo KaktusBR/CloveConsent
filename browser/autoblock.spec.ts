@@ -127,4 +127,8 @@ test('a known host outside every configured origin stays blocked after Accept al
   await page.waitForTimeout(300)
   expect(outside).toEqual([])
   await expect(page.locator('iframe[src^="https://www.youtube.com"]')).toHaveCount(0)
+  // never blank space: both show the "not available on this site" state, with nothing to allow
+  const unavailable = page.locator('[data-consent-unavailable][data-consent-placeholder-for="youtube"]')
+  await expect(unavailable).toHaveCount(2)
+  await expect(unavailable.locator('[data-consent-action]')).toHaveCount(0)
 })

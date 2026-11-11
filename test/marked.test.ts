@@ -54,6 +54,15 @@ const runnable = (body: string, files: Record<string, string | number> = {}) => 
   return { doc: win.document, ran: () => (win as unknown as Record<string, unknown>).__marked }
 }
 let unbind: (() => void) | undefined
+/** The "not available on this site" state: its text and the settings link, no button that would allow anything. */
+const expectUnavailable = (ph: HTMLElement, size: { width: string; height: string } | null) => {
+  expect(ph.hasAttribute('data-consent-unavailable')).toBe(true)
+  expect(ph.querySelector('.consent-placeholder__text')!.textContent).toBe('This content is not available on this site.')
+  expect(ph.querySelectorAll('[data-consent-action]')).toHaveLength(0)
+  expect(ph.querySelector('[data-consent-open]')).not.toBeNull()
+  if (size) { expect(ph.style.inlineSize).toBe(size.width); expect(ph.style.blockSize).toBe(size.height) }
+  else expect(ph.classList.contains('consent-placeholder--min')).toBe(true)
+}
 beforeEach(() => { document.head.innerHTML = ''; document.body.innerHTML = '' })
 afterEach(() => { unbind?.(); unbind = undefined; vi.restoreAllMocks() })
 
@@ -200,6 +209,15 @@ describe('marked iframes', () => {
     expect(document.querySelector('iframe')).toBeNull()
     expect(document.querySelector('[data-consent-placeholder-for="youtube"]')).not.toBeNull()
   })
+  // I2: a source that can never load shows the "not available on this site" state: no Allow or Load once that would do nothing
+  test.each([['allowed', cookie(['necessary', 'media'])], ['not allowed', null]])(
+    'a data-consent-src outside the service origins (%s) shows the unavailable placeholder, at its size', (_name, raw) => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      document.body.innerHTML = '<iframe data-consent="youtube" data-consent-src="https://www.youtube.com/embed/abc" width="560" height="315"></iframe>'
+      const { c } = start(raw); unbind = bindMarked(c, document)
+      expect(document.querySelector('iframe')).toBeNull()
+      expectUnavailable(document.querySelector<HTMLElement>('[data-consent-placeholder-for="youtube"]')!, { width: '560px', height: '315px' })
+    })
   test('withdrawing turns an activated iframe back into a placeholder without a reload (Review Focus 4)', () => {
     document.body.innerHTML = frame
     const { d, c } = start(cookie(['necessary', 'media'])); unbind = bindMarked(c, document)
@@ -212,12 +230,18 @@ describe('marked iframes', () => {
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/abc')
   })
   test('an unknown service iframe stays blocked and is reported', () => {
-    document.body.innerHTML = '<iframe data-consent="nope" data-consent-src="https://www.youtube-nocookie.com/embed/abc"></iframe>'
-    const onUnknown = vi.fn()
-    const { c } = start(cookie(['necessary', 'media'])); unbind = bindMarked(c, document, { onUnknown })
+    document.body.innerHTML = '<iframe data-consent="nope" data-consent-src="https://www.youtube-nocookie.com/embed/abc" width="320" height="180"></iframe>'
     const f = document.querySelector('iframe')!
+    const onUnknown = vi.fn()
+    const { c, d } = start(cookie(['necessary', 'media'])); unbind = bindMarked(c, document, { onUnknown })
     expect(f.hasAttribute('src')).toBe(false)
     expect(onUnknown).toHaveBeenCalledWith('nope', f)
+    // never blank space: the "not available" state, sized like the iframe, and it stays through later decisions
+    expect(f.isConnected).toBe(false)
+    expectUnavailable(document.querySelector<HTMLElement>('[data-consent-placeholder-for="nope"]')!, { width: '320px', height: '180px' })
+    d.set(cookie(['necessary'])); d.hooks.onChange(['media'], [])
+    expect(document.querySelectorAll('[data-consent-unavailable]')).toHaveLength(1)
+    expect(onUnknown).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -246,6 +270,16 @@ describe('widget containers', () => {
     expect(box.querySelector('[data-consent-placeholder-for="chat"]')).not.toBeNull()
     expect(box.textContent).not.toContain('widget')
   })
+})
+
+test('a widget container naming an unknown service shows the unavailable placeholder', () => {
+  document.body.innerHTML = '<div id="box" data-consent-placeholder="nope"><p>old</p></div>'
+  const { c } = start(); unbind = bindMarked(c, document, { onUnknown: () => {} })
+  const box = document.getElementById('box')!
+  expectUnavailable(box.querySelector<HTMLElement>('[data-consent-placeholder-for="nope"]')!, null)
+  expect(box.children).toHaveLength(1)
+  syncMarked(c, document, { onUnknown: () => {} })
+  expect(box.querySelectorAll('[data-consent-unavailable]')).toHaveLength(1)
 })
 
 describe('placeholder buttons', () => {

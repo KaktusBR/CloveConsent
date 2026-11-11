@@ -232,7 +232,7 @@ Widgets (a script that renders into an element of yours): an empty container wit
 
 Leave the container empty: while the service is blocked, its contents are replaced by the placeholder. Once allowed, the placeholder is removed and the container is empty again before the widget's script runs.
 
-A marked tag that names a service id the configuration does not have stays blocked and gets no placeholder. The one-script runtime logs one console warning per unknown id (in every build) and reports it to `reportUrl` with `kind: "unknown"`. When you call `bindMarked` yourself, it goes to its `onUnknown` option, once per element (without one, a console warning in development).
+A marked tag that names a service id the configuration does not have stays blocked; an iframe or widget container shows the "not available on this site" placeholder (see "Placeholders"). The one-script runtime logs one console warning per unknown id (in every build) and reports it to `reportUrl` with `kind: "unknown"`. When you call `bindMarked` yourself, it goes to its `onUnknown` option, once per element (without one, a console warning in development).
 
 With the library instead of the one script (an Astro site, or a bundle of your own), marked tags work through `bindMarked(consent, document, { onUnknown })` from `cloveconsent`: call it once the client exists (for example with `getConsent()` once the banner has booted); it keeps the page in line with every later decision and returns an unbind. `syncMarked(consent, document)` applies the current consent once. Auto-blocking is part of the one-script runtime only: sites that use the Astro components do not get it yet (a planned follow-up), so there every tracker must be a marked tag or a `GatedEmbed`.
 
@@ -241,6 +241,8 @@ The settings panel is `<div data-cloveconsent-settings></div>` (the same manager
 ### Placeholders
 
 A blocked iframe or widget container shows a placeholder: what is blocked, its category, an "Allow" button for that service, a link to the consent settings, and, for iframe services only (services whose entry loads in an iframe, such as `youtube`), a "Load once" button. "Allow" stores consent for that service and loads it in place, without a reload. "Load once" loads the iframe for this page view only and stores nothing; it is not offered for scripts, which need stored consent because their effects cannot be undone.
+
+An element that can never load on this site shows the same box in a "not available on this site" state: its text and the settings link, without "Allow" or "Load once", which would do nothing. That is a marked tag naming a service id the configuration does not have, a source outside its service's `origins` (for example a `www.youtube.com` embed when `youtube()` is configured with `www.youtube-nocookie.com` only), and an iframe auto-blocking holds for a tracker no configured service covers.
 
 The placeholder keeps the size of the element it replaces: the element's laid-out border box (before any CSS transform, which applies to the placeholder too), with percentage `width`/`height` attributes kept as percentages. An element with no size (an empty widget container has no height) gets the minimum size, 16rem by 9rem, as a minimum: the placeholder grows with its text. Withdrawing consent puts the placeholders back; scripts that already ran stay in the page until it is reloaded (see "Withdrawal, one-time allowances and leftovers").
 
