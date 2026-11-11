@@ -10,8 +10,10 @@ const YOUTUBE = 'www.youtube-nocookie.com'
 const MAPS = 'tile.openstreetmap.org'
 const WIDGET = 'widget.cloveconsent.test'
 const HOTJAR = 'static.hotjar.com'
+// the source of a marked iframe naming a service id the configuration does not have
+const VIMEO = 'player.vimeo.com'
 const SCRIPT_HOSTS = [GTM, META, WIDGET, HOTJAR]
-const FRAME_HOSTS = [YOUTUBE, MAPS]
+const FRAME_HOSTS = [YOUTUBE, MAPS, VIMEO]
 const TRACKER_HOSTS = new Set([...SCRIPT_HOSTS, ...FRAME_HOSTS])
 /**
  * The unmarked tracker tag written in the HTML below the snippet. Chromium's preload scanner requests it before any script runs,
@@ -34,7 +36,7 @@ ${url.hostname === WIDGET ? `document.querySelector('[data-consent-placeholder="
 
 interface Opened { requests: string[]; reports: string[]; errors: string[] }
 
-/** Opens the fixture site; returns the live lists of tracker requests, unconfigured-tracker reports and page errors. */
+/** Opens the fixture site; returns the live lists of tracker requests, blocked-tracker reports and page errors. */
 async function open(page: Page): Promise<Opened> {
   const requests: string[] = []
   const reports: string[] = []
@@ -89,10 +91,16 @@ test('before any decision: nothing tracks, nothing is stored, and every blocked 
   // R7: the unmarked tag below the snippet was requested by the preload scanner, but did not run (no __runs above)
   expect(preventable(requests)).toEqual([])
   expect(await cookieNames(page)).toEqual([])
-  // R8: the inserted tracker no configured service covers is reported once, with the site key and no visitor data
-  expect(reports.map((r) => JSON.parse(r) as Record<string, string>)).toEqual([
-    { site: 'blocking-site', service: 'hotjar', path: '/blocking.html', timestamp: expect.any(String) },
+  // R8: the inserted tracker no configured service covers is reported once, and so is the marked iframe naming an unknown
+  // service id; with the site key and no visitor data
+  const sent = reports.map((r) => JSON.parse(r) as Record<string, string>).sort((a, b) => a.kind!.localeCompare(b.kind!))
+  expect(sent).toEqual([
+    { kind: 'unconfigured', site: 'blocking-site', service: 'hotjar', path: '/blocking.html', timestamp: expect.any(String) },
+    { kind: 'unknown', site: 'blocking-site', service: 'vimeo', path: '/blocking.html', timestamp: expect.any(String) },
   ])
+  // the unknown service has no placeholder: there is nothing to describe or allow
+  await expect(page.locator('iframe[data-consent="vimeo"]')).toHaveCount(1)
+  await expect(placeholder(page, 'vimeo')).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
@@ -127,7 +135,7 @@ test('Reject all keeps everything blocked; only the consent cookie is stored', a
   await expectAllBlocked(page)
   expect(preventable(requests)).toEqual([])
   expect(await cookieNames(page)).toEqual([CONSENT_COOKIE])
-  expect(reports).toHaveLength(1)
+  expect(reports).toHaveLength(2)
   expect(errors).toEqual([])
 })
 
@@ -140,6 +148,8 @@ test('Accept all runs every configured tracker, the unmarked tag included, and n
   await expect(page.locator(`iframe[src="https://${YOUTUBE}/embed/abc"]`)).toHaveCount(1)
   await expect(page.locator(`iframe[src="https://${MAPS}/embed.html?case=map"]`)).toHaveCount(1)
   await expect(page.locator('[data-consent-placeholder="widget"] .widget-rendered')).toHaveCount(1)
+  // a marked iframe naming an unknown service id is never loaded
+  expect(await page.locator('iframe[data-consent="vimeo"]').getAttribute('src')).toBeNull()
   // R8: a host no configured service covers stays blocked whatever is allowed
   expect(hostsOf(requests)).toEqual([GTM, META, MAPS, WIDGET, YOUTUBE].sort())
   expect(await cookieNames(page)).toEqual([CONSENT_COOKIE, 'fake_connect', 'fake_widget', 'fake_www'].sort())

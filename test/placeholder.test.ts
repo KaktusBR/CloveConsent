@@ -63,6 +63,11 @@ describe('renderPlaceholder', () => {
 
 describe('measure', () => {
   const rect = (w: number, h: number) => ({ x: 0, y: 0, top: 0, left: 0, right: w, bottom: h, width: w, height: h, toJSON: () => ({}) }) as DOMRect
+  // the laid-out border box, as a browser reports it (jsdom has no layout: 0 by 0)
+  const offset = (el: HTMLElement, w: number, h: number) => {
+    Object.defineProperty(el, 'offsetWidth', { configurable: true, value: w })
+    Object.defineProperty(el, 'offsetHeight', { configurable: true, value: h })
+  }
   test('reads width and height attributes as px', () => {
     const el = document.createElement('iframe')
     el.setAttribute('width', '560'); el.setAttribute('height', '315')
@@ -75,26 +80,33 @@ describe('measure', () => {
   })
   test('falls back to the rendered size', () => {
     const el = document.createElement('div')
-    el.getBoundingClientRect = () => rect(300, 150)
+    offset(el, 300, 150)
     expect(measure(el)).toEqual({ width: '300px', height: '150px' })
   })
   test('falls back per side when only one attribute is usable', () => {
     const el = document.createElement('iframe')
     el.setAttribute('width', 'auto')
-    el.getBoundingClientRect = () => rect(400, 200)
+    offset(el, 400, 200)
     expect(measure(el)).toEqual({ width: '400px', height: '200px' })
   })
   test('a rendered element keeps its rendered size, borders included, over pixel attributes', () => {
     const el = document.createElement('iframe')
     el.setAttribute('width', '425'); el.setAttribute('height', '350')
-    el.getBoundingClientRect = () => rect(427, 352)
+    offset(el, 427, 352)
     expect(measure(el)).toEqual({ width: '427px', height: '352px' })
   })
   test('a percentage attribute stays a percentage when rendered', () => {
     const el = document.createElement('iframe')
     el.setAttribute('width', '100%'); el.setAttribute('height', '315')
-    el.getBoundingClientRect = () => rect(800, 317)
+    offset(el, 800, 317)
     expect(measure(el)).toEqual({ width: '100%', height: '317px' })
+  })
+  test('a transformed element keeps its untransformed size (the transform applies to the placeholder again)', () => {
+    const el = document.createElement('iframe')
+    el.style.transform = 'scale(2)'
+    offset(el, 320, 180)
+    el.getBoundingClientRect = () => rect(640, 360)
+    expect(measure(el)).toEqual({ width: '320px', height: '180px' })
   })
   test('returns null for 0x0', () => {
     expect(measure(document.createElement('div'))).toBeNull()

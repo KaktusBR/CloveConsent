@@ -200,7 +200,7 @@ await writeFile('public/consent.js', await buildSiteScript({ site: 'mysite', con
 ```
 
 - `site` is the site key. It is sent with consent records and unconfigured-tracker reports.
-- `reportUrl` (optional, for a hosted service): where reports of trackers no configured service covers are sent, one per tracker and page view, with `sendBeacon`. A report carries the site key, the tracker's service id, the page path (no query, no hash) and the time; nothing about the visitor.
+- `reportUrl` (optional, for a hosted service): where reports of blocked trackers are sent with `sendBeacon`, one per kind, service id and page view. `kind` is `unconfigured` (a known tracker host no configured service covers) or `unknown` (a marked tag naming a service id the configuration does not have). A report carries the kind, the site key, the service id, the page path (no query, no hash) and the time; nothing about the visitor.
 - Hosted, for many sites: read the runtime once with `readRuntime()` and pass it to every call, `buildSiteScript({ site, config, reportUrl }, { runtime })`. When `cloveconsent/site-script` is bundled into an app, give `readRuntime` the path of `dist/standalone/cloveconsent.js`, because the default path is not found there.
 
 The script text is safe to serve as is: the configuration is embedded as JSON that cannot close the script element. Size: a site with 6 services in 2 languages is at most 46 KB gzipped (a test guards this; it is a growth limit, not a target).
@@ -232,7 +232,7 @@ Widgets (a script that renders into an element of yours): an empty container wit
 
 Leave the container empty: while the service is blocked, its contents are replaced by the placeholder. Once allowed, the placeholder is removed and the container is empty again before the widget's script runs.
 
-A marked tag that names a service id the configuration does not have stays blocked and gets no placeholder. It is reported once per element to the `onUnknown` option of `bindMarked` (without one, as a console warning in development). The one-script runtime passes no `onUnknown` and is not a development build, so there it is silent: check your ids.
+A marked tag that names a service id the configuration does not have stays blocked and gets no placeholder. The one-script runtime logs one console warning per unknown id (in every build) and reports it to `reportUrl` with `kind: "unknown"`. When you call `bindMarked` yourself, it goes to its `onUnknown` option, once per element (without one, a console warning in development).
 
 The settings panel is `<div data-cloveconsent-settings></div>` (the same manager as `ConsentSettings`, see "Consent manager"). Any element with `data-consent-open` reopens the consent dialog.
 
@@ -240,14 +240,14 @@ The settings panel is `<div data-cloveconsent-settings></div>` (the same manager
 
 A blocked iframe or widget container shows a placeholder: what is blocked, its category, an "Allow" button for that service, a link to the consent settings, and, for iframe services only (services whose entry loads in an iframe, such as `youtube`), a "Load once" button. "Allow" stores consent for that service and loads it in place, without a reload. "Load once" loads the iframe for this page view only and stores nothing; it is not offered for scripts, which need stored consent because their effects cannot be undone.
 
-The placeholder keeps the size of the element it replaces: the element's rendered box, with percentage `width`/`height` attributes kept as percentages. An element with no size (an empty widget container has no height) gets the minimum size, 16rem by 9rem, as a minimum: the placeholder grows with its text. Withdrawing consent puts the placeholders back; scripts that already ran stay in the page until it is reloaded (see "Withdrawal, one-time allowances and leftovers").
+The placeholder keeps the size of the element it replaces: the element's laid-out border box (before any CSS transform, which applies to the placeholder too), with percentage `width`/`height` attributes kept as percentages. An element with no size (an empty widget container has no height) gets the minimum size, 16rem by 9rem, as a minimum: the placeholder grows with its text. Withdrawing consent puts the placeholders back; scripts that already ran stay in the page until it is reloaded (see "Withdrawal, one-time allowances and leftovers").
 
 ### Auto-blocking and its limits
 
 Marked tags are the way to block. Auto-blocking is a safety net for tags you did not mark: it holds a `<script>` or `<iframe>` whose host is a known tracker (one of a configured service's `origins`, or a host on the package's list of known trackers) when it is added after the snippet, by the HTML parser or by other scripts (`createElement`, `innerHTML`, `insertAdjacentHTML`). A held tag becomes a marked tag and is activated with its service's consent.
 
 - **Tags above the snippet** are out of reach. Keep the script first in `<head>`.
-- **Unmarked tags written in the HTML**: the browser's preload scanner requests a `<script src>` or `<iframe src>` from the HTML before any script runs. Auto-blocking stops the script from executing and the iframe from loading, but cannot stop that first request, which already reaches the tracker's server. Trackers written in the HTML must be marked tags.
+- **Unmarked tags written in the HTML**: the browser requests a `<script src>` or `<iframe src>` written in the HTML while parsing it (a script's request comes from the preload scanner, before any script runs). Auto-blocking stops the script from executing and the iframe from loading, but cannot stop that first request, which already reaches the tracker's server. Trackers written in the HTML must be marked tags.
 - **Trackers no configured service covers** (a known tracker host that is not in the `origins` of any configured service, for example an embed from `www.youtube.com` when only `youtube()` with `www.youtube-nocookie.com` is configured) always stay blocked, whatever the visitor allows, and are reported to `reportUrl` when one is set.
 - Only scripts and iframes are held. Images, `fetch` and the requests a script makes once it runs are not.
 

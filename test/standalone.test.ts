@@ -24,6 +24,10 @@ const clearCookie = () => { document.cookie = 'cc_cookie=; path=/; expires=Thu, 
 const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => new Response(null, { status: 204 }))
 const beacon = vi.fn((_url: string, _data?: unknown) => true)
 let consent: Consent | null
+const reportsOf = (kind: string) => beacon.mock.calls.map(([, data]) => JSON.parse(String(data))).filter((p) => p.kind === kind)
+// what the boot itself reported and warned (mock calls do not outlive the hook that made them)
+let bootUnknownReports: Record<string, string>[] = []
+let bootWarnings: string[] = []
 
 beforeAll(async () => {
   clearCookie()
@@ -39,8 +43,16 @@ beforeAll(async () => {
   document.documentElement.lang = 'sk'
   document.body.innerHTML = '<div data-cloveconsent-settings id="panel"></div>'
     + '<script type="text/plain" data-consent="google-tag-manager" src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123" id="marked"></script>'
+    // marked tags naming services the configuration does not have: two elements for one id, one for another
+    + '<iframe data-consent="vimeo" data-consent-src="https://player.vimeo.com/video/1" id="unknown-frame"></iframe>'
+    + '<script type="text/plain" data-consent="chat-widget" src="https://chat.example/a.js" id="unknown-a"></script>'
+    + '<script type="text/plain" data-consent="chat-widget" src="https://chat.example/b.js"></script>'
+  const warn = vi.spyOn(console, 'warn')
   consent = boot(bundle({ en: toPublicJson(config, 'en'), sk: toPublicJson(config, 'sk') }))
   await flush()
+  bootUnknownReports = reportsOf('unknown')
+  bootWarnings = warn.mock.calls.map((c) => String(c[0]))
+  warn.mockRestore()
 })
 afterAll(() => {
   CC.reset(false)
@@ -89,17 +101,35 @@ describe('boot', () => {
     markup.innerHTML = '<script src="https://static.hotjar.com/c/again.js"></script>'
     document.body.append(markup)
     await flush()
-    expect(beacon).toHaveBeenCalledTimes(1)
-    const [url, data] = beacon.mock.calls[0]!
-    expect(url).toBe('https://reports.example/unconfigured')
-    const payload = JSON.parse(String(data))
-    expect(Object.keys(payload).sort()).toEqual(['path', 'service', 'site', 'timestamp'])
+    const unconfigured = reportsOf('unconfigured')
+    expect(unconfigured).toHaveLength(1)
+    expect(beacon.mock.calls.every(([url]) => url === 'https://reports.example/unconfigured')).toBe(true)
+    const payload = unconfigured[0]
+    expect(Object.keys(payload).sort()).toEqual(['kind', 'path', 'service', 'site', 'timestamp'])
     expect(payload.site).toBe('site-key-1')
     expect(payload.service).toBe('hotjar')
     expect(payload.path).toBe('/shop/item')
     expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false)
     // and it stays blocked
     document.querySelectorAll('script[src*="hotjar"]').forEach((s) => expect(s.getAttribute('type')).toBe('text/plain'))
+  })
+
+  test('a marked tag naming an unknown service id stays blocked, is reported once per id and warned about once per id', () => {
+    const unknown = bootUnknownReports
+    expect(unknown.map((p) => p.service).sort()).toEqual(['chat-widget', 'vimeo'])
+    for (const p of unknown) {
+      expect(Object.keys(p).sort()).toEqual(['kind', 'path', 'service', 'site', 'timestamp'])
+      expect(p.site).toBe('site-key-1')
+      expect(p.path).toBe('/shop/item')
+    }
+    const warnings = bootWarnings.filter((m) => m.includes('unknown service'))
+    expect(warnings).toHaveLength(2)
+    expect(warnings.some((m) => m.includes('"chat-widget"'))).toBe(true)
+    expect(warnings.some((m) => m.includes('"vimeo"'))).toBe(true)
+    // blocked, and no placeholder for a service the configuration cannot describe
+    expect(document.getElementById('unknown-frame')!.hasAttribute('src')).toBe(false)
+    expect(document.getElementById('unknown-a')!.getAttribute('type')).toBe('text/plain')
+    expect(document.querySelector('[data-consent-placeholder-for="vimeo"]')).toBeNull()
   })
 
   test('a decision in the panel posts one record to records.url with the site key, the consent reference and kind', async () => {
@@ -113,6 +143,9 @@ describe('boot', () => {
     expect(body.consentId).toBe(consent!.getState()!.consentId)
     expect(body.consentId).toBeTruthy()
     expect(body.kind).toBe('first')
+    // the sync after the decision meets the held unconfigured trackers (marked tags naming a catalog id the configuration lacks):
+    // already reported as unconfigured, they are not reported again as unknown
+    expect(reportsOf('unknown')).toEqual([])
   })
 
   test('the accepted marked script is activated; an unconfigured tracker stays blocked, not reported again', async () => {

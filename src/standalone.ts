@@ -17,32 +17,39 @@ export interface StandaloneBundle {
   defaultLocale: string
   /** locale -> `toPublicJson` output */
   configs: Record<string, string>
-  /** Where unconfigured-tracker reports go (hosted CMP only). */
+  /** Where reports of unconfigured trackers and unknown marked ids go (hosted CMP only). */
   reportUrl?: string
 }
+
+/**
+ * What a report is about: `unconfigured`, a known tracker host no configured service covers (auto-blocking); `unknown`, a
+ * marked tag naming a service id the configuration does not have. Either stays blocked.
+ */
+export type ReportKind = 'unconfigured' | 'unknown'
 
 // one boot per document and page view; a failed boot (null) is not retried
 const booted = new WeakMap<Document, Consent | null>()
 
 /**
- * Sends one report per unconfigured tracker service and page view to `url` with `sendBeacon`: the site key, the service id, the
+ * Sends one report per kind, service id and page view to `url` with `sendBeacon`: the kind, the site key, the service id, the
  * page path (no query, no hash) and the time. Nothing about the visitor. Without a usable URL or `sendBeacon`, nothing is sent.
  */
-function unconfiguredReporter(url: string | undefined, site: string, win: Window | null): (serviceId: string) => void {
+function blockedReporter(url: string | undefined, site: string, win: Window | null): (kind: ReportKind, serviceId: string) => void {
   if (!url || !win) return () => {}
   const problem = endpointProblem(url, win.location)
   if (problem) {
-    console.error(`[consent] reportUrl ${problem}; unconfigured trackers are not reported`)
+    console.error(`[consent] reportUrl ${problem}; blocked trackers are not reported`)
     return () => {}
   }
   const sent = new Set<string>()
-  return (serviceId) => {
-    if (sent.has(serviceId)) return
-    sent.add(serviceId)
+  return (kind, serviceId) => {
+    const key = `${kind}:${serviceId}`
+    if (sent.has(key)) return
+    sent.add(key)
     try {
       const nav = win.navigator
       if (typeof nav.sendBeacon !== 'function') return
-      nav.sendBeacon(url, JSON.stringify({ site, service: serviceId, path: win.location.pathname, timestamp: new Date().toISOString() }))
+      nav.sendBeacon(url, JSON.stringify({ kind, site, service: serviceId, path: win.location.pathname, timestamp: new Date().toISOString() }))
     } catch { /* reporting never disturbs the page */ }
   }
 }
@@ -84,7 +91,21 @@ export function boot(bundle: StandaloneBundle, doc: Document = document): Consen
 
 function bootIn(bundle: StandaloneBundle, doc: Document): Consent | null {
   const win = doc.defaultView
-  const report = unconfiguredReporter(bundle.reportUrl, bundle.site, win)
+  const report = blockedReporter(bundle.reportUrl, bundle.site, win)
+  // a marked tag naming a service id the configuration lacks stays blocked: one warning per id for the site owner (in every
+  // build, not only in development), and a report
+  const warnedUnknown = new Set<string>()
+  // trackers auto-blocking held as unconfigured: they become marked tags under a catalog id the configuration lacks, and are
+  // already reported as unconfigured, so marked-tag sync must not report them again as unknown
+  const heldUnconfigured = new WeakSet<Element>()
+  const onUnknown = (serviceId: string, el: Element) => {
+    if (heldUnconfigured.has(el)) return
+    if (!warnedUnknown.has(serviceId)) {
+      warnedUnknown.add(serviceId)
+      console.warn(`[consent] marked element names unknown service "${serviceId}"; it stays blocked`)
+    }
+    report('unknown', serviceId)
+  }
   // set once the configuration has been parsed: until then, and for good when it cannot be, nothing is reported as unconfigured
   // (a configured service's host would look unconfigured)
   let consent: Consent | null = null
@@ -100,9 +121,13 @@ function bootIn(bundle: StandaloneBundle, doc: Document): Consent | null {
         && (consent.acceptedServices().includes(id) || consent.config.services.some((s) => s.id === id && s.category === 'necessary')),
       onBlocked: (id, el, configured) => {
         const c = consent
-        if (!configured) { if (c) report(id); return }
+        if (!configured) {
+          heldUnconfigured.add(el)
+          if (c) report('unconfigured', id)
+          return
+        }
         // a neutralized iframe gets its placeholder once it is in the page
-        if (c && markedBound && el.localName === 'iframe') queueMicrotask(() => syncMarked(c, doc))
+        if (c && markedBound && el.localName === 'iframe') queueMicrotask(() => syncMarked(c, doc, { onUnknown }))
       },
     })
   } catch (err) {
@@ -134,7 +159,7 @@ function bootIn(bundle: StandaloneBundle, doc: Document): Consent | null {
     try {
       c.init()
       bindDom(c, doc)
-      bindMarked(c, doc)
+      bindMarked(c, doc, { onUnknown })
       markedBound = true
     } catch (err) {
       console.error('[consent] runtime not started', err)

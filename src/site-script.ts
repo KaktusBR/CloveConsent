@@ -4,11 +4,11 @@ import type { ConsentConfig } from './schema'
 import type { StandaloneBundle } from './standalone'
 
 export interface SiteScriptInput {
-  /** Site key, sent with consent records and unconfigured-tracker reports. */
+  /** Site key, sent with consent records and blocked-tracker reports. */
   site: string
   /** The site's configuration, from `defineConsent`. */
   config: ConsentConfig
-  /** Where unconfigured-tracker reports go (hosted CMP only). */
+  /** Where reports of unconfigured trackers and unknown marked ids go (hosted CMP only). */
   reportUrl?: string
 }
 

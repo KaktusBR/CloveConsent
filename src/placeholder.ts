@@ -58,13 +58,13 @@ function side(el: HTMLElement, attr: 'width' | 'height', rendered: number): stri
 }
 
 /**
- * The size a blocked element should keep: its rendered box (the placeholder is border-box), with percentage width/height
- * attributes kept as written; its width/height attributes when it is not laid out. Null when it has none (0 by 0).
+ * The size a blocked element should keep: its laid-out border box (the placeholder is border-box), with percentage width/height
+ * attributes kept as written; its width/height attributes when it is not laid out. Null when it has none (0 by 0). The offset
+ * size, not the bounding rectangle: a CSS transform on the element also applies to the placeholder, and must not count twice.
  */
 export function measure(el: HTMLElement): PlaceholderSize | null {
-  const box = el.getBoundingClientRect()
-  const width = side(el, 'width', box.width)
-  const height = side(el, 'height', box.height)
+  const width = side(el, 'width', el.offsetWidth)
+  const height = side(el, 'height', el.offsetHeight)
   return width && height ? { width, height } : null
 }
 

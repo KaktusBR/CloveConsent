@@ -13,6 +13,8 @@
 <p>A page whose only consent code is the site script, first in head.</p>
 <iframe data-consent="youtube" data-consent-src="https://www.youtube-nocookie.com/embed/abc" title="Video" width="320" height="180" frameborder="0"></iframe>
 <iframe data-consent="openstreetmap" data-consent-src="https://tile.openstreetmap.org/embed.html?case=map" title="Map" width="425" height="350" style="border: 1px solid black"></iframe>
+<!-- a typo or a service the configuration lacks: stays blocked and is reported -->
+<iframe data-consent="vimeo" data-consent-src="https://player.vimeo.com/video/1" title="Unknown service" width="320" height="180"></iframe>
 <div data-consent-placeholder="widget"></div>
 <script type="text/plain" data-consent="widget" src="https://widget.cloveconsent.test/widget.js"></script>
 <div data-cloveconsent-settings></div>
