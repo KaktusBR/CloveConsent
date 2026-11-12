@@ -102,4 +102,48 @@ describe('the language switcher endpoint', () => {
     }
     expect(localeSwitchTarget('//evil.test/x', 'en')).toBe('/')
   })
+
+  /** On this site: one leading slash, no backslash or control character, and it resolves to the same host. */
+  function expectOnSite(target: string, label: string) {
+    expect(target, label).toMatch(/^\/(?![/\\])/)
+    expect(target, label).not.toMatch(/\\|%5c|%2f%2f/i)
+    expect([...target].every((c) => c.charCodeAt(0) > 0x1f && c.charCodeAt(0) !== 0x7f), label).toBe(true)
+    expect(new URL(target, 'https://site.test').host, label).toBe('site.test')
+  }
+
+  test('the final target stays on this site, whatever the language prefix or path normalisation does', () => {
+    const tricks = [
+      '/sk//evil.test/x',
+      '/.//evil.test/x',
+      '/a/..//evil.test',
+      '/sk/.//evil.test',
+      '/sk/..//evil.test',
+      '/sk///evil.test',
+      '%2F%2Fevil.test',
+      '/%2F%2Fevil.test',
+      '/sk/%2F%2Fevil.test',
+      '/\\evil.test',
+      '/sk/\\evil.test',
+      '/sk/%5c%5cevil.test',
+      '/%5Cevil.test',
+      '/\t/evil.test',
+      '/sk/\t/evil.test',
+      '/sk/\n/evil.test',
+      '/sk\t//evil.test',
+      '/\r\n/evil.test',
+    ]
+    for (const next of tricks) {
+      for (const locale of ['en', 'sk'] as const) {
+        const target = localeSwitchTarget(next, locale)
+        expectOnSite(target, `${JSON.stringify(next)} in ${locale} → ${target}`)
+      }
+    }
+    expect(localeSwitchTarget('/sk//evil.test/x', 'en')).toBe('/evil.test/x')
+    expect(localeSwitchTarget('/a/..//evil.test', 'en')).toBe('/evil.test')
+  })
+
+  test('repeated leading slashes are collapsed before localizing', () => {
+    expect(localeSwitchTarget('/sk///sign-in?x=1', 'en')).toBe('/sign-in?x=1')
+    expect(localeSwitchTarget('/sign-in//x', 'sk')).toBe('/sk/sign-in//x')
+  })
 })

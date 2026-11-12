@@ -127,6 +127,19 @@ test('the switcher endpoint sets the cookie and redirects only to a page of this
   expect(offsite.status()).toBe(303)
   expect(offsite.headers()['location']).toBe('/')
 
+  expect(cookie).not.toMatch(/Secure/i) // PUBLIC_ORIGIN is http://localhost here; https origins get Secure
+
+  for (const next of ['/sk//evil.test', '/.//evil.test/x', '/a/..//evil.test', '/sk/%5c%5cevil.test', '%2F%2Fevil.test']) {
+    for (const to of ['en', 'sk']) {
+      const res = await request.get(`/api/locale?${new URLSearchParams({ to, next })}`, { maxRedirects: 0 })
+      const location = res.headers()['location'] ?? ''
+      expect(res.status()).toBe(303)
+      expect(location, `${next} → ${location}`).toMatch(/^\/(?![/\\])/)
+      expect(location, `${next} → ${location}`).not.toMatch(/\\|%5c|%2f%2f/i)
+      expect(new URL(location, 'https://site.test').host, `${next} → ${location}`).toBe('site.test')
+    }
+  }
+
   const unknown = await request.get('/api/locale?to=xx&next=%2F', { maxRedirects: 0 })
   expect(unknown.status()).toBe(400)
   expect(unknown.headers()['set-cookie']).toBeUndefined()

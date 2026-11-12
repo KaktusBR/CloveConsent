@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro'
 
 import { LOCALE_COOKIE, localeSwitchTarget, locales, type Locale } from '../../i18n/locale'
+import { env } from '../../server/env'
 
 export const prerender = false
 
@@ -22,7 +23,7 @@ export const GET: APIRoute = ({ url, cookies }) => {
     maxAge: ONE_YEAR,
     sameSite: 'lax',
     httpOnly: true,
-    secure: url.protocol === 'https:',
+    secure: env.PUBLIC_ORIGIN.startsWith('https:'), // the public scheme, not the one behind a TLS-terminating proxy
   })
   return new Response(null, {
     status: 303,

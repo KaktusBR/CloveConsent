@@ -57,16 +57,38 @@ export function localeSwitchHref(current: string, locale: Locale): string {
   return `${LOCALE_SWITCH_PATH}?${new URLSearchParams({ to: locale, next: current })}`
 }
 
+const SENTINEL = 'http://same.invalid'
+
+/**
+ * A Location value that can only lead to this site: one leading slash, no backslash, no control
+ * character, no encoded slash pair or backslash a browser might decode, and it still resolves to the
+ * same host.
+ */
+function isLocalTarget(target: string): boolean {
+  if (!target.startsWith('/') || target.startsWith('//') || target.includes('\\') || /%5c|%2f%2f/i.test(target)) return false
+  for (const c of target) {
+    const code = c.charCodeAt(0)
+    if (code <= 0x1f || code === 0x7f) return false
+  }
+  return new URL(target, SENTINEL).origin === SENTINEL
+}
+
+const collapseLeadingSlashes = (path: string) => path.replace(/^\/{2,}/, '/')
+
 /**
  * Where /api/locale sends the reader: `next` (a path on this site, with or without a language prefix)
- * in `locale`. Anything that is not a plain same-site path (`//host`, `/\host`, `https:...`) becomes `/`.
+ * in `locale`. The final value is checked, not only the input: anything that could leave the site
+ * (`//host`, `/\host`, `/sk//host`, `/.//host`, `https:...`) becomes the home page in `locale`.
  */
 export function localeSwitchTarget(next: string | null, locale: Locale): string {
-  const safe = next !== null && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/'
-  // The URL parser drops tabs and newlines (`/\t/evil.test` becomes `//evil.test`): check the host it ends up with.
-  const url = new URL(safe, 'http://same.invalid')
-  if (url.host !== 'same.invalid') return localizedPath('/', locale)
-  return localizedPath(splitLocalePrefix(url.pathname).path, locale) + url.search
+  const home = localizedPath('/', locale)
+  if (next === null || !next.startsWith('/')) return home
+  // The URL parser drops tabs and newlines and resolves dot segments (`/a/..//host` is `//host`).
+  const url = new URL(next, SENTINEL)
+  if (url.origin !== SENTINEL) return home
+  const path = collapseLeadingSlashes(splitLocalePrefix(collapseLeadingSlashes(url.pathname)).path)
+  const target = localizedPath(path, locale) + url.search
+  return isLocalTarget(target) ? target : home
 }
 
 /** The first shipped language in an Accept-Language header, by q-value; `de-AT` also tries `de`. */
