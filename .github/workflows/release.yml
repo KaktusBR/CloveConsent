@@ -1,6 +1,7 @@
 name: release
 # Every push to main (a merged PR) publishes the next minor version as a tag that carries dist/.
-# Docs-only merges are skipped. main itself never contains dist/.
+# Merges that change only docs or the hosted app in cmp/ are skipped (scripts/version.mjs skipRelease).
+# main itself never contains dist/.
 on: { push: { branches: [main] } }
 permissions: { contents: read }
 concurrency: { group: release, cancel-in-progress: false }

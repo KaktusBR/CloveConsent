@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'vitest'
-import { LABELS, latest, nextVersion, parseLabels, pickLabel, plan } from '../scripts/version.mjs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterAll, describe, expect, test } from 'vitest'
+import { LABELS, latest, nextVersion, parseLabels, pickLabel, plan, skipBetween, skipRelease } from '../scripts/version.mjs'
 
 describe('latest', () => {
   test('no tags', () => expect(latest([])).toBeNull())
@@ -57,4 +61,71 @@ describe('parseLabels', () => {
     expect(parseLabels('["a","release:minor"]')).toEqual(['a', 'release:minor'])
   })
   test.each(['', 'x', '{}', 'null', '[1]', '["a",2]', '"release:minor"'])('rejects %j', (s) => expect(() => parseLabels(s)).toThrow())
+})
+
+describe('skipRelease', () => {
+  test('docs-only and app-only (cmp/) changes are skipped', () => {
+    expect(skipRelease(['docs/a.md'])).toBe(true)
+    expect(skipRelease(['README.md', 'docs/x/y.md', 'CLAUDE.md'])).toBe(true)
+    expect(skipRelease(['cmp/package.json', 'cmp/src/pages/healthz.ts', 'cmp/Dockerfile'])).toBe(true)
+    expect(skipRelease(['.github/workflows/cmp.yml', 'cmp/README.md', 'docs/superpowers/plans/p.md'])).toBe(true)
+  })
+  test('a library change alongside cmp/ is released', () => {
+    expect(skipRelease(['cmp/src/a.ts', 'src/a.ts'])).toBe(false)
+    expect(skipRelease(['cmp/package.json', 'package.json'])).toBe(false)
+    expect(skipRelease(['cmp/x.ts', '.github/workflows/ci.yml'])).toBe(false)
+  })
+  test('lookalikes of cmp/ are released', () => {
+    expect(skipRelease(['cmp'])).toBe(false)
+    expect(skipRelease(['cmp.ts'])).toBe(false)
+    expect(skipRelease(['src/cmp/a.ts'])).toBe(false)
+    expect(skipRelease(['cmpx/a.ts'])).toBe(false)
+    expect(skipRelease(['.github/workflows/cmp.yml.bak'])).toBe(false)
+  })
+  test('anything else is released', () => {
+    for (const f of ['src/a.ts', 'package.json', 'scripts/release.mjs', 'test/a.md.ts', 'docs.json', 'src/NOTES.md', 'tsconfig.json']) expect(skipRelease([f])).toBe(false)
+  })
+  test('an empty change list has nothing to release', () => expect(skipRelease([])).toBe(true))
+})
+
+describe('version.mjs skip (as release.yml runs it)', () => {
+  const script = join(__dirname, '..', 'scripts', 'version.mjs')
+  const repo = mkdtempSync(join(tmpdir(), 'cloveconsent-release-'))
+  afterAll(() => rmSync(repo, { recursive: true, force: true }))
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+  const commit = (files: string[]) => {
+    for (const f of files) {
+      mkdirSync(join(repo, dirname(f)), { recursive: true })
+      writeFileSync(join(repo, f), `${f} ${Math.random()}
+`)
+    }
+    git('add', '-A')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'c')
+    return git('rev-parse', 'HEAD')
+  }
+  const skip = (before: string, after: string) => {
+    const r = spawnSync(process.execPath, [script, 'skip', before, after], { cwd: repo, encoding: 'utf8' })
+    return { status: r.status, out: r.stdout.trim(), err: r.stderr.trim() }
+  }
+  git('init', '-q')
+  const base = commit(['src/index.ts', 'cmp/package.json'])
+
+  test('a push that changes only cmp/ (and docs) prints true', () => {
+    const after = commit(['cmp/src/pages/healthz.ts', 'cmp/Dockerfile', 'docs/notes.md', '.github/workflows/cmp.yml'])
+    expect(skip(base, after)).toEqual({ status: 0, out: 'true', err: '' })
+    expect(skipBetween(base, after, repo)).toBe(true)
+  })
+  test('a push that also touches the library prints false', () => {
+    const before = git('rev-parse', 'HEAD')
+    const after = commit(['cmp/src/a.ts', 'src/index.ts'])
+    expect(skip(before, after)).toEqual({ status: 0, out: 'false', err: '' })
+  })
+  test('a new branch (all-zero before) releases', () => {
+    expect(skip('0'.repeat(40), git('rev-parse', 'HEAD')).out).toBe('false')
+  })
+  test('a malformed after-SHA is a usage error', () => {
+    const r = skip(base, 'HEAD')
+    expect(r.status).toBe(1)
+    expect(r.err).toMatch(/usage/)
+  })
 })

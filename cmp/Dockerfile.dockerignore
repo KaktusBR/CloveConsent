@@ -1,0 +1,15 @@
+# BuildKit reads this file for cmp/Dockerfile (build context = repository root): only what the image needs.
+*
+!package.json
+!package-lock.json
+!.npmrc
+!tsconfig.json
+!tsup.config.ts
+!src/
+!cmp/
+cmp/node_modules
+cmp/dist
+cmp/.astro
+cmp/.env
+cmp/test-results
+cmp/playwright-report

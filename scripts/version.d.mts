@@ -4,3 +4,5 @@ export function pickLabel(labels: string[]): { label: string } | { error: string
 export function nextVersion(tags: string[], label: string): string | null
 export function plan(tags: string[], labels: string[]): { release: string } | { skip: string }
 export function parseLabels(json: string): string[]
+export function skipRelease(files: string[]): boolean
+export function skipBetween(before: string | undefined, after: string | undefined, cwd?: string): boolean

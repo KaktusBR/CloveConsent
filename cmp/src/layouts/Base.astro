@@ -1,0 +1,38 @@
+---
+import '../styles/global.css'
+
+interface Props {
+  /** Document title, already translated by the page. */
+  title: string
+  /** BCP 47 language of the page. */
+  lang?: string
+}
+
+const { title, lang = 'en' } = Astro.props
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{title}</title>
+    <!-- Theme before first paint: an explicit choice in localStorage ("light" | "dark"), else the system preference. -->
+    <script is:inline>
+      ;(() => {
+        let stored = null
+        try {
+          stored = localStorage.getItem('theme')
+        } catch {
+          // storage blocked: follow the system preference
+        }
+        const dark = stored === 'dark' || (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      })()
+    </script>
+  </head>
+  <body class="min-h-dvh antialiased">
+    <slot />
+  </body>
+</html>

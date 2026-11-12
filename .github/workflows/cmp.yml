@@ -1,0 +1,63 @@
+name: cmp
+# The hosted app in cmp/. Runs for changes to the app and to the library files it builds from.
+on:
+  push:
+    branches: [main]
+    paths: ['cmp/**', '.github/workflows/cmp.yml', 'src/**', 'package.json', 'package-lock.json', 'tsup.config.ts', 'tsconfig.json']
+  pull_request:
+    paths: ['cmp/**', '.github/workflows/cmp.yml', 'src/**', 'package.json', 'package-lock.json', 'tsup.config.ts', 'tsconfig.json']
+permissions: { contents: read }
+concurrency: { group: 'cmp-${{ github.ref }}', cancel-in-progress: true }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env: { POSTGRES_USER: cmp, POSTGRES_PASSWORD: cmp, POSTGRES_DB: cmp }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cmp -d cmp"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      mailpit:
+        image: axllent/mailpit:v1.33
+        env: { MP_SMTP_AUTH_ACCEPT_ANY: 'true', MP_SMTP_AUTH_ALLOW_INSECURE: 'true' }
+        ports: ['1025:1025', '8025:8025']
+    env:
+      DATABASE_URL: postgres://cmp:cmp@localhost:5432/cmp
+      DATABASE_URL_MIGRATE: postgres://cmp:cmp@localhost:5432/cmp
+      DATABASE_URL_SYSTEM: postgres://cmp:cmp@localhost:5432/cmp
+      SMTP_URL: smtp://localhost:1025
+      MAIL_FROM: noreply@localhost.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cmp/package-lock.json
+      - name: Build the library (cmp uses it as file:..)
+        run: npm ci --ignore-scripts && npm run build
+      - run: npm ci
+        working-directory: cmp
+      - run: npm run typecheck
+        working-directory: cmp
+      - run: npm run lint
+        working-directory: cmp
+      - run: npm test
+        working-directory: cmp
+      - run: npx playwright install --with-deps chromium
+        working-directory: cmp
+      - run: npm run test:e2e
+        working-directory: cmp
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: cmp
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the container image (context is the repository root)
+        run: docker build -f cmp/Dockerfile -t cloveconsent-cmp:ci .

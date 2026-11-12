@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
 const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const SHA = /^[0-9a-f]{40}$/
 export const LABELS = ['release:major', 'release:minor', 'release:patch', 'release:none']
 
 /** Highest plain vX.Y.Z tag as [major, minor, patch], or null. */
@@ -52,6 +53,22 @@ export function parseLabels(json) {
   return v
 }
 
+/**
+ * True when nothing in the change list ships in the library: no files, or only docs/, top-level *.md,
+ * and the hosted app in cmp/ (with its own workflow), which has its own build and is never released here.
+ */
+export function skipRelease(files) {
+  return files.every((f) => f.startsWith('docs/') || /^[^/]+\.md$/.test(f) || f.startsWith('cmp/') || f === '.github/workflows/cmp.yml')
+}
+
+/** skipRelease for the commits between two SHAs. A brand-new branch (all-zero or missing "before") always releases. */
+export function skipBetween(before, after, cwd = process.cwd()) {
+  if (!SHA.test(after ?? '')) throw new Error('usage: version.mjs skip <before-sha> <after-sha>')
+  if (!SHA.test(before ?? '') || /^0+$/.test(before)) return false
+  const files = execFileSync('git', ['diff', '--name-only', before, after], { encoding: 'utf8', cwd }).split('\n').map((s) => s.trim()).filter(Boolean)
+  return skipRelease(files)
+}
+
 function gitTags() {
   return execFileSync('git', ['tag', '--list', 'v*'], { encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean)
 }
@@ -59,14 +76,17 @@ function gitTags() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, labelsJson] = process.argv.slice(2)
   try {
-    if (cmd === 'plan') {
+    if (cmd === 'skip') {
+      const [before, after] = process.argv.slice(3)
+      console.log(String(skipBetween(before, after)))
+    } else if (cmd === 'plan') {
       console.log(JSON.stringify(plan(gitTags(), parseLabels(labelsJson ?? ''))))
     } else if (cmd === 'check-labels') {
       const picked = pickLabel(parseLabels(labelsJson ?? ''))
       if ('error' in picked) { console.error(picked.error); process.exit(1) }
       console.log(`release label: ${picked.label}`)
     } else {
-      console.error('usage: version.mjs plan <labels-json> | check-labels <labels-json>')
+      console.error('usage: version.mjs plan <labels-json> | check-labels <labels-json> | skip <before-sha> <after-sha>')
       process.exit(1)
     }
   } catch (err) {

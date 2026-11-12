@@ -1,5 +1,8 @@
 name: ci
-on: { push: { branches: [main] }, pull_request: {} }
+# The hosted app in cmp/ has its own workflow (cmp.yml); changes only there do not run the library's CI.
+on:
+  push: { branches: [main], paths-ignore: ['cmp/**', '.github/workflows/cmp.yml'] }
+  pull_request: { paths-ignore: ['cmp/**', '.github/workflows/cmp.yml'] }
 permissions: { contents: read }
 jobs:
   test:
