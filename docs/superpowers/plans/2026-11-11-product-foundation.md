@@ -2,20 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A new repository `cmp.clovetek.com` with a deployable Astro app where a person can sign up, verify their email, secure the login with 2FA or a passkey, create or join an account, invite members with roles, and reach the admin only when the account is paid (set by hand by the super-admin), with every word translatable, strict security headers, tenant isolation enforced in the database, and an audit log.
+**Goal:** A deployable Astro app in the `cmp/` folder of this repository where a person can sign up, verify their email, secure the login with 2FA or a passkey, create or join an account, invite members with roles, and reach the admin only when the account is paid (set by hand by the super-admin), with every word translatable, strict security headers, tenant isolation enforced in the database, and an audit log.
 
 **Architecture:** One Astro app (Node adapter, `output: 'server'`, per-page `prerender`) with React islands and shadcn components, plus a separate worker process from the same codebase for background jobs. Postgres through Drizzle; tenant isolation in two layers: a scoped data-access API that cannot run a tenant query without an account scope, and Postgres row-level security keyed on a per-transaction setting. Better Auth provides sign-in, email verification, TOTP 2FA, passkeys, sessions, and accounts/members/invitations (its organization plugin, called "account" in the product). pg-boss runs jobs (email first). Paraglide JS provides typed message catalogs; a check fails the build if words appear in source.
 
 **Tech Stack:** Node 24, TypeScript (strict), Astro 7 + `@astrojs/node` + `@astrojs/react`, React, Tailwind CSS 4, shadcn/ui, Paraglide JS (inlang), Drizzle ORM + drizzle-kit, Postgres 17, Better Auth (email/password, `twoFactor`, `passkey`, `organization`, `admin`, `haveIBeenPwned` plugins), pg-boss, nodemailer (SMTP), zod, vitest, Playwright + `@axe-core/playwright`, Docker.
 
-**Spec:** `docs/superpowers/specs/2026-11-10-hosted-cmp-design.md` in the cloveconsent repo (sections Decided by the author, Architecture, Tenancy and roles, Billing account states, Admin UI, Security, Testing, i18n goal 8). Copied into the new repo by Task 1.
+**Spec:** `docs/superpowers/specs/2026-11-10-hosted-cmp-design.md` (sections Decided by the author, Architecture, Tenancy and roles, Billing account states, Admin UI, Security, Testing, i18n goal 8). The author decided (2026-11-12) to keep the product in this repository for now, in `cmp/`, instead of a new repository; the final domain is not decided and nothing may hard-code one.
 
 **Plans in this phase:** 1 Standalone runtime (merged) · **2a Product foundation (this plan)** · 2b Sites, publishing, runtime delivery, consent records · 3 Scanner and blocking check · 4 Billing interface, manual provider, one-time export · 5 Public site. Each later plan is written when its predecessor is merged.
 
 ## Global Constraints
 
-- Repository: `D:\Projects\cmp.clovetek.com`, new git repo, default branch `main`, work on a feature branch. Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Every dependency pinned to an exact version (no `^`/`~`), the latest stable at install time; `npm audit --omit=dev --audit-level=high` clean. The cloveconsent library is a git dependency pinned to a release tag: `"cloveconsent": "github:KaktusBR/CloveConsent#v<version>"` (release tags carry `dist/`). If no tag exists that contains `./site-script` and `./standalone`, stop and report.
+- Location: the `cmp/` folder of this repository, with its own `package.json` and lockfile. **Every path in this plan is relative to `cmp/`** unless it starts with `../` or names a root file explicitly. Work on a feature branch. Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- The app uses the library from the parent folder: `"cloveconsent": "file:.."` (the root library is built with `npm run build` at the root first; CI does that). The app never edits library files; a library change needed by the app is its own commit at the root with the library's own tests.
+- The library's tooling must not see the app: root `tsconfig`, vitest, lint, `npm pack`/`files`, CI and the release workflow ignore `cmp/` (a change only under `cmp/` triggers no library release). The app has its own CI workflow filtered to `cmp/**` and the library paths it consumes.
+- No domain is hard-coded anywhere: the public origin, cookie names' domain and emails' links come from `PUBLIC_ORIGIN`.
+- Every dependency pinned to an exact version (no `^`/`~`), the latest stable at install time; `npm audit --omit=dev --audit-level=high` clean.
 - Verification before the last task is done: `npm run typecheck`, `npm run lint`, `npm run check:words`, `npm test`, `npm run test:db`, `npm run test:e2e` all pass.
 - "No user-facing words live in source files": every visible string of pages, components, emails and API error messages comes from the Paraglide catalog (`messages/en.json` is the source; `messages/sk.json` ships too). `npm run check:words` fails on literal text in `.astro`/`.tsx` text nodes and on user-visible string attributes (`title`, `alt`, `placeholder`, `aria-label`, `label`).
 - Security headers on every response: CSP without `unsafe-inline`/`unsafe-eval` (nonce or hash), `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` denying camera, microphone, geolocation, payment, usb, `frame-ancestors 'none'` (in CSP) and `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`.
@@ -48,7 +51,7 @@
 - `src/i18n/`: Paraglide output wiring, `locale.ts`.
 - `src/components/ui/` (shadcn), `src/components/` (app components), `src/layouts/`, `src/pages/` (`[...locale]` routing as Task 2 decides), `src/pages/api/`.
 - `scripts/check-words.ts`.
-- `Dockerfile`, `compose.yaml` (dev: Postgres, Mailpit), `compose.prod.yaml` (Dokploy: app, worker), `.github/workflows/ci.yml`.
+- `Dockerfile` (build context is the repository root so the image can build the library from `../`), `compose.yaml` (dev: Postgres, Mailpit), `compose.prod.yaml` (Dokploy: app, worker), `../.github/workflows/cmp.yml`.
 - Tests: `test/unit/**`, `test/db/**` (real Postgres), `e2e/**` (Playwright).
 
 ---
@@ -56,7 +59,7 @@
 ### Task 1: Repository, app shell, CI, container
 
 **Files:**
-- Create: everything listed under "File Structure" that is configuration, plus `src/pages/healthz.ts`, `src/pages/readyz.ts`, `src/server/env.ts`, `src/layouts/Base.astro`, `README.md`, `docs/` (copy of the phase 2 spec and this plan from the cloveconsent repo).
+- Create: everything listed under "File Structure" that is configuration, plus `src/pages/healthz.ts`, `src/pages/readyz.ts`, `src/server/env.ts`, `src/layouts/Base.astro`, `README.md`, `../.github/workflows/cmp.yml`; root changes so the library ignores `cmp/` (`../tsconfig.json`, `../vitest.config.ts`, root lint config, `../package.json` `files`, `../.github/workflows/ci.yml`, `../.github/workflows/release.yml` / `../scripts/version.mjs` so a `cmp/`-only change skips the release) with a root test proving the release skip.
 - Test: `test/unit/env.test.ts`, `e2e/health.spec.ts`
 
 **Interfaces:**
@@ -66,7 +69,7 @@
 
 - [ ] **Step 1: Write failing tests:** the logger redacts `{ password: 'x', headers: { cookie: 'y' } }`; env parsing rejects a missing/short `BETTER_AUTH_SECRET`, an `http:` `PUBLIC_ORIGIN` that is not localhost, and never includes a secret value in the error message; Playwright `health.spec.ts` gets 200 from `/healthz`.
 - [ ] **Step 2: Run** `npx vitest run test/unit/env.test.ts`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Scaffold Astro 7 (Node adapter standalone, `output: 'server'`), React, Tailwind 4, shadcn (`components.json`, base components Button, Input, Label, Card, Dialog, DropdownMenu, Table, Toast/Sonner, Form), light/dark via class with system default, Base layout. `compose.yaml` with Postgres 17 and Mailpit for dev. Multi-stage `Dockerfile` (build, then a slim runtime image, non-root user, `NODE_ENV=production`, healthcheck on `/healthz`), same image runs the app (`node dist/server/entry.mjs`) or the worker (`node dist/worker.js`). CI: install, typecheck, lint (ESLint flat config with typescript-eslint and the restricted-import rule for the db client), tests with a Postgres service container, Playwright with Chromium, `npm audit`. README: dev setup with `docker compose up -d`, env vars, scripts.
+- [ ] **Step 3: Implement.** Scaffold Astro 7 (Node adapter standalone, `output: 'server'`), React, Tailwind 4, shadcn (`components.json`, base components Button, Input, Label, Card, Dialog, DropdownMenu, Table, Toast/Sonner, Form), light/dark via class with system default, Base layout. `compose.yaml` with Postgres 17 and Mailpit for dev. Multi-stage `Dockerfile` (build, then a slim runtime image, non-root user, `NODE_ENV=production`, healthcheck on `/healthz`), same image runs the app (`node dist/server/entry.mjs`) or the worker (`node dist/worker.js`). CI (`../.github/workflows/cmp.yml`): build the root library, install `cmp/`, typecheck, lint (ESLint flat config with typescript-eslint and the restricted-import rule for the db client), tests with a Postgres service container, Playwright with Chromium, `npm audit`. README: dev setup with `docker compose up -d`, env vars, scripts.
 - [ ] **Step 4: Run** `npm run typecheck && npm run lint && npm test && npm run test:e2e`. Expected: PASS.
 - [ ] **Step 5: Commit** `chore: Astro app shell, CI and container`.
 

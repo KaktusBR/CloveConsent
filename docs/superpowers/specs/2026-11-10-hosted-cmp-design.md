@@ -51,7 +51,7 @@ The author has been burned before by a cookie banner that did not actually block
 
 ## Architecture (my calls, open to change)
 
-- **Repository:** a new repository for the product (working name `cmp.clovetek.com`), depending on the cloveconsent library. Library changes needed by the product go to the cloveconsent repo through its own review, never as forks inside the product.
+- **Repository (decided by the author, 2026-11-12):** the product lives in this repository for now, in the `cmp/` folder, using the library from the parent folder. The library's tooling and releases ignore `cmp/`. Library changes needed by the product are made in the library itself with its own tests, never as copies inside the product. The final domain is not decided; nothing hard-codes one (cmp.clovetek.com in this document is only an example).
 - **App:** one Astro app (Node adapter, `output: 'server'` with per-page `prerender`) serving the public site (prerendered, static) and the admin (server-rendered, React islands for interactive screens, shadcn components). Astro is enough here: the admin is forms, tables, previews and dashboards, all fine as islands; API routes are Astro endpoints.
 - **Database:** Postgres with Drizzle (typed schema, migrations in the repo).
 - **Auth:** a self-hosted, maintained auth library (e.g. Better Auth) with email and password plus email verification, mandatory-available TOTP 2FA, passkeys if the library supports them well, session cookies (HttpOnly, Secure, SameSite=Lax), no third-party identity provider in the default setup.
