@@ -82,8 +82,17 @@ describe('parseEnv', () => {
     expect(errorOf({ ...valid(), PUBLIC_ORIGIN: origin }).variables).toEqual(['PUBLIC_ORIGIN'])
   })
 
-  test.each(['http://localhost:4321', 'http://127.0.0.1:4321', 'http://[::1]:4321'])('accepts the local http origin %s', (origin) => {
-    expect(parseEnv({ ...valid(), PUBLIC_ORIGIN: origin }).PUBLIC_ORIGIN).toBe(origin)
+  test.each(['http://localhost:4321', 'http://127.0.0.1:4321', 'http://[::1]:4321'])('accepts the local http origin %s outside production', (origin) => {
+    for (const NODE_ENV of ['development', 'test', undefined]) {
+      expect(parseEnv({ ...valid(), NODE_ENV, PUBLIC_ORIGIN: origin }).PUBLIC_ORIGIN).toBe(origin)
+    }
+  })
+
+  test.each(['http://localhost:4321', 'http://127.0.0.1:4321', 'http://[::1]:4321'])('rejects the http origin %s in production', (origin) => {
+    const err = errorOf({ ...valid(), NODE_ENV: 'production', PUBLIC_ORIGIN: origin })
+    expect(err.variables).toEqual(['PUBLIC_ORIGIN'])
+    expect(err.message).toMatch(/production/)
+    expect(err.message).not.toContain(origin)
   })
 
   test.each(['consent.example', 'ftp://consent.example', 'https://consent.example/app', 'https://consent.example/?x=1', 'https://user:pw@consent.example'])(

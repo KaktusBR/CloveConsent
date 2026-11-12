@@ -2,28 +2,51 @@ import { ESLint } from 'eslint'
 import { describe, expect, test } from 'vitest'
 
 const eslint = new ESLint({ cwd: process.cwd() })
+const RULE = 'cmp/data-layer-only'
 
 async function restricted(file: string, code: string): Promise<string[]> {
   const [result] = await eslint.lintText(code, { filePath: file })
-  return (result?.messages ?? []).filter((m) => m.ruleId === 'no-restricted-imports').map((m) => m.message)
+  return (result?.messages ?? []).filter((m) => m.ruleId === RULE).map((m) => m.message)
 }
 
 describe('database client import rule', () => {
   test.each([
     ["import pg from 'pg'", 'src/pages/x.ts'],
+    ["import { Client } from 'pg/lib/client'", 'src/pages/x.ts'],
     ["import postgres from 'postgres'", 'src/server/auth/x.ts'],
     ["import { drizzle } from 'drizzle-orm/node-postgres'", 'src/server/jobs/x.ts'],
+    ["import { drizzle } from 'drizzle-orm/postgres-js'", 'src/server/jobs/x.ts'],
     ["import { db } from '../server/data/client'", 'src/pages/x.ts'],
+    ["import { db } from '../data/client'", 'src/server/auth/x.ts'],
+    ["import { db } from './data/client'", 'src/server/x.ts'],
+    ["import { db } from './data/client.ts'", 'src/server/x.ts'],
+    ["import { db } from './data/client/index'", 'src/server/x.ts'],
     ["import { db } from '@/server/data/client'", 'src/components/x.tsx'],
+    ["export { db } from './data/client'", 'src/server/x.ts'],
+    ["export * from '../data/client'", 'src/server/auth/x.ts'],
+    ["const pg = await import('pg')", 'src/pages/x.ts'],
+    ["const c = await import('../data/client')", 'src/server/auth/x.ts'],
+    ["const m = 'pg'; const pg = await import(m)", 'src/pages/x.ts'],
+    ["const pg = require('pg')", 'src/pages/x.ts'],
   ])('%s is refused in %s', async (code, file) => {
-    expect(await restricted(file, `${code}\nexport { }\n`)).toHaveLength(1)
+    expect(await restricted(file, `${code}\nexport {}\n`)).toHaveLength(1)
   })
 
   test('the data layer itself may import the driver and its client', async () => {
-    expect(await restricted('src/server/data/x.ts', "import pg from 'pg'\nimport { db } from './client'\nexport { pg, db }\n")).toEqual([])
+    const code = "import pg from 'pg'\nimport { db } from './client'\nconst c = await import('pg/lib/client')\nexport { pg, db, c }\n"
+    expect(await restricted('src/server/data/x.ts', code)).toEqual([])
+    expect(await restricted('src/server/data/sub/y.ts', "import { db } from '../client'\nexport { db }\n")).toEqual([])
   })
 
-  test('the data layer API is importable anywhere', async () => {
-    expect(await restricted('src/pages/x.ts', "import { databaseAnswers } from '../server/data/ready'\nexport { databaseAnswers }\n")).toEqual([])
+  test('the data layer API, and lookalike modules, are importable anywhere', async () => {
+    for (const [file, code] of [
+      ['src/pages/x.ts', "import { databaseAnswers } from '../server/data/ready'\nexport { databaseAnswers }\n"],
+      ['src/server/x.ts', "import { x } from './client'\nexport { x }\n"],
+      ['src/server/x.ts', "import { x } from './data/clients'\nexport { x }\n"],
+      ['src/pages/x.ts', "import x from 'pgx'\nimport y from 'pg-boss'\nexport { x, y }\n"],
+      ['src/pages/x.ts', "const m = await import('./other')\nexport { m }\n"],
+    ] as const) {
+      expect(await restricted(file, code), `${file}: ${code}`).toEqual([])
+    }
   })
 })

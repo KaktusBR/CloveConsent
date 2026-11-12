@@ -123,6 +123,15 @@ describe('version.mjs skip (as release.yml runs it)', () => {
   test('a new branch (all-zero before) releases', () => {
     expect(skip('0'.repeat(40), git('rev-parse', 'HEAD')).out).toBe('false')
   })
+  test.each(['cmp/moved.ts', 'docs/moved.ts'])('moving a library file to %s releases (the source path counts)', (to) => {
+    commit(['src/moved.ts'])
+    const before = git('rev-parse', 'HEAD')
+    git('mv', 'src/moved.ts', to)
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'mv')
+    const after = git('rev-parse', 'HEAD')
+    expect(git('diff', '--name-only', before, after)).toBe(to) // what rename detection alone would show
+    expect(skip(before, after).out).toBe('false')
+  })
   test('a malformed after-SHA is a usage error', () => {
     const r = skip(base, 'HEAD')
     expect(r.status).toBe(1)

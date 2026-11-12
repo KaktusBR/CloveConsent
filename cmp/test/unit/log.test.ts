@@ -19,10 +19,40 @@ describe('log', () => {
     expect(raw).not.toContain('"y"')
   })
 
-  test.each(['password', 'token', 'secret', 'cookie', 'authorization', 'set-cookie'])('redacts %s at the top level and two levels deep', (key) => {
+  test.each([
+    'password', 'token', 'secret', 'cookie', 'authorization', 'set-cookie',
+    'Authorization', 'COOKIE', 'Password', 'accessToken', 'refreshToken', 'refresh_token', 'clientSecret', 'BETTER_AUTH_SECRET',
+    'apikey', 'apiKey', 'api_key', 'x-api-key', 'DATABASE_URL', 'DATABASE_URL_MIGRATE', 'databaseUrl',
+  ])('redacts %s at every depth', (key) => {
     const { log, lines } = capture()
-    log.info({ [key]: 'v1', a: { [key]: 'v2', b: { [key]: 'v3' } } })
-    expect(JSON.stringify(lines[0])).not.toMatch(/"v[123]"/)
+    log.info({ [key]: 'v0', a: { [key]: 'v1', b: { [key]: 'v2', c: { d: { e: { [key]: 'v5' } } } } }, list: [{ [key]: 'v6' }] })
+    const raw = JSON.stringify(lines[0])
+    expect(raw).not.toMatch(/"v\d"/)
+    expect(lines[0]).toMatchObject({ [key]: '[redacted]', a: { b: { c: { d: { e: { [key]: '[redacted]' } } } } } })
+  })
+
+  test('redacts nested headers of a request five levels deep, keeping other fields', () => {
+    const { log, lines } = capture()
+    log.info({ l1: { l2: { l3: { l4: { headers: { Authorization: 'Bearer abc', Cookie: 'sid=1', accept: 'text/html' } } } } } })
+    const headers = (lines[0] as { l1: { l2: { l3: { l4: { headers: Record<string, string> } } } } }).l1.l2.l3.l4.headers
+    expect(headers).toEqual({ Authorization: '[redacted]', Cookie: '[redacted]', accept: 'text/html' })
+  })
+
+  test('redacts in child bindings and in error properties, and survives cycles', () => {
+    const { log, lines } = capture()
+    const err = Object.assign(new Error('boom'), { config: { password: 'pw-leak' } })
+    const cyclic: Record<string, unknown> = { token: 'tok-leak' }
+    cyclic.self = cyclic
+    log.child({ apiKey: 'key-leak' }).error({ err, cyclic }, 'failed')
+    const raw = JSON.stringify(lines[0])
+    for (const leak of ['pw-leak', 'tok-leak', 'key-leak']) expect(raw).not.toContain(leak)
+    expect(raw).toContain('boom')
+  })
+
+  test('leaves other fields as they are', () => {
+    const { log, lines } = capture()
+    log.info({ path: '/healthz', status: 200 })
+    expect(lines[0]).toMatchObject({ path: '/healthz', status: 200 })
   })
 
   test('keeps the request id of a child logger on every line', () => {

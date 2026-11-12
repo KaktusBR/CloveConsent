@@ -56,7 +56,7 @@ const REQUIREMENT: Record<keyof z.infer<typeof schema>, string> = {
   DATABASE_URL_MIGRATE: 'a postgres:// URL (the owner role, migrations only)',
   DATABASE_URL_SYSTEM: 'a postgres:// URL (the system role)',
   BETTER_AUTH_SECRET: 'a secret of at least 32 bytes',
-  PUBLIC_ORIGIN: 'a bare https origin (http only for localhost)',
+  PUBLIC_ORIGIN: 'a bare https origin (http only for localhost, and never in production)',
   SMTP_URL: 'an smtp:// or smtps:// URL',
   MAIL_FROM: 'an email address, optionally as "Name <address>"',
   SUPER_ADMIN_EMAILS: 'a comma-separated list of email addresses',
@@ -80,10 +80,10 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   const input: Record<string, string | undefined> = {}
   for (const key of Object.keys(REQUIREMENT)) input[key] = source[key] === '' ? undefined : source[key]
   const result = schema.safeParse(input)
-  if (!result.success) {
-    const names = new Set(result.error.issues.map((i) => String(i.path[0])))
-    throw new EnvError([...names].sort())
-  }
+  const names = new Set(result.success ? [] : result.error.issues.map((i) => String(i.path[0])))
+  // plain http is for local development and tests only
+  if (input.NODE_ENV === 'production' && parseUrl(input.PUBLIC_ORIGIN ?? '')?.protocol === 'http:') names.add('PUBLIC_ORIGIN')
+  if (!result.success || names.size > 0) throw new EnvError([...names].sort())
   return Object.freeze(result.data)
 }
 

@@ -10,6 +10,7 @@
 cmp/node_modules
 cmp/dist
 cmp/.astro
-cmp/.env
+cmp/.env*
+!cmp/.env.example
 cmp/test-results
 cmp/playwright-report

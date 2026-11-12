@@ -1,21 +1,36 @@
-import { pino, stdTimeFunctions, type DestinationStream, type Logger } from 'pino'
+import { destination as stdout, pino, stdTimeFunctions, type DestinationStream, type Logger } from 'pino'
 
-const SENSITIVE = ['password', 'token', 'secret', 'cookie', 'authorization', 'set-cookie']
+/** Keys whose values never reach a log line, matched case-insensitively anywhere in the key (accessToken, set-cookie, DATABASE_URL_MIGRATE …). */
+export const SENSITIVE_KEY = /authorization|cookie|passw(?:or)?d|secret|token|api[-_]?key|database[-_]?url/i
+const CENSOR = '[redacted]'
 
-/** Each sensitive key at the top level and up to two objects deep (e.g. `req.headers.cookie`). */
-export const REDACT_PATHS = SENSITIVE.flatMap((key) => {
-  const k = `["${key}"]`
-  return [k, `*${k}`, `*.*${k}`]
-})
+/** A copy of a parsed JSON value with every sensitive key censored, at any depth. */
+export function redact(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(redact)
+  const out: Record<string, unknown> = {}
+  for (const [key, v] of Object.entries(value)) out[key] = SENSITIVE_KEY.test(key) ? CENSOR : redact(v)
+  return out
+}
+
+/**
+ * Redaction happens on the finished line, after pino has merged child bindings, serialized errors
+ * (with their own properties) and cut cycles, so nothing reaches the output unredacted.
+ */
+function redacting(target: DestinationStream): DestinationStream {
+  return {
+    write(line: string) {
+      target.write(`${JSON.stringify(redact(JSON.parse(line)))}\n`)
+    },
+  }
+}
 
 /** A structured JSON logger to stdout (or `destination`), with sensitive fields redacted. */
-export function createLogger(destination?: DestinationStream): Logger {
-  const options = {
-    redact: { paths: REDACT_PATHS, censor: '[redacted]' },
-    timestamp: stdTimeFunctions.isoTime,
-    formatters: { level: (label: string) => ({ level: label }) },
-  }
-  return destination ? pino(options, destination) : pino(options)
+export function createLogger(destination: DestinationStream = stdout(1)): Logger {
+  return pino(
+    { timestamp: stdTimeFunctions.isoTime, formatters: { level: (label: string) => ({ level: label }) } },
+    redacting(destination),
+  )
 }
 
 /** The process logger used by the app and the worker. Use `log.child({ requestId })` per request. */

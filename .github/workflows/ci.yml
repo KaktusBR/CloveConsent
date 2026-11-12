@@ -1,8 +1,9 @@
 name: ci
-# The hosted app in cmp/ has its own workflow (cmp.yml); changes only there do not run the library's CI.
+# The hosted app in cmp/ has its own workflow (cmp.yml). Pushes to main that change only cmp/ skip the
+# library's CI; pull requests always run it, so a cmp/-only PR never waits on a required check that never starts.
 on:
   push: { branches: [main], paths-ignore: ['cmp/**', '.github/workflows/cmp.yml'] }
-  pull_request: { paths-ignore: ['cmp/**', '.github/workflows/cmp.yml'] }
+  pull_request: {}
 permissions: { contents: read }
 jobs:
   test:

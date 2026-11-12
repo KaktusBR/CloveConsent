@@ -25,8 +25,11 @@ test('the root typecheck compiles no file from cmp/', () => {
   expect(files.filter(inCmp)).toEqual([])
 }, 60_000)
 
-test('the library CI does not run for cmp/-only changes', () => {
+test('the library CI skips cmp/-only pushes but always runs on pull requests', () => {
   const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')
-  expect(ci).toMatch(/paths-ignore:[^\n]*'cmp\/\*\*'/)
-  expect(ci).toMatch(/paths-ignore:[^\n]*'\.github\/workflows\/cmp\.yml'/)
+  const push = /^ {2}push:.*$/m.exec(ci)?.[0] ?? ''
+  expect(push).toMatch(/paths-ignore:[^\n]*'cmp\/\*\*'/)
+  expect(push).toMatch(/paths-ignore:[^\n]*'\.github\/workflows\/cmp\.yml'/)
+  // a path filter on pull_request would leave a cmp/-only PR waiting forever on a required check
+  expect(ci).toMatch(/^ {2}pull_request: \{\}$/m)
 })

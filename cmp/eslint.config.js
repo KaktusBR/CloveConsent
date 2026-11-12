@@ -5,20 +5,7 @@ import globals from 'globals'
 import { defineConfig } from 'eslint/config'
 import tseslint from 'typescript-eslint'
 
-/**
- * Tenant isolation: only src/server/data/ may talk to the database directly.
- * Everything else goes through the data layer's scoped API.
- */
-const DB_CLIENT_RESTRICTION = {
-  paths: [
-    { name: 'pg', message: 'Only src/server/data/ talks to the database; use its scoped API.' },
-    { name: 'postgres', message: 'Only src/server/data/ talks to the database; use its scoped API.' },
-  ],
-  patterns: [
-    { group: ['drizzle-orm/node-postgres', 'drizzle-orm/node-postgres/*', 'drizzle-orm/postgres-js', 'drizzle-orm/postgres-js/*'], message: 'Only src/server/data/ creates database clients.' },
-    { group: ['**/server/data/client', '**/server/data/client.*', '@/server/data/client', '@/server/data/client.*'], message: 'The database client is private to src/server/data/; use its scoped API.' },
-  ],
-}
+import dataLayerOnly from './eslint-rules/data-layer-only.js'
 
 export default defineConfig(
   { ignores: ['dist/', '.astro/', 'node_modules/', 'test-results/', 'playwright-report/'] },
@@ -38,8 +25,9 @@ export default defineConfig(
     rules: reactHooks.configs.recommended.rules,
   },
   {
-    files: ['src/**/*.{ts,tsx,astro}'],
-    ignores: ['src/server/data/**'],
-    rules: { 'no-restricted-imports': ['error', DB_CLIENT_RESTRICTION] },
+    // Tenant isolation: only src/server/data/ talks to the database (the rule exempts that folder itself).
+    files: ['src/**/*.{ts,tsx,astro,js,mjs}'],
+    plugins: { cmp: { rules: { 'data-layer-only': dataLayerOnly } } },
+    rules: { 'cmp/data-layer-only': 'error' },
   },
 )

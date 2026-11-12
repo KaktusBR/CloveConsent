@@ -45,7 +45,7 @@ an error that names the variable and what it must be; values are never printed o
 | `DATABASE_URL_MIGRATE` | yes | `postgres://` URL for the owner role; migrations only |
 | `DATABASE_URL_SYSTEM` | yes | `postgres://` URL for the system role; audited system work only |
 | `BETTER_AUTH_SECRET` | yes | at least 32 bytes |
-| `PUBLIC_ORIGIN` | yes | the app's public origin, e.g. `https://consent.example`; `http` only for `localhost`, `127.0.0.1`, `[::1]`; no path. Links, cookies and emails derive from it: no domain is written in the code |
+| `PUBLIC_ORIGIN` | yes | the app's public origin, e.g. `https://consent.example`; `http` only for `localhost`, `127.0.0.1`, `[::1]` and never with `NODE_ENV=production`; no path. Links, cookies and emails derive from it: no domain is written in the code |
 | `SMTP_URL` | yes | `smtp://` or `smtps://` URL |
 | `MAIL_FROM` | yes | `address` or `Name <address>` |
 | `SUPER_ADMIN_EMAILS` | no | comma-separated email addresses |
@@ -71,8 +71,8 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 - `GET /readyz`: `200` when the database answers `select 1`, else `503`.
 
 Both are uncached (`Cache-Control: no-store`) and need no sign-in. Every response carries an
-`X-Request-Id`; logs are JSON lines on stdout with that id, and passwords, tokens, secrets, cookies
-and authorization headers are redacted.
+`X-Request-Id`; logs are JSON lines on stdout with that id, and any field whose name contains
+authorization, cookie, password, secret, token, api key or database URL (any case, any depth) is redacted.
 
 ## Container
 

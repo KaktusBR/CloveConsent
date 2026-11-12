@@ -61,11 +61,14 @@ export function skipRelease(files) {
   return files.every((f) => f.startsWith('docs/') || /^[^/]+\.md$/.test(f) || f.startsWith('cmp/') || f === '.github/workflows/cmp.yml')
 }
 
-/** skipRelease for the commits between two SHAs. A brand-new branch (all-zero or missing "before") always releases. */
+/**
+ * skipRelease for the commits between two SHAs. A brand-new branch (all-zero or missing "before") always releases.
+ * Renames count as delete + add, so moving a library file into cmp/ or docs/ still releases.
+ */
 export function skipBetween(before, after, cwd = process.cwd()) {
   if (!SHA.test(after ?? '')) throw new Error('usage: version.mjs skip <before-sha> <after-sha>')
   if (!SHA.test(before ?? '') || /^0+$/.test(before)) return false
-  const files = execFileSync('git', ['diff', '--name-only', before, after], { encoding: 'utf8', cwd }).split('\n').map((s) => s.trim()).filter(Boolean)
+  const files = execFileSync('git', ['diff', '--name-only', '--no-renames', before, after], { encoding: 'utf8', cwd }).split('\n').map((s) => s.trim()).filter(Boolean)
   return skipRelease(files)
 }
 
