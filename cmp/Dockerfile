@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 # The hosted app. The build context is the repository ROOT, so the image can build the
 # cloveconsent library (used as "cloveconsent": "file:..") before the app:
-#   docker build -f cmp/Dockerfile -t cloveconsent-cmp .
+#   docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://<your origin> -t cloveconsent-cmp .
+# PUBLIC_ORIGIN is needed at build time too: prerendered pages carry absolute canonical/hreflang URLs.
+# Run the container with the same PUBLIC_ORIGIN.
 # One image, two processes:
 #   app:    node dist/server/entry.mjs   (default)
 #   worker: node dist/worker.js
@@ -19,7 +21,8 @@ RUN npm run build && npm prune --omit=dev --ignore-scripts
 COPY cmp/package.json cmp/package-lock.json cmp/.npmrc ./cmp/
 RUN cd cmp && npm ci
 COPY cmp ./cmp
-RUN cd cmp && npm run build && npm prune --omit=dev
+ARG PUBLIC_ORIGIN
+RUN cd cmp && PUBLIC_ORIGIN="$PUBLIC_ORIGIN" npm run build && npm prune --omit=dev
 
 FROM node:24.22.1-slim AS runtime
 ENV NODE_ENV=production \

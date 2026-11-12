@@ -4,16 +4,23 @@
  *   npm run check:words
  *
  * Fails on
- *  - literal text in `.astro` and `.tsx` markup (text nodes, a string literal used as a child),
- *  - a literal in a user-visible attribute (title, alt, placeholder, label, aria-label and other
- *    text-carrying aria-* attributes, and any `...Label` prop such as the Dialog's `closeLabel`),
+ *  - literal text in `.astro` and `.tsx` markup, including markup passed in an attribute
+ *    (`fallback={<p>...</p>}`),
+ *  - a string literal rendered as a child, also as a branch of `?:`, `??`, `||` or `&&`
+ *    (`{a ? 'Yes' : 'No'}`),
+ *  - a literal in a user-visible attribute: title, alt, placeholder, label, aria-label and the other
+ *    text-carrying aria-* attributes, any `...Label` prop (the Dialog's `closeLabel`), Astro's
+ *    `set:text`, `value` of `<input type="submit|button|reset">`, and `content` of the
+ *    description and social text `<meta>` tags (og:title, og:description, og:site_name,
+ *    og:image:alt and the twitter: equivalents; not URLs or enums such as og:image, twitter:card),
  *  - a catalog that differs from the base one (messages/en.json): a missing or extra key, an empty text.
  *
  * Text counts only if it has a letter: punctuation, numbers and entities pass. Code is not text:
- * frontmatter, expressions, <script>, <style>, <code>, <pre>, <kbd>, <samp> are skipped.
- * Sources are parsed (@astrojs/compiler for .astro, the TypeScript compiler for .tsx), not matched
- * by regex. A finding is allowed only by an explicit comment on its line or the line above:
- * `// words-ok: <reason>` (or the same inside a JSX `{/* *\/}` or an HTML `<!-- -->` comment).
+ * frontmatter, expression code, <script>, <style>, <code>, <pre>, <kbd>, <samp> are skipped.
+ * Sources are parsed (@astrojs/compiler for .astro, the TypeScript compiler for .tsx and for
+ * the expressions inside .astro), not matched by regex. A finding is allowed only by an explicit
+ * comment on its line or the line above: `// words-ok: <reason>` (or the same inside a JSX
+ * `{/* *\/}` or an HTML `<!-- -->` comment).
  * Out of scope: .ts files (machine responses such as /healthz's `ok`) and strings computed in code.
  */
 import { parse } from '@astrojs/compiler'
@@ -30,6 +37,8 @@ export interface Finding {
   message: string
 }
 
+type Report = (line: number, column: number, message: string) => void
+
 /** Elements whose content is code or computer output, not prose. */
 const CODE_ELEMENTS = new Set(['code', 'pre', 'kbd', 'samp', 'script', 'style'])
 
@@ -43,9 +52,32 @@ const VISIBLE_ATTRIBUTES = new Set([
   'aria-roledescription',
   'aria-placeholder',
   'aria-valuetext',
+  'set:text',
 ])
 
-const isVisibleAttribute = (name: string) => VISIBLE_ATTRIBUTES.has(name) || /[a-z]Label$/.test(name)
+const BUTTON_INPUTS = new Set(['submit', 'button', 'reset'])
+
+const META_TEXTS = new Set([
+  'description',
+  'og:title',
+  'og:description',
+  'og:site_name',
+  'og:image:alt',
+  'twitter:title',
+  'twitter:description',
+  'twitter:image:alt',
+])
+
+/**
+ * Whether attribute `name` of element `tag` is shown to people. `sibling` gives the literal
+ * value of another attribute of the same element (for `type` and meta `name`/`property`).
+ */
+function isVisibleAttribute(tag: string, name: string, sibling: (name: string) => string | null): boolean {
+  if (VISIBLE_ATTRIBUTES.has(name) || /[a-z]Label$/.test(name)) return true
+  if (tag === 'input' && name === 'value') return BUTTON_INPUTS.has((sibling('type') ?? '').toLowerCase())
+  if (tag === 'meta' && name === 'content') return META_TEXTS.has((sibling('name') ?? sibling('property') ?? '').toLowerCase())
+  return false
+}
 
 /** Text with at least one letter, once character references (`&amp;`, `&#8212;`) are removed. */
 function hasWords(text: string): boolean {
@@ -71,24 +103,110 @@ function firstVisible(text: string, line: number, column: number): { line: numbe
   return { line: line + newlines, column: lead.length - lead.lastIndexOf('\n') }
 }
 
-/** The string, if `code` is nothing but a string literal (`'Close'`, `"Close"`, `` `Close` ``). */
-function stringLiteral(code: string): string | null {
-  const file = ts.createSourceFile('x.ts', `(${code})`, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS)
-  const [statement] = file.statements
-  if (file.statements.length !== 1 || !statement || !ts.isExpressionStatement(statement)) return null
-  let expression = statement.expression
-  while (ts.isParenthesizedExpression(expression)) expression = expression.expression
-  return ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression) ? expression.text : null
+/**
+ * The string literals an expression renders as text: the expression itself, or a branch of
+ * `c ? a : b`, `a ?? b`, `a || b` and the right side of `c && a`.
+ */
+function renderedLiterals(expression: ts.Expression | undefined): ts.StringLiteralLike[] {
+  if (!expression) return []
+  if (ts.isParenthesizedExpression(expression)) return renderedLiterals(expression.expression)
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return [expression]
+  if (ts.isConditionalExpression(expression)) return [...renderedLiterals(expression.whenTrue), ...renderedLiterals(expression.whenFalse)]
+  if (ts.isBinaryExpression(expression)) {
+    const op = expression.operatorToken.kind
+    if (op === ts.SyntaxKind.QuestionQuestionToken || op === ts.SyntaxKind.BarBarToken) {
+      return [...renderedLiterals(expression.left), ...renderedLiterals(expression.right)]
+    }
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) return renderedLiterals(expression.right)
+  }
+  return []
 }
 
-async function checkAstro(source: string, report: (line: number, column: number, message: string) => void): Promise<void> {
+/**
+ * Checks TSX: markup text, rendered literals, visible attributes. Used for .tsx files and for the
+ * JavaScript inside .astro expressions; `at` maps a position in `sf` to the reported line/column.
+ */
+function checkJsx(root: ts.Node, sf: ts.SourceFile, at: (pos: number) => { line: number; column: number }, report: Report): void {
+  const flagLiterals = (literals: ts.StringLiteralLike[], describe: (text: string) => string) => {
+    for (const literal of literals) {
+      if (!hasWords(literal.text)) continue
+      const { line, column } = at(literal.getStart(sf))
+      report(line, column, describe(literal.text))
+    }
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxText(node)) {
+      if (hasWords(node.text)) {
+        const start = at(node.getStart(sf))
+        const where = firstVisible(node.text, start.line, start.column)
+        report(where.line, where.column, `literal text "${preview(node.text)}"`)
+      }
+      return
+    }
+    if (ts.isJsxAttribute(node)) {
+      const element = node.parent.parent
+      const tag = element.tagName.getText(sf)
+      const name = node.name.getText(sf)
+      const sibling = (other: string) => {
+        for (const a of element.attributes.properties) {
+          if (ts.isJsxAttribute(a) && a.name.getText(sf) === other && a.initializer && ts.isStringLiteral(a.initializer)) return a.initializer.text
+        }
+        return null
+      }
+      if (isVisibleAttribute(tag, name, sibling)) {
+        const init = node.initializer
+        const literals = !init ? [] : ts.isStringLiteral(init) ? [init] : ts.isJsxExpression(init) ? renderedLiterals(init.expression) : []
+        flagLiterals(literals, (text) => `literal ${name}="${preview(text)}"`)
+      }
+      ts.forEachChild(node, visit) // markup passed as a value: fallback={<p>...</p>}
+      return
+    }
+    if (ts.isJsxExpression(node) && (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))) {
+      flagLiterals(renderedLiterals(node.expression), (text) => `literal text "${preview(text)}"`)
+    }
+    if (ts.isJsxElement(node) && CODE_ELEMENTS.has(node.openingElement.tagName.getText(sf))) {
+      visit(node.openingElement)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+}
+
+/** Parses `code` (an .astro expression) as TSX; positions map onto the source from `line`:`column`. */
+function parseExpression(code: string, line: number, column: number) {
+  const sf = ts.createSourceFile('x.tsx', `(${code}\n)`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const [statement] = sf.statements
+  const expression = sf.statements.length === 1 && statement && ts.isExpressionStatement(statement) ? statement.expression : null
+  const at = (pos: number) => {
+    const p = sf.getLineAndCharacterOfPosition(pos - 1) // minus the added "("
+    return p.line === 0 ? { line, column: column + p.character } : { line: line + p.line, column: p.character + 1 }
+  }
+  return { sf, expression, at }
+}
+
+async function checkAstro(source: string, report: Report): Promise<void> {
   const { ast } = await parse(source, { position: true })
 
-  const attribute = (a: AttributeNode) => {
-    if (!isVisibleAttribute(a.name)) return
-    const value = a.kind === 'quoted' || a.kind === 'template-literal' ? a.value : a.kind === 'expression' ? stringLiteral(a.value) : null
-    const at = a.position?.start
-    if (value !== null && hasWords(value) && at) report(at.line, at.column, `literal ${a.name}="${preview(value)}"`)
+  const attribute = (tag: string, a: AttributeNode, all: AttributeNode[]) => {
+    const start = a.position?.start
+    if (!start) return
+    const sibling = (name: string) => all.find((o) => o.name === name && o.kind === 'quoted')?.value ?? null
+    const visible = isVisibleAttribute(tag, a.name, sibling)
+    if (a.kind === 'quoted' || a.kind === 'template-literal') {
+      if (visible && hasWords(a.value)) report(start.line, start.column, `literal ${a.name}="${preview(a.value)}"`)
+      return
+    }
+    if (a.kind !== 'expression') return
+    const { sf, expression, at } = parseExpression(a.value, start.line, start.column)
+    if (!expression) return
+    if (visible) {
+      for (const literal of renderedLiterals(expression)) {
+        if (hasWords(literal.text)) report(start.line, start.column, `literal ${a.name}="${preview(literal.text)}"`)
+      }
+    }
+    checkJsx(expression, sf, at, report) // markup passed as a value: content={<span>...</span>}
   }
 
   const visit = (node: AstroNode, inExpression: boolean) => {
@@ -103,14 +221,20 @@ async function checkAstro(source: string, report: (line: number, column: number,
     }
     if (node.type === 'expression') {
       const [only] = node.children
-      const literal = node.children.length === 1 && only?.type === 'text' ? stringLiteral(only.value) : null
-      const at = node.position?.start
-      if (literal !== null && hasWords(literal) && at) report(at.line, at.column, `literal text "${preview(literal)}"`)
+      const at = only?.position?.start
+      if (node.children.length === 1 && only?.type === 'text' && at) {
+        const parsed = parseExpression(only.value, at.line, at.column)
+        for (const literal of renderedLiterals(parsed.expression ?? undefined)) {
+          if (!hasWords(literal.text)) continue
+          const where = parsed.at(literal.getStart(parsed.sf))
+          report(where.line, where.column, `literal text "${preview(literal.text)}"`)
+        }
+      }
       for (const child of node.children) visit(child, true)
       return
     }
     if (node.type === 'element' || node.type === 'component' || node.type === 'custom-element' || node.type === 'fragment') {
-      node.attributes.forEach(attribute)
+      for (const a of node.attributes) attribute(node.name, a, node.attributes)
       if (node.type === 'element' && CODE_ELEMENTS.has(node.name)) return
       for (const child of node.children) visit(child, false)
       return
@@ -121,58 +245,19 @@ async function checkAstro(source: string, report: (line: number, column: number,
   visit(ast, false)
 }
 
-function checkTsx(file: string, source: string, report: (line: number, column: number, message: string) => void): void {
+function checkTsx(file: string, source: string, report: Report): void {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  const at = (pos: number) => {
+  checkJsx(sf, sf, (pos) => {
     const { line, character } = sf.getLineAndCharacterOfPosition(pos)
     return { line: line + 1, column: character + 1 }
-  }
-  const literalOf = (node: ts.Node | undefined): string | null =>
-    node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null
-
-  const visit = (node: ts.Node): void => {
-    if (ts.isJsxText(node)) {
-      if (hasWords(node.text)) {
-        const start = at(node.getStart(sf))
-        const where = firstVisible(node.text, start.line, start.column)
-        report(where.line, where.column, `literal text "${preview(node.text)}"`)
-      }
-      return
-    }
-    if (ts.isJsxAttribute(node)) {
-      const name = node.name.getText(sf)
-      const init = node.initializer
-      const value = init && ts.isJsxExpression(init) ? literalOf(init.expression) : literalOf(init)
-      if (isVisibleAttribute(name) && value !== null && hasWords(value)) {
-        const { line, column } = at(node.getStart(sf))
-        report(line, column, `literal ${name}="${preview(value)}"`)
-      }
-      return
-    }
-    if (ts.isJsxExpression(node) && (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))) {
-      const value = literalOf(node.expression)
-      if (value !== null && hasWords(value)) {
-        const { line, column } = at(node.getStart(sf))
-        report(line, column, `literal text "${preview(value)}"`)
-      }
-    }
-    if (ts.isJsxElement(node)) {
-      const tag = node.openingElement.tagName.getText(sf)
-      if (CODE_ELEMENTS.has(tag)) {
-        visit(node.openingElement)
-        return
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(sf)
+  }, report)
 }
 
 /** Findings for one `.astro` or `.tsx` source. `file` is only used to pick the parser and in the findings. */
 export async function checkSource(file: string, source: string): Promise<Finding[]> {
   const findings: Finding[] = []
   const lines = source.split('\n')
-  const report = (line: number, column: number, message: string) => {
+  const report: Report = (line, column, message) => {
     if (!allowed(lines, line)) findings.push({ file, line, column, message })
   }
   if (file.endsWith('.astro')) await checkAstro(source, report)

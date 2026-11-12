@@ -1,29 +1,12 @@
 import { z } from 'zod'
 
-/** Hosts for which a plain-http PUBLIC_ORIGIN is allowed (local development and tests). */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
-
-function parseUrl(value: string): URL | null {
-  try {
-    return new URL(value)
-  } catch {
-    return null
-  }
-}
+import { isOrigin, parseUrl } from './origin'
 
 const urlOf = (...protocols: string[]) =>
   z.string().refine((v) => {
     const url = parseUrl(v)
     return url !== null && protocols.includes(url.protocol) && url.hostname !== ''
   })
-
-/** A bare origin: https, or http on a local host; no credentials, path, query or fragment. */
-function isOrigin(value: string): boolean {
-  const url = parseUrl(value)
-  if (!url) return false
-  const schemeOk = url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname))
-  return schemeOk && url.username === '' && url.password === '' && url.pathname === '/' && url.search === '' && url.hash === ''
-}
 
 /** `address` or `Name <address>`. */
 function isMailbox(value: string): boolean {

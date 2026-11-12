@@ -1,19 +1,23 @@
 ---
 import '../styles/global.css'
-import LocaleSwitcher from '../components/LocaleSwitcher'
-import { baseLocale, localizedPath, locales, splitLocalePrefix } from '../i18n/locale'
-import { env } from '../server/env'
+import LocaleSwitcher from '../components/LocaleSwitcher.astro'
+import { baseLocale, localizedPath, locales, splitLocalePrefix, type Locale } from '../i18n/locale'
+import { buildOrigin } from '../server/origin'
 
 interface Props {
   /** Document title, already translated by the page. */
   title: string
+  /** False for pages that are not a URL to index (the 404): no canonical link, no hreflang alternates. */
+  indexable?: boolean
 }
 
-const { title } = Astro.props
+const { title, indexable = true } = Astro.props
 const locale = Astro.locals.locale
-// The page path without its language prefix (whether Astro.url is the request or the rewritten URL).
+// The page path without its language prefix.
 const { path } = splitLocalePrefix(Astro.url.pathname)
-const href = (l: typeof locale) => new URL(localizedPath(path, l), env.PUBLIC_ORIGIN).href
+// A prerendered page is built without the server's environment: only PUBLIC_ORIGIN is needed then.
+const origin = Astro.isPrerendered ? buildOrigin() : (await import('../server/env')).env.PUBLIC_ORIGIN
+const href = (l: Locale) => new URL(localizedPath(path, l), origin).href
 ---
 
 <!doctype html>
@@ -23,8 +27,17 @@ const href = (l: typeof locale) => new URL(localizedPath(path, l), env.PUBLIC_OR
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>{title}</title>
-    {locales.map((l) => <link rel="alternate" hreflang={l} href={href(l)} />)}
-    <link rel="alternate" hreflang="x-default" href={href(baseLocale)} />
+    {
+      indexable && (
+        <>
+          <link rel="canonical" href={href(locale)} />
+          {locales.map((l) => (
+            <link rel="alternate" hreflang={l} href={href(l)} />
+          ))}
+          <link rel="alternate" hreflang="x-default" href={href(baseLocale)} />
+        </>
+      )
+    }
     <!-- Theme before first paint: an explicit choice in localStorage ("light" | "dark"), else the system preference. -->
     <script is:inline>
       ;(() => {
@@ -41,7 +54,7 @@ const href = (l: typeof locale) => new URL(localizedPath(path, l), env.PUBLIC_OR
   </head>
   <body class="min-h-dvh antialiased">
     <header class="flex justify-end p-4">
-      <LocaleSwitcher client:load path={path + Astro.url.search} current={locale} />
+      <LocaleSwitcher path={path + Astro.url.search} current={locale} />
     </header>
     <slot />
   </body>

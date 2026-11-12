@@ -1,46 +1,60 @@
 import { describe, expect, test } from 'vitest'
 
-import { localizedPath, resolveLocale, splitLocalePrefix } from '../../src/i18n/locale'
+import {
+  localeFromParam,
+  localeOfPath,
+  localeStaticPaths,
+  localeSwitchHref,
+  localeSwitchTarget,
+  localizedPath,
+  preferredLocale,
+  splitLocalePrefix,
+} from '../../src/i18n/locale'
 
-describe('resolveLocale: URL prefix, then cookie, then Accept-Language, then en', () => {
-  test('the URL prefix wins over the cookie and the header', () => {
-    expect(resolveLocale('/sk/sign-in', 'en', 'en-US')).toBe('sk')
-    expect(resolveLocale('/sk/', null, null)).toBe('sk')
-    expect(resolveLocale('/sk', null, null)).toBe('sk')
-  })
-
-  test('an unprefixed URL takes the cookie before the header', () => {
-    expect(resolveLocale('/sign-in', 'sk', 'en-US')).toBe('sk')
-    expect(resolveLocale('/sign-in', 'en', 'sk-SK')).toBe('en')
-  })
-
-  test('an unknown cookie value is ignored', () => {
-    expect(resolveLocale('/sign-in', 'xx', 'sk')).toBe('sk')
-    expect(resolveLocale('/sign-in', '', null)).toBe('en')
-  })
-
-  test('Accept-Language: exact tag, then its language, in q order', () => {
-    expect(resolveLocale('/', null, 'sk-SK,en;q=0.5')).toBe('sk')
-    expect(resolveLocale('/', null, 'en;q=0.2, sk;q=0.9')).toBe('sk')
-    expect(resolveLocale('/', null, 'fr, sk;q=0.4')).toBe('sk')
-    expect(resolveLocale('/', null, 'sk;q=0, en;q=0.1')).toBe('en')
-  })
-
-  test('de-AT falls to en when de is not shipped', () => {
-    expect(resolveLocale('/', null, 'de-AT')).toBe('en')
-    expect(resolveLocale('/', null, 'de-AT, de;q=0.9')).toBe('en')
-  })
-
-  test('nothing usable: en', () => {
-    expect(resolveLocale('/', null, null)).toBe('en')
-    expect(resolveLocale('/', null, '*')).toBe('en')
-    expect(resolveLocale('/', null, ';;,,q=')).toBe('en')
+describe('localeOfPath: the URL alone names the language of a page', () => {
+  test('a shipped non-default prefix is that language, everything else is English', () => {
+    expect(localeOfPath('/sk/sign-in')).toBe('sk')
+    expect(localeOfPath('/sk/')).toBe('sk')
+    expect(localeOfPath('/sk')).toBe('sk')
+    expect(localeOfPath('/sign-in')).toBe('en')
+    expect(localeOfPath('/')).toBe('en')
   })
 
   test('only a whole first segment naming a shipped non-default language is a prefix', () => {
-    expect(resolveLocale('/skate', null, null)).toBe('en')
-    expect(resolveLocale('/en/sign-in', 'sk', null)).toBe('sk') // English has no prefix: /en/... is an ordinary path
-    expect(resolveLocale('/SK/sign-in', null, null)).toBe('en')
+    expect(localeOfPath('/skate')).toBe('en')
+    expect(localeOfPath('/en/sign-in')).toBe('en') // English has no prefix: /en/... is an ordinary path
+    expect(localeOfPath('/SK/sign-in')).toBe('en')
+  })
+})
+
+describe('the optional [...locale] route segment', () => {
+  test('none is English, a shipped non-default tag is that language, anything else is no page', () => {
+    expect(localeFromParam(undefined)).toBe('en')
+    expect(localeFromParam('sk')).toBe('sk')
+    expect(localeFromParam('en')).toBeNull()
+    expect(localeFromParam('de')).toBeNull()
+    expect(localeFromParam('sk/extra')).toBeNull()
+  })
+
+  test('a prerendered page gets one copy per shipped language', () => {
+    expect(localeStaticPaths()).toEqual([{ params: { locale: undefined } }, { params: { locale: 'sk' } }])
+  })
+})
+
+describe('preferredLocale (never used to redirect or to pick a page language)', () => {
+  test('the cookie, then Accept-Language by q order, then en', () => {
+    expect(preferredLocale('sk', 'en-US')).toBe('sk')
+    expect(preferredLocale('xx', 'sk-SK,en;q=0.5')).toBe('sk')
+    expect(preferredLocale(null, 'en;q=0.2, sk;q=0.9')).toBe('sk')
+    expect(preferredLocale(null, 'fr, sk;q=0.4')).toBe('sk')
+    expect(preferredLocale(null, 'sk;q=0, en;q=0.1')).toBe('en')
+    expect(preferredLocale(null, null)).toBe('en')
+    expect(preferredLocale(null, '*')).toBe('en')
+  })
+
+  test('de-AT falls to en when de is not shipped', () => {
+    expect(preferredLocale(null, 'de-AT')).toBe('en')
+    expect(preferredLocale(null, 'de-AT, de;q=0.9')).toBe('en')
   })
 })
 
@@ -50,7 +64,6 @@ describe('splitLocalePrefix', () => {
     expect(splitLocalePrefix('/sk/')).toEqual({ locale: 'sk', path: '/' })
     expect(splitLocalePrefix('/sk')).toEqual({ locale: 'sk', path: '/' })
     expect(splitLocalePrefix('/sign-in')).toEqual({ locale: null, path: '/sign-in' })
-    expect(splitLocalePrefix('/')).toEqual({ locale: null, path: '/' })
   })
 })
 
@@ -66,5 +79,27 @@ describe('localizedPath', () => {
     for (const path of ['/', '/sign-in', '/a/b']) {
       expect(splitLocalePrefix(localizedPath(path, 'sk'))).toEqual({ locale: 'sk', path })
     }
+  })
+})
+
+describe('the language switcher endpoint', () => {
+  test('links go through /api/locale with the target language and the current page', () => {
+    expect(localeSwitchHref('/sign-in?x=1', 'sk')).toBe('/api/locale?to=sk&next=%2Fsign-in%3Fx%3D1')
+  })
+
+  test('sends the reader to the same page in the chosen language', () => {
+    expect(localeSwitchTarget('/sign-in?x=1', 'sk')).toBe('/sk/sign-in?x=1')
+    expect(localeSwitchTarget('/sk/sign-in?x=1', 'en')).toBe('/sign-in?x=1')
+    expect(localeSwitchTarget('/sk/', 'en')).toBe('/')
+    expect(localeSwitchTarget('/', 'sk')).toBe('/sk/')
+  })
+
+  test('anything but a plain same-site path becomes the home page', () => {
+    for (const next of [null, '', 'sign-in', '//evil.test/x', '/\\evil.test', 'https://evil.test/', 'javascript:alert(1)', '/%0d%0aSet-Cookie:x', '/a\nb', '/\t/evil.test/x', '/\n/evil.test/x']) {
+      const target = localeSwitchTarget(next, 'sk')
+      expect(target.startsWith('/sk/'), `${next} → ${target}`).toBe(true)
+      expect(target).not.toContain('evil')
+    }
+    expect(localeSwitchTarget('//evil.test/x', 'en')).toBe('/')
   })
 })

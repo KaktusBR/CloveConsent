@@ -1,0 +1,33 @@
+---
+import { localeSwitchHref, locales, type Locale } from '../i18n/locale'
+import { m } from '../paraglide/messages.js'
+
+interface Props {
+  /** The current page's path and query without a language prefix, e.g. `/sign-in?next=x`. */
+  path: string
+  /** The page's language. */
+  current: Locale
+}
+
+const { path, current } = Astro.props
+---
+
+<!-- Plain links through /api/locale (no JavaScript): it remembers the choice and opens this page in that language. -->
+<nav aria-label={m.locale_switcher_label()}>
+  <ul class="flex gap-3 text-sm">
+    {
+      locales.map((locale) => (
+        <li>
+          <a
+            href={localeSwitchHref(path, locale)}
+            lang={locale}
+            aria-current={locale === current ? 'true' : undefined}
+            class="underline-offset-4 hover:underline aria-[current=true]:font-semibold"
+          >
+            {m.language_name({}, { locale })}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</nav>

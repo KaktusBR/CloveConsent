@@ -23,10 +23,12 @@ const validateEnvAtBoot = {
 
 // No site/domain here: the public origin comes from PUBLIC_ORIGIN at runtime (src/server/env.ts).
 //
-// Languages: no Astro `i18n` block. Pages exist once, unprefixed (src/pages/sign-in.astro); src/middleware.ts
-// serves `/sk/sign-in` from it and sets Astro.locals.locale. The languages come from project.inlang/settings.json
-// alone, so adding one is adding messages/<tag>.json and its tag there. The Paraglide plugin recompiles
-// src/paraglide/ when a catalog changes in `astro dev` (options: project.inlang/paraglide.config.js).
+// Languages: pages live under src/pages/[...locale]/, an optional first segment (none = English, `sk`), so
+// one file answers /sign-in and /sk/sign-in, server-rendered or prerendered (getStaticPaths:
+// localeStaticPaths). No Astro `i18n` block: with prefixDefaultLocale false it wants a copy of every page
+// per language. The languages come from project.inlang/settings.json alone, so adding one is adding
+// messages/<tag>.json and its tag there. The Paraglide plugin recompiles src/paraglide/ when a catalog
+// changes in `astro dev` (options: project.inlang/paraglide.config.js).
 export default defineConfig({
   output: 'server',
   adapter: node({ mode: 'standalone' }),

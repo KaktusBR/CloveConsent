@@ -1,0 +1,16 @@
+---
+import Base from '../../layouts/Base.astro'
+import { localeFromParam } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+
+// Rendered per request, at /sign-in and /sk/sign-in. The form arrives with authentication.
+export const prerender = false
+
+if (!localeFromParam(Astro.params.locale)) return Astro.rewrite('/404')
+---
+
+<Base title={m.sign_in_title()}>
+  <main class="mx-auto max-w-md px-4 py-12">
+    <h1 class="text-3xl font-semibold tracking-tight">{m.sign_in_heading()}</h1>
+  </main>
+</Base>

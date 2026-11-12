@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
+import { expectAccessible } from './axe'
+
 /** Expected texts come from the catalogs; a key missing there fails the test instead of matching undefined. */
 function catalog(locale: string): (key: string) => string {
   const texts = JSON.parse(readFileSync(`messages/${locale}.json`, 'utf8')) as Record<string, string>
@@ -13,85 +15,119 @@ function catalog(locale: string): (key: string) => string {
 const en = catalog('en')
 const sk = catalog('sk')
 
-/** The switcher is an island: wait until it is hydrated, so a click also remembers the choice. */
-async function switcher(page: Page) {
-  await expect(page.locator('astro-island[ssr]')).toHaveCount(0)
-  return page.getByRole('navigation', { name: page.url().includes('/sk/') ? sk('locale_switcher_label') : en('locale_switcher_label') })
+const switcher = (page: Page, t: (key: string) => string) => page.getByRole('navigation', { name: t('locale_switcher_label') })
+
+async function expectPage(page: Page, lang: 'en' | 'sk', heading: string) {
+  await expect(page.locator('html')).toHaveAttribute('lang', lang)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading)
 }
 
-test('/ is English, /sk/ is Slovak, each with lang and hreflang alternates', async ({ page }) => {
-  const errors: string[] = []
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.type() === 'warning') errors.push(msg.text())
-  })
-  page.on('pageerror', (error) => errors.push(error.message))
+test('the prerendered home page is built once per language: dist/client/index.html and sk/index.html', () => {
+  const english = readFileSync('dist/client/index.html', 'utf8')
+  const slovak = readFileSync('dist/client/sk/index.html', 'utf8')
+  expect(english).toContain('<html lang="en"')
+  expect(english).toContain(en('home_heading'))
+  expect(slovak).toContain('<html lang="sk"')
+  expect(slovak).toContain(sk('home_heading'))
+})
 
+test('/ is English and /sk/ is Slovak, with canonical and hreflang alternates', async ({ page }) => {
   await page.goto('/')
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(en('home_heading'))
+  await expectPage(page, 'en', en('home_heading'))
+  await expectAccessible(page)
 
   const response = await page.goto('/sk/')
   expect(response?.status()).toBe(200)
-  await expect(page.locator('html')).toHaveAttribute('lang', 'sk')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(sk('home_heading'))
-  await expect(page.getByRole('link', { name: sk('language_name') })).toHaveAttribute('aria-current', 'true')
+  await expectPage(page, 'sk', sk('home_heading'))
+  await expect(switcher(page, sk).getByRole('link', { name: sk('language_name') })).toHaveAttribute('aria-current', 'true')
 
   const origin = new URL(page.url()).origin
+  await expect(page.locator('link[rel=canonical]')).toHaveAttribute('href', `${origin}/sk/`)
   await expect(page.locator('link[rel=alternate][hreflang=en]')).toHaveAttribute('href', `${origin}/`)
   await expect(page.locator('link[rel=alternate][hreflang=sk]')).toHaveAttribute('href', `${origin}/sk/`)
   await expect(page.locator('link[rel=alternate][hreflang=x-default]')).toHaveAttribute('href', `${origin}/`)
-
-  // The island hydrates in the page's language (a mismatch would be logged by React).
-  await switcher(page)
-  expect(errors).toEqual([])
+  await expectAccessible(page)
 })
 
-test('the switcher keeps the current page', async ({ page }) => {
+test('a server-rendered page answers in both languages; other prefixes are not pages', async ({ page, request }) => {
+  const english = await page.goto('/sign-in')
+  expect(english?.headers()['x-request-id']).toBeTruthy() // rendered per request, through the middleware
+  await expectPage(page, 'en', en('sign_in_heading'))
+  await expectAccessible(page)
+
+  await page.goto('/sk/sign-in')
+  await expectPage(page, 'sk', sk('sign_in_heading'))
+  await expect(page.locator('link[rel=canonical]')).toHaveAttribute('href', `${new URL(page.url()).origin}/sk/sign-in`)
+  await expectAccessible(page)
+
+  for (const path of ['/en/sign-in', '/de/sign-in', '/sk/sk/sign-in']) {
+    expect((await request.get(path)).status(), path).toBe(404)
+  }
+})
+
+// The node adapter serves the prerendered /sk/index.html for /sk itself, before any app code runs
+// (trailingSlash 'ignore'); the canonical link names /sk/, so search engines see one URL.
+test('/sk is the Slovak home page, canonically /sk/', async ({ request }) => {
+  const res = await request.get('/sk', { maxRedirects: 0 })
+  expect(res.status()).toBe(200)
+  expect(await res.text()).toMatch(/<link rel="canonical" href="[^"]+\/sk\/"/)
+})
+
+test('the 404 page is in the language of its URL, without alternates, and the switcher keeps the page', async ({ page }) => {
   const response = await page.goto('/sk/no-such-page?x=1')
   expect(response?.status()).toBe(404)
-  await expect(page.locator('html')).toHaveAttribute('lang', 'sk')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(sk('not_found_heading'))
+  await expectPage(page, 'sk', sk('not_found_heading'))
+  await expect(page.locator('link[rel=alternate]')).toHaveCount(0)
+  await expect(page.locator('link[rel=canonical]')).toHaveCount(0)
+  await expectAccessible(page)
 
-  await (await switcher(page)).getByRole('link', { name: en('language_name') }).click()
+  await switcher(page, sk).getByRole('link', { name: en('language_name') }).click()
   await expect(page).toHaveURL(/\/no-such-page\?x=1$/)
   expect(new URL(page.url()).pathname).toBe('/no-such-page')
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(en('not_found_heading'))
+  await expectPage(page, 'en', en('not_found_heading'))
+  await expectAccessible(page)
 
-  await (await switcher(page)).getByRole('link', { name: sk('language_name') }).click()
+  await switcher(page, en).getByRole('link', { name: sk('language_name') }).click()
   await expect(page).toHaveURL(/\/sk\/no-such-page\?x=1$/)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(sk('not_found_heading'))
+  await expectPage(page, 'sk', sk('not_found_heading'))
 })
 
-test.describe('a browser that prefers Slovak', () => {
-  test.use({ locale: 'sk-SK' })
+test.describe('a browser that prefers Slovak, without JavaScript', () => {
+  test.use({ locale: 'sk-SK', javaScriptEnabled: false })
 
-  test('is sent to /sk/, and picking English sticks', async ({ page }) => {
-    await page.goto('/')
+  test('is never redirected: / is English; the switcher works and remembers the choice', async ({ page, context }) => {
+    const response = await page.goto('/')
+    expect(response?.request().redirectedFrom()).toBeNull()
+    await expectPage(page, 'en', en('home_heading'))
+
+    await switcher(page, en).getByRole('link', { name: sk('language_name') }).click()
     await expect(page).toHaveURL(/\/sk\/$/)
-    await expect(page.locator('html')).toHaveAttribute('lang', 'sk')
+    await expectPage(page, 'sk', sk('home_heading'))
+    expect((await context.cookies()).find((c) => c.name === 'locale')?.value).toBe('sk')
 
-    await (await switcher(page)).getByRole('link', { name: en('language_name') }).click()
-    await expect(page).toHaveURL(/\/$/)
+    await switcher(page, sk).getByRole('link', { name: en('language_name') }).click()
     expect(new URL(page.url()).pathname).toBe('/')
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-
-    await page.reload()
-    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(en('home_heading'))
+    await expectPage(page, 'en', en('home_heading'))
+    expect((await context.cookies()).find((c) => c.name === 'locale')?.value).toBe('en')
   })
 })
 
-test('unprefixed responses vary on the inputs that choose their language; probes are untouched', async ({ request }) => {
-  const redirect = await request.get('/?x=1', { headers: { 'Accept-Language': 'sk', Accept: 'text/html' }, maxRedirects: 0 })
-  expect(redirect.status()).toBe(307)
-  expect(redirect.headers()['location']).toBe('/sk/?x=1')
-  expect(redirect.headers()['vary']).toBe('Cookie, Accept-Language')
+test('the switcher endpoint sets the cookie and redirects only to a page of this site', async ({ request }) => {
+  const ok = await request.get('/api/locale?to=sk&next=%2Fsign-in%3Fx%3D1', { maxRedirects: 0 })
+  expect(ok.status()).toBe(303)
+  expect(ok.headers()['location']).toBe('/sk/sign-in?x=1')
+  expect(ok.headers()['cache-control']).toBe('no-store')
+  const cookie = ok.headers()['set-cookie'] ?? ''
+  expect(cookie).toMatch(/^locale=sk;/)
+  expect(cookie).toMatch(/Path=\//)
+  expect(cookie).toMatch(/SameSite=Lax/i)
+  expect(cookie).toMatch(/HttpOnly/i)
 
-  const english = await request.get('/', { headers: { Accept: 'text/html' } })
-  expect(english.headers()['vary']).toContain('Cookie, Accept-Language')
+  const offsite = await request.get('/api/locale?to=en&next=%2F%2Fevil.test%2Fx', { maxRedirects: 0 })
+  expect(offsite.status()).toBe(303)
+  expect(offsite.headers()['location']).toBe('/')
 
-  const probe = await request.get('/healthz', { headers: { 'Accept-Language': 'sk', Accept: 'text/html' }, maxRedirects: 0 })
-  expect(probe.status()).toBe(200)
-  expect(probe.headers()['vary']).toBeUndefined()
+  const unknown = await request.get('/api/locale?to=xx&next=%2F', { maxRedirects: 0 })
+  expect(unknown.status()).toBe(400)
+  expect(unknown.headers()['set-cookie']).toBeUndefined()
 })

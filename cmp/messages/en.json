@@ -8,5 +8,7 @@
   "not_found_title": "Page not found",
   "not_found_heading": "This page does not exist",
   "not_found_body": "Check the address, or go back to the start.",
-  "not_found_home_link": "Back to the start"
+  "not_found_home_link": "Back to the start",
+  "sign_in_title": "Sign in – CloveConsent",
+  "sign_in_heading": "Sign in"
 }

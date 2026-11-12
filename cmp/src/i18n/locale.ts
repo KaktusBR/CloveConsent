@@ -3,10 +3,13 @@ import { baseLocale, locales, type Locale } from '../paraglide/runtime.js'
 export { baseLocale, locales, type Locale }
 
 /**
- * Remembers the language picked in the switcher (see LocaleSwitcher). Only consulted for
- * unprefixed URLs: a `/sk/...` URL is Slovak whatever the cookie says.
+ * The language picked in the switcher (set by /api/locale). Never used to redirect or to choose the
+ * language of a page: the URL alone does that. Read by {@link preferredLocale}.
  */
 export const LOCALE_COOKIE = 'locale'
+
+/** The switcher's endpoint (src/pages/api/locale.ts). */
+export const LOCALE_SWITCH_PATH = '/api/locale'
 
 function shipped(value: string | null | undefined): Locale | null {
   return (locales as readonly string[]).includes(value ?? '') ? (value as Locale) : null
@@ -22,6 +25,48 @@ export function splitLocalePrefix(pathname: string): { locale: Locale | null; pa
   const locale = shipped(match?.[1])
   if (!match || !locale || locale === baseLocale) return { locale: null, path: pathname }
   return { locale, path: match[2] ?? '/' }
+}
+
+/** The language of a page URL: its prefix, else English. Cookies and Accept-Language never change it. */
+export function localeOfPath(pathname: string): Locale {
+  return splitLocalePrefix(pathname).locale ?? baseLocale
+}
+
+/**
+ * The language named by the optional `[...locale]` route segment (src/pages/[...locale]/*):
+ * none is English, `sk` is Slovak; anything else (including `en`, which has no prefix) is no page.
+ */
+export function localeFromParam(param: string | undefined): Locale | null {
+  if (param === undefined) return baseLocale
+  const locale = shipped(param)
+  return locale && locale !== baseLocale ? locale : null
+}
+
+/** `getStaticPaths` of a prerendered `[...locale]` page: one copy per language (`/x` and `/sk/x`). */
+export function localeStaticPaths(): { params: { locale: string | undefined } }[] {
+  return locales.map((locale) => ({ params: { locale: locale === baseLocale ? undefined : locale } }))
+}
+
+/** The URL path of a page in a language: `/sign-in` stays as is in English and becomes `/sk/sign-in` in Slovak. */
+export function localizedPath(path: string, locale: Locale): string {
+  return locale === baseLocale ? path : `/${locale}${path}`
+}
+
+/** The switcher's link: through /api/locale, which remembers the choice and opens `current` in `locale`. */
+export function localeSwitchHref(current: string, locale: Locale): string {
+  return `${LOCALE_SWITCH_PATH}?${new URLSearchParams({ to: locale, next: current })}`
+}
+
+/**
+ * Where /api/locale sends the reader: `next` (a path on this site, with or without a language prefix)
+ * in `locale`. Anything that is not a plain same-site path (`//host`, `/\host`, `https:...`) becomes `/`.
+ */
+export function localeSwitchTarget(next: string | null, locale: Locale): string {
+  const safe = next !== null && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/'
+  // The URL parser drops tabs and newlines (`/\t/evil.test` becomes `//evil.test`): check the host it ends up with.
+  const url = new URL(safe, 'http://same.invalid')
+  if (url.host !== 'same.invalid') return localizedPath('/', locale)
+  return localizedPath(splitLocalePrefix(url.pathname).path, locale) + url.search
 }
 
 /** The first shipped language in an Accept-Language header, by q-value; `de-AT` also tries `de`. */
@@ -45,18 +90,13 @@ function fromAcceptLanguage(header: string): Locale | null {
 }
 
 /**
- * The language of a request: the URL prefix wins, then the switcher's cookie, then the
- * browser's Accept-Language, then English.
+ * The reader's preferred language where a response has no language in its URL (e.g. an email or an
+ * API error, in later tasks): the switcher's cookie, then Accept-Language, then English. Never used
+ * to redirect or to pick the language of a page.
  *
- * @param pathname the request path, e.g. `/sk/sign-in`
  * @param cookie the value of the {@link LOCALE_COOKIE} cookie, if any
  * @param acceptLanguage the Accept-Language header, if any
  */
-export function resolveLocale(pathname: string, cookie: string | null, acceptLanguage: string | null): Locale {
-  return splitLocalePrefix(pathname).locale ?? shipped(cookie) ?? (acceptLanguage ? fromAcceptLanguage(acceptLanguage) : null) ?? baseLocale
-}
-
-/** The URL path of a page in a language: `/sign-in` stays as is in English and becomes `/sk/sign-in` in Slovak. */
-export function localizedPath(path: string, locale: Locale): string {
-  return locale === baseLocale ? path : `/${locale}${path}`
+export function preferredLocale(cookie: string | null, acceptLanguage: string | null): Locale {
+  return shipped(cookie) ?? (acceptLanguage ? fromAcceptLanguage(acceptLanguage) : null) ?? baseLocale
 }

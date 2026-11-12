@@ -4,7 +4,7 @@ declare namespace App {
     requestId: string
     /** The process logger bound to this request's id. */
     log: import('./server/log').Logger
-    /** The language of this request (src/i18n/locale.ts: URL prefix, cookie, Accept-Language, then en). */
+    /** The language of this page: its URL prefix (`/sk/...`), else English (src/i18n/locale.ts). */
     locale: import('./i18n/locale').Locale
   }
 }

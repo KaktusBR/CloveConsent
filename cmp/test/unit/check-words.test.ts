@@ -63,6 +63,38 @@ describe('check-words: literal text in .astro and .tsx', () => {
     expect(await lines('src/components/X.tsx', 'export const X = () => (\n  // words-ok:\n  <p>CloveConsent</p>\n)\n')).toEqual([3])
   })
 
+  test('flags markup passed in a .tsx or .astro attribute value', async () => {
+    expect(await lines('src/components/X.tsx', 'export const X = () => (\n  <Suspense fallback={<p>Loading forever</p>}>{c}</Suspense>\n)\n')).toEqual([2])
+    expect(await lines('src/components/X.tsx', 'export const X = () => <Tip content={<span>Delete account</span>} />\n')).toEqual([1])
+    expect(await lines('src/pages/x.astro', '<Tip content={<span>Delete account</span>} />\n')).toEqual([1])
+    expect(await lines('src/pages/x.astro', '<Tip content={<span>{m.delete()}</span>} />\n')).toEqual([])
+  })
+
+  test('flags literals in the branches of a conditional, ?? or || child', async () => {
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a: boolean }) => <p>{a ? 'Yes' : m.no()}</p>\n")).toEqual([1])
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a?: string }) => <p>{a ?? 'Nobody'}</p>\n")).toEqual([1])
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a?: string }) => <p>{a || 'Nobody'}</p>\n")).toEqual([1])
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a: boolean }) => <p>{a && 'Shown'}</p>\n")).toEqual([1])
+    expect(await lines('src/pages/x.astro', "<p>{a ? 'Yes' : 'No'}</p>\n")).toEqual([1, 1])
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a: boolean }) => <p title={a ? 'On' : m.off()}>{a ? m.yes() : m.no()}</p>\n")).toEqual([1])
+    expect(await lines('src/components/X.tsx', "export const X = ({ a }: { a: boolean }) => <p className={a ? 'flex' : 'hidden'} />\n")).toEqual([])
+  })
+
+  test('flags the value of submit/button inputs, meta description and social texts, and set:text', async () => {
+    expect(await lines('src/pages/x.astro', '<input type="submit" value="Save" />\n<input type="text" value="kept" />\n')).toEqual([1])
+    expect(await lines('src/components/X.tsx', 'export const X = () => <input type="button" value="Go" />\n')).toEqual([1])
+    const meta = [
+      '<meta name="description" content="Consent made simple" />',
+      '<meta property="og:title" content="CloveConsent home" />',
+      '<meta name="twitter:description" content="Consent" />',
+      '<meta property="og:image" content="https://x.test/a.png" />',
+      '<meta name="twitter:card" content="summary" />',
+      '<meta name="viewport" content="width=device-width" />',
+    ].join('\n')
+    expect(await lines('src/pages/x.astro', meta)).toEqual([1, 2, 3])
+    expect(await lines('src/pages/x.astro', '<p set:text="Hello" />\n<p set:text={\'Hi\'} />\n<p set:text={m.hi()} />\n')).toEqual([1, 2])
+  })
+
   test('the finding names the file, line and the offending text', async () => {
     const [finding] = await checkSource('src/pages/x.astro', '<main>\n  <p>\n    Hello there\n  </p>\n</main>\n')
     expect(finding).toMatchObject({ file: 'src/pages/x.astro', line: 3 })

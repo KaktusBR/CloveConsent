@@ -8,5 +8,7 @@
   "not_found_title": "Stránka sa nenašla",
   "not_found_heading": "Táto stránka neexistuje",
   "not_found_body": "Skontrolujte adresu alebo sa vráťte na začiatok.",
-  "not_found_home_link": "Späť na začiatok"
+  "not_found_home_link": "Späť na začiatok",
+  "sign_in_title": "Prihlásenie – CloveConsent",
+  "sign_in_heading": "Prihlásenie"
 }

@@ -65,26 +65,37 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm run i18n` | compiles the catalogs into `src/paraglide/` (generated, not in git); `dev`, `build`, `typecheck` and `test` run it first |
 | `npm run check:words` | fails on user-visible text written in `.astro`/`.tsx` sources and on incomplete catalogs (see Languages) |
 | `npm test` | unit tests (Vitest) |
-| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); needs `docker compose up -d` |
+| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); needs `docker compose up -d` |
 
 ## Languages
 
 Every visible word comes from the Paraglide catalogs: `messages/en.json` is the source, `messages/sk.json`
 ships too. Use the typed functions: `import { m } from '@/paraglide/messages.js'`, then `{m.home_heading()}`.
 
-- URLs: English has no prefix (`/sign-in`), other languages do (`/sk/sign-in`). Pages exist once, unprefixed;
-  `src/middleware.ts` serves the prefixed URL from the same page and sets `Astro.locals.locale`.
-- Language of a request (`resolveLocale` in `src/i18n/locale.ts`): the URL prefix, else the `locale` cookie
-  (set by the language switcher), else `Accept-Language` (`de-AT` also tries `de`), else English. A page load
-  of an unprefixed URL whose language is not English is redirected (307) to its prefixed URL.
+- URLs: English has no prefix (`/sign-in`), other languages do (`/sk/sign-in`). Pages live under
+  `src/pages/[...locale]/` (optional first segment): one file answers both URLs. A server-rendered page
+  checks the segment with `localeFromParam(Astro.params.locale)` (anything else is a 404); a prerendered one
+  exports `getStaticPaths = localeStaticPaths` and is built once per language (`dist/client/sk/index.html`).
+- The language of a page is its URL, nothing else (`localeOfPath`): an unprefixed URL is always English,
+  `/sk/...` always Slovak. No redirect on Accept-Language or cookie. The middleware sets
+  `Astro.locals.locale` from it (also while prerendering).
+- The switcher (`src/components/LocaleSwitcher.astro`, in `Base.astro`) is plain links to
+  `GET /api/locale?to=sk&next=/current/page`, which stores the choice in the `locale` cookie and redirects
+  (303) to the same page in that language; `next` must be a path on this site. Works without JavaScript.
+  `preferredLocale(cookie, acceptLanguage)` reads that choice for responses with no language in the URL
+  (emails, API errors).
 - Links to a page in a language: `localizedPath('/sign-in', locale)`. `Base.astro` sets `<html lang>`,
-  the `hreflang` alternates and the language switcher.
+  `<link rel="canonical">` and the `hreflang` alternates (not on the 404 page: `indexable={false}`).
+- Prerendered pages link to `PUBLIC_ORIGIN`, so the build needs it too (only that variable; the image
+  takes it as `--build-arg PUBLIC_ORIGIN=...`).
 - Adding a language: add `messages/<tag>.json` (with every key of `en.json`) and the tag to `locales` in
   `project.inlang/settings.json`. Nothing else.
 - A key missing from a translation shows the English text, and `npm run check:words` fails.
-- `check:words` parses sources (it does not grep): text in markup and literal `title`, `alt`, `placeholder`,
-  `label`, `aria-label` (and other text-carrying `aria-*`, and `...Label` props) fail. Code, `<code>`, `<pre>`,
-  punctuation and numbers pass. A deliberate exception needs `// words-ok: <reason>` on the line or the line
+- `check:words` parses sources (it does not grep): text in markup (also markup passed in an attribute),
+  string literals rendered as children (also in `?:`, `??`, `||`, `&&` branches), and literal `title`, `alt`,
+  `placeholder`, `label`, `aria-label` (and other text-carrying `aria-*`, `...Label` props, `set:text`, the
+  `value` of submit/button inputs, `content` of description and social text `<meta>`) fail. Code, `<code>`,
+  `<pre>`, punctuation and numbers pass. A deliberate exception needs `// words-ok: <reason>` on the line or the line
   above. Machine responses in `.ts` endpoints (`/healthz`'s `ok`) are not user-facing text.
 
 ## Health
@@ -101,7 +112,7 @@ authorization, cookie, password, secret, token, api key or database URL (any cas
 One image runs either process. Build from the repository root (the image builds the library first):
 
 ```sh
-docker build -f cmp/Dockerfile -t cloveconsent-cmp .
+docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://consent.example -t cloveconsent-cmp .
 docker run --read-only --env-file cmp/.env -p 4321:4321 cloveconsent-cmp            # app
 docker run --read-only --env-file cmp/.env cloveconsent-cmp node dist/worker.js      # worker
 ```
