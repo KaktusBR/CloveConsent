@@ -46,6 +46,8 @@ jobs:
         working-directory: cmp
       - run: npm run lint
         working-directory: cmp
+      - run: npm run check:words
+        working-directory: cmp
       - run: npm test
         working-directory: cmp
       - run: npx playwright install --with-deps chromium

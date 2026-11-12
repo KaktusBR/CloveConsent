@@ -1,0 +1,12 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "language_name": "Slovenčina",
+  "locale_switcher_label": "Jazyk",
+  "home_title": "CloveConsent",
+  "home_heading": "Správa súhlasov pre vaše webové stránky",
+  "home_intro": "Nastavte lištu súhlasu, uchovávajte záznam o každej voľbe a majte pod kontrolou skripty, ktoré vaše stránky načítavajú.",
+  "not_found_title": "Stránka sa nenašla",
+  "not_found_heading": "Táto stránka neexistuje",
+  "not_found_body": "Skontrolujte adresu alebo sa vráťte na začiatok.",
+  "not_found_home_link": "Späť na začiatok"
+}

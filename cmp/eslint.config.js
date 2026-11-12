@@ -8,7 +8,7 @@ import tseslint from 'typescript-eslint'
 import dataLayerOnly from './eslint-rules/data-layer-only.js'
 
 export default defineConfig(
-  { ignores: ['dist/', '.astro/', 'node_modules/', 'test-results/', 'playwright-report/'] },
+  { ignores: ['dist/', '.astro/', 'node_modules/', 'test-results/', 'playwright-report/', 'src/paraglide/'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   astro.configs.recommended,

@@ -1,23 +1,30 @@
 ---
 import '../styles/global.css'
+import LocaleSwitcher from '../components/LocaleSwitcher'
+import { baseLocale, localizedPath, locales, splitLocalePrefix } from '../i18n/locale'
+import { env } from '../server/env'
 
 interface Props {
   /** Document title, already translated by the page. */
   title: string
-  /** BCP 47 language of the page. */
-  lang?: string
 }
 
-const { title, lang = 'en' } = Astro.props
+const { title } = Astro.props
+const locale = Astro.locals.locale
+// The page path without its language prefix (whether Astro.url is the request or the rewritten URL).
+const { path } = splitLocalePrefix(Astro.url.pathname)
+const href = (l: typeof locale) => new URL(localizedPath(path, l), env.PUBLIC_ORIGIN).href
 ---
 
 <!doctype html>
-<html lang={lang}>
+<html lang={locale}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>{title}</title>
+    {locales.map((l) => <link rel="alternate" hreflang={l} href={href(l)} />)}
+    <link rel="alternate" hreflang="x-default" href={href(baseLocale)} />
     <!-- Theme before first paint: an explicit choice in localStorage ("light" | "dark"), else the system preference. -->
     <script is:inline>
       ;(() => {
@@ -33,6 +40,9 @@ const { title, lang = 'en' } = Astro.props
     </script>
   </head>
   <body class="min-h-dvh antialiased">
+    <header class="flex justify-end p-4">
+      <LocaleSwitcher client:load path={path + Astro.url.search} current={locale} />
+    </header>
     <slot />
   </body>
 </html>

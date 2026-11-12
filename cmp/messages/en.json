@@ -1,0 +1,12 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "language_name": "English",
+  "locale_switcher_label": "Language",
+  "home_title": "CloveConsent",
+  "home_heading": "Consent management for your websites",
+  "home_intro": "Set up the consent banner, keep a record of every choice and stay in control of the scripts your sites load.",
+  "not_found_title": "Page not found",
+  "not_found_heading": "This page does not exist",
+  "not_found_body": "Check the address, or go back to the start.",
+  "not_found_home_link": "Back to the start"
+}

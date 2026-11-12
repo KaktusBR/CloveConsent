@@ -7,14 +7,16 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node --env-file-if-exists=.env node_modules/astro/bin/astro.mjs dev",
-    "build": "astro build && npm run build:worker",
+    "i18n": "paraglide-js compile --project ./project.inlang --silent",
+    "dev": "npm run i18n && node --env-file-if-exists=.env node_modules/astro/bin/astro.mjs dev",
+    "build": "npm run i18n && astro build && npm run build:worker",
     "build:worker": "esbuild src/worker.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=dist/worker.js",
     "start": "node --env-file-if-exists=.env dist/server/entry.mjs",
     "worker": "node --env-file-if-exists=.env dist/worker.js",
-    "typecheck": "astro check && tsc --noEmit",
+    "typecheck": "npm run i18n && astro check && tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "check:words": "node scripts/check-words.ts",
+    "test": "npm run i18n && vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -41,7 +43,10 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.12",
+    "@astrojs/compiler": "4.0.0",
     "@eslint/js": "10.0.1",
+    "@inlang/paraglide-js": "3.2.2",
+    "@inlang/plugin-message-format": "4.6.0",
     "@playwright/test": "1.65.0",
     "@types/node": "26.6.6",
     "@types/pg": "8.23.1",

@@ -14,3 +14,4 @@ cmp/.env*
 !cmp/.env.example
 cmp/test-results
 cmp/playwright-report
+cmp/src/paraglide

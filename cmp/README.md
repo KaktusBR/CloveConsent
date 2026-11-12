@@ -62,8 +62,30 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm start` / `npm run worker` | runs the built app / worker, with `.env` loaded if present |
 | `npm run typecheck` | `astro check` and `tsc --noEmit` (pages, sources, tests, configs) |
 | `npm run lint` | ESLint; only `src/server/data/` may import the database driver or client |
+| `npm run i18n` | compiles the catalogs into `src/paraglide/` (generated, not in git); `dev`, `build`, `typecheck` and `test` run it first |
+| `npm run check:words` | fails on user-visible text written in `.astro`/`.tsx` sources and on incomplete catalogs (see Languages) |
 | `npm test` | unit tests (Vitest) |
 | `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); needs `docker compose up -d` |
+
+## Languages
+
+Every visible word comes from the Paraglide catalogs: `messages/en.json` is the source, `messages/sk.json`
+ships too. Use the typed functions: `import { m } from '@/paraglide/messages.js'`, then `{m.home_heading()}`.
+
+- URLs: English has no prefix (`/sign-in`), other languages do (`/sk/sign-in`). Pages exist once, unprefixed;
+  `src/middleware.ts` serves the prefixed URL from the same page and sets `Astro.locals.locale`.
+- Language of a request (`resolveLocale` in `src/i18n/locale.ts`): the URL prefix, else the `locale` cookie
+  (set by the language switcher), else `Accept-Language` (`de-AT` also tries `de`), else English. A page load
+  of an unprefixed URL whose language is not English is redirected (307) to its prefixed URL.
+- Links to a page in a language: `localizedPath('/sign-in', locale)`. `Base.astro` sets `<html lang>`,
+  the `hreflang` alternates and the language switcher.
+- Adding a language: add `messages/<tag>.json` (with every key of `en.json`) and the tag to `locales` in
+  `project.inlang/settings.json`. Nothing else.
+- A key missing from a translation shows the English text, and `npm run check:words` fails.
+- `check:words` parses sources (it does not grep): text in markup and literal `title`, `alt`, `placeholder`,
+  `label`, `aria-label` (and other text-carrying `aria-*`, and `...Label` props) fail. Code, `<code>`, `<pre>`,
+  punctuation and numbers pass. A deliberate exception needs `// words-ok: <reason>` on the line or the line
+  above. Machine responses in `.ts` endpoints (`/healthz`'s `ok`) are not user-facing text.
 
 ## Health
 
