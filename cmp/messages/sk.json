@@ -1,6 +1,7 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "language_name": "Slovenčina",
+  "theme_toggle_label": "Tmavý režim",
   "locale_switcher_label": "Jazyk",
   "home_title": "CloveConsent",
   "home_heading": "Správa súhlasov pre vaše webové stránky",
