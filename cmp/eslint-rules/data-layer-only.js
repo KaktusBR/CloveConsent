@@ -1,5 +1,5 @@
 // Tenant isolation: only src/server/data/ may reach the database directly. Elsewhere this rule refuses
-// the Postgres drivers (any subpath), drizzle's driver entry points, and the data layer's client module,
+// the Postgres drivers (any subpath), drizzle's driver entry points, and the data layer's client and pool modules,
 // matched on the resolved file (so any relative spelling is caught), in static imports, re-exports,
 // dynamic import() and require(). A dynamic import() with a computed specifier is refused too: it
 // cannot be checked. The data layer exposes what others may use through its other modules.
@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const DATA_DIR = resolve(SRC_DIR, 'server', 'data')
 const CLIENT = resolve(DATA_DIR, 'client')
+const POOL = resolve(DATA_DIR, 'pool')
 const AUTH_DATABASE = resolve(DATA_DIR, 'auth-database')
 const AUTH_DIR = resolve(SRC_DIR, 'server', 'auth')
 
@@ -41,6 +42,7 @@ function why(specifier, fromFile) {
   const local = resolveLocal(specifier, fromFile)
   if (local === null) return null
   if (local.toLowerCase() === CLIENT.toLowerCase()) return `'${specifier}' is the data layer's database client`
+  if (local.toLowerCase() === POOL.toLowerCase()) return `'${specifier}' is the data layer's connection pool`
   if (local.toLowerCase() === AUTH_DATABASE.toLowerCase() && !isInside(fromFile, AUTH_DIR)) {
     return `'${specifier}' is the identity tables' handle, for src/server/auth/ only`
   }

@@ -2,7 +2,7 @@
 //
 // The admin connection (DATABASE_URL_ADMIN, a role allowed to create roles and databases) defaults to the
 // compose.yaml superuser. The three role URLs come from the environment when set (CI), else from the
-// local defaults of .env.example; only their database name is replaced by this run's.
+// local defaults of .env.example and .env.db.example; only their database name is replaced by this run's.
 import { randomBytes } from 'node:crypto'
 import pg from 'pg'
 import type { TestProject } from 'vitest/node'

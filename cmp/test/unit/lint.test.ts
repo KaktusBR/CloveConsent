@@ -29,6 +29,7 @@ describe('database client import rule', () => {
     ["const m = 'pg'; const pg = await import(m)", 'src/pages/x.ts'],
     ["const pg = require('pg')", 'src/pages/x.ts'],
     ["import Pool from 'pg-pool'", 'src/pages/x.ts'],
+    ["import { GuardedPool } from '../server/data/pool'", 'src/pages/x.ts'],
     ["import Native from 'pg-native'", 'src/server/x.ts'],
     ["import { neon } from '@neondatabase/serverless'", 'src/pages/x.ts'],
     ["import { drizzle } from 'drizzle-orm/neon-http'", 'src/server/x.ts'],

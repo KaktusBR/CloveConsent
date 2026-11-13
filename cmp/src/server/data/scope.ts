@@ -21,8 +21,15 @@ export type TenantTx = Transaction & { readonly [tenantBrand]: true }
 export type SystemTx = Transaction & { readonly [systemBrand]: true }
 
 /**
- * The handle given to a callback: the transaction while the callback runs; afterwards any use throws
- * before reaching the connection (which by then is back in the pool, possibly serving another account).
+ * The handle given to a callback. What is guaranteed once the callback has returned:
+ * - the handle itself throws on any use (this Proxy), with a message naming withAccount/asSystem;
+ * - work created from it inside the callback and run afterwards (a query builder, `tx.query.*`, a nested
+ *   transaction handle) holds the checked-out client, which pool.ts makes throw once released. So it
+ *   never runs without the account setting, nor inside another request's transaction on the same
+ *   connection (test/db/scope.test.ts reproduces both).
+ * - a query started inside the callback but not awaited either reaches the client before the release (and
+ *   runs in this transaction, with this account) or after it (and throws). Await everything: which of the
+ *   two happens is not defined.
  */
 async function runScoped<T, H>(tx: Transaction, label: string, fn: (handle: H) => Promise<T>): Promise<T> {
   let open = true

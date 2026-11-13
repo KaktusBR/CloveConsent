@@ -89,6 +89,62 @@ describe('a transaction handle used after its scope ended', () => {
   })
 })
 
+type Leak = (tx: TenantTx) => Promise<() => Promise<unknown>>
+const leaks: [string, Leak][] = [
+  ['a query builder', async (tx) => { const q = tx.select().from(auditLog); return () => q.execute() }],
+  ['a relational query (tx.query.*)', async (tx) => { const q = tx.query.auditLog.findMany(); return () => q.execute() }],
+  ['a nested transaction handle', async (tx) => {
+    let inner: Parameters<Parameters<TenantTx['transaction']>[0]>[0] | undefined
+    await tx.transaction(async (t) => { inner = t })
+    return () => inner!.select().from(auditLog).execute()
+  }],
+]
+
+const backendPid = async (tx: TenantTx): Promise<number> =>
+  (await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)).rows[0]!.pid
+
+/** The outcome of running leaked work: its rows, or the name of the error (Drizzle wraps it as the cause). */
+const outcomeOf = (run: () => Promise<unknown>) =>
+  run().then(
+    (rows) => ({ rows }),
+    (err: Error & { cause?: Error }) => ({ error: err.cause?.name ?? err.name }),
+  )
+
+describe('work created inside a callback and run after it', () => {
+  test.each(leaks)('%s, run while its connection serves another account, throws and leaves that account untouched', async (_name, leak) => {
+    const a = scopeOf(newId())
+    const b = scopeOf(newId())
+    await withAccount(b, (tx) => audit(tx, { action: 'probe.b', actorUserId: b.userId, accountId: b.accountId }))
+
+    let pidA = 0
+    let leaked: (() => Promise<unknown>) | undefined
+    await withAccount(a, async (tx) => {
+      pidA = await backendPid(tx)
+      leaked = await leak(tx)
+    })
+    const inB = await withAccount(b, async (tx) => {
+      const samePid = (await backendPid(tx)) === pidA // the pool hands the released connection to B: the case under test
+      const outcome = await outcomeOf(leaked!)
+      const own = (await tx.select().from(auditLog)).map((r) => r.action)
+      return { samePid, outcome, own }
+    })
+    expect(inB).toEqual({ samePid: true, outcome: { error: 'ReleasedClientError' }, own: ['probe.b'] })
+  })
+
+  test.each(leaks)('%s, run on an idle pool, throws instead of running without an account', async (_name, leak) => {
+    let leaked: (() => Promise<unknown>) | undefined
+    await withAccount(scopeOf(newId()), async (tx) => { leaked = await leak(tx) })
+    expect(await outcomeOf(leaked!)).toEqual({ error: 'ReleasedClientError' })
+  })
+
+  test('the connection itself keeps working for the next checkout', async () => {
+    const a = scopeOf(newId())
+    await withAccount(a, async (tx) => { await tx.select().from(auditLog) })
+    await expect(withAccount(a, (tx) => tx.select().from(auditLog))).resolves.toEqual([])
+    await expect(asSystem('test: system pool after release', (tx) => tx.select().from(auditLog).limit(1))).resolves.toBeDefined()
+  })
+})
+
 describe('asSystem', () => {
   test('sees every account, and records the access with its reason in the audit log', async () => {
     const a = scopeOf(newId())

@@ -35,6 +35,9 @@ describe('audit', () => {
     { accessToken: 'x' },
     { clientSecret: 'x' },
     { nested: { deeper: [{ token: 'x' }] } },
+    // what is written is JSON.stringify's output: a toJSON() can add keys the object does not have
+    { user: { id: 1, toJSON: () => ({ id: 1, password: 'x' }) } },
+    { toJSON: () => ({ secret: 'x' }) },
   ])('refuses meta %j and writes nothing', async (meta) => {
     const s: AccountScope = { ...scope, accountId: newId() }
     await expect(withAccount(s, (tx) => audit(tx, { action: 'probe.meta', meta, actorUserId: s.userId, accountId: s.accountId }))).rejects.toThrow(/meta/i)
@@ -48,12 +51,14 @@ describe('audit', () => {
   })
 })
 
-describe('the app role writes only the event columns', () => {
+describe('the runtime roles write only the event columns', () => {
   test.each([
-    ['created_at', `'2000-01-01T00:00:00Z'`],
-    ['id', `gen_random_uuid()`],
-  ])('an insert that sets %s is refused', async (column, value) => {
-    const code = await asRole('app', async (c) => {
+    ['app', 'created_at', `'2000-01-01T00:00:00Z'`],
+    ['app', 'id', `gen_random_uuid()`],
+    ['system', 'created_at', `'2000-01-01T00:00:00Z'`],
+    ['system', 'id', `gen_random_uuid()`],
+  ] as const)('as the %s role, an insert that sets %s is refused', async (role, column, value) => {
+    const code = await asRole(role, async (c) => {
       await c.query('begin')
       await c.query(`select set_config('app.account_id', $1, true)`, [scope.accountId])
       const out = await errorCode(c.query(`insert into audit_log (account_id, action, ${column}) values ($1, 'probe.column', ${value})`, [scope.accountId]))

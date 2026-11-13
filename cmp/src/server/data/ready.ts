@@ -1,6 +1,6 @@
-import pg from 'pg'
 import { env } from '../env'
 import { log as defaultLog, type Logger } from '../log'
+import { GuardedPool } from './pool'
 
 export interface ReadinessProbe {
   /** True when the database answers `select 1` within the timeout; never throws. */
@@ -10,7 +10,7 @@ export interface ReadinessProbe {
 
 /** A one-connection pool used only to ask the database whether it answers. */
 export function readinessProbe(connectionString: string, { timeoutMs = 2000, log = defaultLog }: { timeoutMs?: number; log?: Logger } = {}): ReadinessProbe {
-  const pool = new pg.Pool({
+  const pool = new GuardedPool({
     connectionString,
     max: 1,
     connectionTimeoutMillis: timeoutMs,

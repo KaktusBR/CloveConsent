@@ -38,13 +38,14 @@ function sensitiveKey(value: unknown, path = ''): string | null {
 /** Validate and insert one event: only the event columns, as the roles' column grants allow (never id or created_at). */
 export async function appendAuditEvent(db: Pick<Database, 'execute'>, e: AuditEvent): Promise<void> {
   if (e.action.length > 100 || !ACTION.test(e.action)) throw new TypeError('audit: the action must be a short dotted name')
-  const meta = e.meta ?? {}
-  const key = sensitiveKey(meta)
+  // check exactly what will be written: JSON.stringify's output (toJSON() may add or rename keys)
+  const json = JSON.stringify(e.meta ?? {})
+  const key = sensitiveKey(JSON.parse(json))
   // the key path only, never the value
   if (key !== null) throw new TypeError(`audit: meta must not hold secrets (key ${key})`)
   await db.execute(sql`
     insert into audit_log (actor_user_id, account_id, action, target, meta)
-    values (${e.actorUserId}, ${e.accountId}, ${e.action}, ${e.target ?? null}, ${JSON.stringify(meta)}::jsonb)`)
+    values (${e.actorUserId}, ${e.accountId}, ${e.action}, ${e.target ?? null}, ${json}::jsonb)`)
 }
 
 /**
