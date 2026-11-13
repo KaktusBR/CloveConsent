@@ -4,9 +4,10 @@
 #   docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://<your origin> -t cloveconsent-cmp .
 # PUBLIC_ORIGIN is needed at build time too: prerendered pages carry absolute canonical/hreflang URLs.
 # Run the container with the same PUBLIC_ORIGIN.
-# One image, two processes:
-#   app:    node dist/server/entry.mjs   (default)
-#   worker: node dist/worker.js
+# One image, three processes:
+#   app:     node dist/server/entry.mjs   (default)
+#   worker:  node dist/worker.js
+#   migrate: node scripts/migrate.ts      (one-shot, DATABASE_URL_MIGRATE only, before app and worker)
 
 FROM node:24.22.1-slim AS build
 WORKDIR /repo
@@ -37,6 +38,8 @@ COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/cmp/package.json ./cmp/package.json
 COPY --from=build /repo/cmp/node_modules ./cmp/node_modules
 COPY --from=build /repo/cmp/dist ./cmp/dist
+COPY --from=build /repo/cmp/drizzle ./cmp/drizzle
+COPY --from=build /repo/cmp/scripts/migrate.ts /repo/cmp/scripts/db-init.ts ./cmp/scripts/
 WORKDIR /repo/cmp
 USER node
 EXPOSE 4321

@@ -3,12 +3,18 @@
 // matched on the resolved file (so any relative spelling is caught), in static imports, re-exports,
 // dynamic import() and require(). A dynamic import() with a computed specifier is refused too: it
 // cannot be checked. The data layer exposes what others may use through its other modules.
+//
+// One exception (ruling R2): `src/server/data/auth-database.ts` exports `authDatabase`, the handle Better
+// Auth's adapter needs for its identity tables. Only `src/server/auth/` may import it; anywhere else it is
+// refused like the client.
 import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 const DATA_DIR = resolve(SRC_DIR, 'server', 'data')
 const CLIENT = resolve(DATA_DIR, 'client')
+const AUTH_DATABASE = resolve(DATA_DIR, 'auth-database')
+const AUTH_DIR = resolve(SRC_DIR, 'server', 'auth')
 
 const DRIVERS = /^(pg|postgres|drizzle-orm\/node-postgres|drizzle-orm\/postgres-js)(\/.*)?$/
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts'])
@@ -24,10 +30,16 @@ function resolveLocal(specifier, fromFile) {
   return path
 }
 
+const isInside = (file, dir) => file.toLowerCase().startsWith(`${dir}${sep}`.toLowerCase())
+
 function why(specifier, fromFile) {
   if (DRIVERS.test(specifier)) return `'${specifier}' is a database driver`
   const local = resolveLocal(specifier, fromFile)
-  if (local !== null && local.toLowerCase() === CLIENT.toLowerCase()) return `'${specifier}' is the data layer's database client`
+  if (local === null) return null
+  if (local.toLowerCase() === CLIENT.toLowerCase()) return `'${specifier}' is the data layer's database client`
+  if (local.toLowerCase() === AUTH_DATABASE.toLowerCase() && !isInside(fromFile, AUTH_DIR)) {
+    return `'${specifier}' is the identity tables' handle, for src/server/auth/ only`
+  }
   return null
 }
 
@@ -41,7 +53,7 @@ function staticString(node) {
 export default {
   meta: {
     type: 'problem',
-    docs: { description: 'Only src/server/data/ may import the database driver or client.' },
+    docs: { description: 'Only src/server/data/ may import the database driver or client; only src/server/auth/ may import authDatabase.' },
     schema: [],
     messages: {
       restricted: '{{why}}: only src/server/data/ talks to the database; use its scoped API.',
@@ -50,7 +62,7 @@ export default {
   },
   create(context) {
     const file = resolve(context.filename)
-    if (file.toLowerCase().startsWith(`${DATA_DIR}${sep}`.toLowerCase())) return {}
+    if (isInside(file, DATA_DIR)) return {}
 
     const check = (source) => {
       if (!source) return

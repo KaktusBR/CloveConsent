@@ -17,7 +17,11 @@
     "lint": "eslint .",
     "check:words": "node scripts/check-words.ts",
     "test": "npm run i18n && vitest run",
-    "test:e2e": "playwright test"
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "test:e2e": "playwright test",
+    "db:init": "node --env-file-if-exists=.env scripts/db-init.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts"
   },
   "dependencies": {
     "@astrojs/node": "11.1.12",
@@ -28,6 +32,7 @@
     "class-variance-authority": "0.7.1",
     "cloveconsent": "file:..",
     "clsx": "2.1.1",
+    "drizzle-orm": "0.45.4",
     "lucide-react": "1.72.0",
     "pg": "8.23.1",
     "pino": "10.4.0",
@@ -54,6 +59,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "astro-eslint-parser": "3.2.0",
+    "drizzle-kit": "0.31.11",
     "esbuild": "0.28.2",
     "eslint": "10.14.0",
     "eslint-plugin-astro": "3.2.1",

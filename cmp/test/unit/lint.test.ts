@@ -32,6 +32,26 @@ describe('database client import rule', () => {
     expect(await restricted(file, `${code}\nexport {}\n`)).toHaveLength(1)
   })
 
+  test('a page importing the client file is refused (fixture: src/pages/*.astro)', async () => {
+    const page = "---\nimport { appDatabase } from '../server/data/client.ts'\nconst n = String(appDatabase)\n---\n<p>{n}</p>\n"
+    expect(await restricted('src/pages/fixture.astro', page)).toHaveLength(1)
+  })
+
+  test.each([
+    ["import { authDatabase } from '../server/data/auth-database'", 'src/pages/x.ts'],
+    ["import { authDatabase } from '@/server/data/auth-database'", 'src/components/x.tsx'],
+    ["import { authDatabase } from './data/auth-database.ts'", 'src/server/x.ts'],
+    ["export { authDatabase } from '../data/auth-database'", 'src/server/jobs/x.ts'],
+  ])("the identity tables' handle is refused outside src/server/auth/: %s in %s", async (code, file) => {
+    expect(await restricted(file, `${code}\nexport {}\n`)).toHaveLength(1)
+  })
+
+  test("src/server/auth/ may import the identity tables' handle, and only that", async () => {
+    expect(await restricted('src/server/auth/auth.ts', "import { authDatabase } from '../data/auth-database'\nexport { authDatabase }\n")).toEqual([])
+    expect(await restricted('src/server/auth/sub/x.ts', "import { authDatabase } from '@/server/data/auth-database'\nexport { authDatabase }\n")).toEqual([])
+    expect(await restricted('src/server/auth/auth.ts', "import { appDatabase } from '../data/client'\nexport { appDatabase }\n")).toHaveLength(1)
+  })
+
   test('the data layer itself may import the driver and its client', async () => {
     const code = "import pg from 'pg'\nimport { db } from './client'\nconst c = await import('pg/lib/client')\nexport { pg, db, c }\n"
     expect(await restricted('src/server/data/x.ts', code)).toEqual([])

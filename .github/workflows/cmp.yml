@@ -14,19 +14,21 @@ jobs:
     services:
       postgres:
         image: postgres:17.11-alpine
-        env: { POSTGRES_USER: cmp, POSTGRES_PASSWORD: cmp, POSTGRES_DB: cmp }
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: postgres }
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U cmp -d cmp"
+          --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 2s --health-timeout 3s --health-retries 30
       mailpit:
         image: axllent/mailpit:v1.33
         env: { MP_SMTP_AUTH_ACCEPT_ANY: 'true', MP_SMTP_AUTH_ALLOW_INSECURE: 'true' }
         ports: ['1025:1025', '8025:8025']
     env:
-      DATABASE_URL: postgres://cmp:cmp@localhost:5432/cmp
-      DATABASE_URL_MIGRATE: postgres://cmp:cmp@localhost:5432/cmp
-      DATABASE_URL_SYSTEM: postgres://cmp:cmp@localhost:5432/cmp
+      # the superuser only creates the roles and databases (db:init, test:db); the app uses the three roles
+      DATABASE_URL_ADMIN: postgres://postgres:postgres@localhost:5432/postgres
+      DATABASE_URL: postgres://cmp_app:cmp_app@localhost:5432/cmp
+      DATABASE_URL_MIGRATE: postgres://cmp_owner:cmp_owner@localhost:5432/cmp
+      DATABASE_URL_SYSTEM: postgres://cmp_system:cmp_system@localhost:5432/cmp
       SMTP_URL: smtp://localhost:1025
       MAIL_FROM: noreply@localhost.test
     steps:
@@ -49,6 +51,11 @@ jobs:
       - run: npm run check:words
         working-directory: cmp
       - run: npm test
+        working-directory: cmp
+      - run: npm run test:db
+        working-directory: cmp
+      - name: Create the roles and database, apply the migrations (for the e2e server)
+        run: npm run db:init && npm run db:migrate
         working-directory: cmp
       - run: npx playwright install --with-deps chromium
         working-directory: cmp

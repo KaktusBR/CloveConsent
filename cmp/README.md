@@ -28,11 +28,17 @@ docker compose up -d
 # 4. Environment
 cp .env.example .env    # then set BETTER_AUTH_SECRET (see the comment in the file)
 
-# 5. Run
+# 5. Database roles, database and migrations (see Database)
+npm run db:init
+npm run db:migrate
+
+# 6. Run
 npm run dev             # http://localhost:4321
 ```
 
-`docker compose down` stops the services; add `-v` to delete the database volume.
+`docker compose down` stops the services; add `-v` to delete the database volume (then run step 5 again).
+A volume created before the three roles existed (superuser `cmp`) must be deleted once:
+`docker compose down -v && docker compose up -d`.
 
 ## Environment
 
@@ -41,9 +47,10 @@ an error that names the variable and what it must be; values are never printed o
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `DATABASE_URL` | yes | `postgres://` URL for the app (a non-owner role, so row-level security applies) |
-| `DATABASE_URL_MIGRATE` | yes | `postgres://` URL for the owner role; migrations only |
-| `DATABASE_URL_SYSTEM` | yes | `postgres://` URL for the system role; audited system work only |
+| `DATABASE_URL` | yes | `postgres://` URL as `cmp_app`, the runtime role (row-level security applies) |
+| `DATABASE_URL_MIGRATE` | yes | `postgres://` URL as `cmp_owner`; migrations only |
+| `DATABASE_URL_SYSTEM` | yes | `postgres://` URL as `cmp_system`; audited system work only |
+| `DATABASE_URL_ADMIN` | for `db:init`, `test:db` | a role that may create roles and databases (locally the compose superuser); never read by the app |
 | `BETTER_AUTH_SECRET` | yes | at least 32 bytes |
 | `PUBLIC_ORIGIN` | yes | the app's public origin, e.g. `https://consent.example`; `http` only for `localhost`, `127.0.0.1`, `[::1]` and never with `NODE_ENV=production`; no path. Links, cookies and emails derive from it: no domain is written in the code |
 | `SMTP_URL` | yes | `smtp://` or `smtps://` URL |
@@ -65,6 +72,10 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm run i18n` | compiles the catalogs into `src/paraglide/` (generated, not in git); `dev`, `build`, `typecheck` and `test` run it first |
 | `npm run check:words` | fails on user-visible text written in `.astro`/`.tsx` sources and on incomplete catalogs (see Languages) |
 | `npm test` | unit tests (Vitest) |
+| `npm run test:db` | database tests against the compose Postgres: creates the roles and a fresh database, migrates it from scratch, drops it at the end (needs `DATABASE_URL_ADMIN`, defaults to the compose superuser) |
+| `npm run db:init` | creates or updates the three roles and the database (`DATABASE_URL_ADMIN`; idempotent) |
+| `npm run db:generate` | writes a migration to `drizzle/` from `src/server/data/schema/` (then add FORCE RLS and grants by hand, see Database) |
+| `npm run db:migrate` | applies the migrations as `cmp_owner` (refuses any other role) |
 | `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); needs `docker compose up -d` |
 
 ## Languages
@@ -98,6 +109,44 @@ ships too. Use the typed functions: `import { m } from '@/paraglide/messages.js'
   `<pre>`, punctuation and numbers pass. A deliberate exception needs `// words-ok: <reason>` on the line or the line
   above. Machine responses in `.ts` endpoints (`/healthz`'s `ok`) are not user-facing text.
 
+## Database
+
+Postgres 17 with Drizzle. Only `src/server/data/` talks to the database (lint rule `cmp/data-layer-only`);
+the one exception is `authDatabase` (`src/server/data/auth-database.ts`), the handle for Better Auth's
+identity tables, importable only from `src/server/auth/`.
+
+Roles (created by `npm run db:init`, `scripts/db-init.ts`, run once per server with `DATABASE_URL_ADMIN`;
+not by a migration, because creating roles needs a privilege the owner must not have):
+
+| Role | URL | Can |
+|---|---|---|
+| `cmp_owner` | `DATABASE_URL_MIGRATE` | runs migrations, owns the database and every table; has no row policy, so it reads no tenant rows either |
+| `cmp_app` | `DATABASE_URL` | the app at runtime: only the rows of the account set by `withAccount` |
+| `cmp_system` | `DATABASE_URL_SYSTEM` | `asSystem` (super-admin, worker): only what each table's policies grant it |
+
+None is a superuser, bypasses row-level security, creates roles or databases, or is a member of another.
+
+Tenant data:
+
+- Every tenant table has `account_id uuid not null`, row-level security enabled and forced, explicit grants,
+  and `cmp_app` policies `account_id = nullif(current_setting('app.account_id', true), '')::uuid` (the
+  `nullif` keeps a pooled connection that once had the setting from failing with `''::uuid`).
+  `test/db/rls.test.ts` checks every table in the catalog against this; identity tables are listed there.
+- `withAccount(scope, fn)` (`src/server/data/scope.ts`) runs `fn` in one transaction with
+  `app.account_id` set for that transaction only. Without it the app role sees no tenant rows.
+- `asSystem(reason, fn)` runs `fn` on the system role; the access and its reason are written to the
+  audit log first.
+- `audit(tx, event)` (`src/server/data/audit.ts`) appends to `audit_log` in the caller's transaction and
+  refuses `meta` keys that look like secrets (password, token, secret, cookie, authorization, API key).
+  `audit_log` is append-only: `cmp_app` and `cmp_system` may SELECT and INSERT, never UPDATE or DELETE.
+  The app reads and writes only its account's rows; system and global events (no account) are written
+  and read by the system role.
+
+Migrations: `npm run db:generate` after changing the schema. drizzle-kit does not emit
+`FORCE ROW LEVEL SECURITY` or grants: add them to the generated SQL (as in `drizzle/0000_audit_log.sql`).
+In production the image runs them as a one-shot service before the app: `node scripts/migrate.ts`
+(needs only `DATABASE_URL_MIGRATE`).
+
 ## Health
 
 - `GET /healthz`: `200 ok` while the process is up.
@@ -115,6 +164,7 @@ One image runs either process. Build from the repository root (the image builds 
 docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://consent.example -t cloveconsent-cmp .
 docker run --read-only --env-file cmp/.env -p 4321:4321 cloveconsent-cmp            # app
 docker run --read-only --env-file cmp/.env cloveconsent-cmp node dist/worker.js      # worker
+docker run --read-only --env-file cmp/.env cloveconsent-cmp node scripts/migrate.ts  # migrations, one-shot
 ```
 
 Inside a container `localhost` is the container itself: point the URLs at the database and SMTP hosts
