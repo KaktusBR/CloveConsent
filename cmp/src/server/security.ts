@@ -80,7 +80,10 @@ interface NodeResponse {
   setHeader(name: string, value: string): unknown
 }
 
-/** `/sk/` and `/sk` are the same page (the adapter serves sk/index.html for both); no query. */
+/**
+ * The page a path serves: `/sk/`, `/sk` and `/sk/index.html` are the same file (the adapter serves
+ * sk/index.html for each; pages are built as directories, so no other `.html` URL exists). No query.
+ */
 function pagePath(url: string): string {
   let path = url.split(/[?#]/, 1)[0] ?? ''
   try {
@@ -88,6 +91,7 @@ function pagePath(url: string): string {
   } catch {
     // the adapter answers 400 to an undecodable path
   }
+  if (path.endsWith('/index.html')) path = path.slice(0, -'index.html'.length)
   return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
 }
 
@@ -97,12 +101,21 @@ function pagePath(url: string): string {
  * is written, and a prerendered page's hashed CSP (from `pages`) when the path is exactly that page's.
  * Any other file gets the baseline CSP, so a page whose policy is not found runs no script (fails closed).
  * A response the app writes later replaces these with its own values.
+ *
+ * Runs when the server starts. Throws, so the server does not start, when there are prerendered
+ * pages but no policy for them (the adapter found no readable `_headers.json`): every such page
+ * would otherwise be served with the baseline CSP, its scripts blocked.
  */
-export function staticSecurityHeaders(pages: PageHeaders = []): (req: NodeRequest, res: NodeResponse) => void {
+export function staticSecurityHeaders(pages: PageHeaders = [], hasPrerenderedPages = false): (req: NodeRequest, res: NodeResponse) => void {
   const policies = new Map<string, string>()
   for (const { pathname, headers } of pages) {
     const csp = headers.find((h) => h.key.toLowerCase() === 'content-security-policy')
     if (csp) policies.set(pagePath(pathname), csp.value)
+  }
+  if (hasPrerenderedPages && policies.size === 0) {
+    throw new Error(
+      'No CSP for the prerendered pages: the node adapter found no readable _headers.json in the build output directory (it is read from the absolute path of the build). Serve the build from where it was built, or rebuild.',
+    )
   }
   return (req, res) => {
     for (const [name, value] of securityHeaders()) res.setHeader(name, value)

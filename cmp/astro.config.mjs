@@ -5,53 +5,49 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'astro/config'
 import { fileURLToPath } from 'node:url'
 
+import { patchModule, replaceOnce } from './src/build/patch-module.ts'
 import { THEME_SCRIPT } from './src/lib/theme.ts'
 import { CSP_DIRECTIVES, cspHash } from './src/server/security.ts'
 
-const sourcePath = (path) => fileURLToPath(new URL(path, import.meta.url)).replaceAll('\\', '/')
-const envModule = sourcePath('./src/server/env.ts')
-const securityModule = sourcePath('./src/server/security.ts')
-const isModule = (id, suffix) => id.replaceAll('\\', '/').endsWith(suffix)
+const sourcePath = (path) => JSON.stringify(fileURLToPath(new URL(path, import.meta.url)).replaceAll('\\', '/'))
+
+// Both patches fail the build when they cannot apply (src/build/patch-module.ts): the adapter's code
+// changed shape, or its module no longer goes through Vite.
 
 /**
  * The built server loads the middleware (and so src/server/env.ts) only on the first request.
  * Import the env module at the top of the adapter's server entry instead, so an invalid
  * environment stops the process before it listens. Pinned by e2e/boot.spec.ts.
  */
-const validateEnvAtBoot = {
+const validateEnvAtBoot = patchModule({
   name: 'cmp:validate-env-at-boot',
-  apply: 'build',
-  transform(code, id) {
-    if (!isModule(id, '/@astrojs/node/dist/server.js')) return null
-    return { code: `import ${JSON.stringify(envModule)};\n${code}`, map: null }
-  },
-}
+  module: '/@astrojs/node/dist/server.js',
+  edit: (code) => `import ${sourcePath('./src/server/env.ts')};\n${code}`,
+})
 
 /**
  * The adapter serves prerendered pages and bundled assets itself, before the app (and so the
  * middleware) runs. Its request handler sets every security header first, with a prerendered
  * page's hashed CSP from the adapter's `_headers.json` (`staticHeaders`), matched by exact path
- * (src/server/security.ts: staticSecurityHeaders). The adapter's own lookup is switched off: it
- * matches by substring, so `/sk/` missed the `/sk` page's policy. The build fails if the adapter's
- * code no longer has the expected shape, rather than serving files without the headers.
- * Pinned by e2e/security.spec.ts.
+ * (src/server/security.ts: staticSecurityHeaders, which also stops the server at boot when that
+ * file is missing while there are prerendered pages). The adapter's own lookup is switched off: it
+ * matches by substring, so `/sk/` missed the `/sk` page's policy. Pinned by e2e/security.spec.ts.
  */
-const STATIC_HANDLER = 'const staticHandler = createStaticHandler(app, options, headersMap);'
-const REQUEST_HANDLER = 'return (req, res) => {'
-const securityHeadersOnFiles = {
+const HAS_PRERENDERED_PAGES = 'app.manifest.routes.some((r) => r.routeData.prerender && r.routeData.type === "page")'
+const securityHeadersOnFiles = patchModule({
   name: 'cmp:security-headers-on-files',
-  apply: 'build',
-  transform(code, id) {
-    if (!isModule(id, '/@astrojs/node/dist/standalone.js')) return null
-    for (const anchor of [STATIC_HANDLER, REQUEST_HANDLER]) {
-      if (code.split(anchor).length !== 2) this.error(`"${anchor}" not found once in ${id}: security headers cannot be added`)
-    }
-    const patched = code
-      .replace(STATIC_HANDLER, 'const staticHandler = createStaticHandler(app, options, undefined);\n\tconst __cmpSecurity = __cmpStaticSecurityHeaders(headersMap);')
-      .replace(REQUEST_HANDLER, `${REQUEST_HANDLER}\n\t\t__cmpSecurity(req, res);`)
-    return { code: `import { staticSecurityHeaders as __cmpStaticSecurityHeaders } from ${JSON.stringify(securityModule)};\n${patched}`, map: null }
+  module: '/@astrojs/node/dist/standalone.js',
+  edit(code, fail) {
+    let patched = replaceOnce(
+      code,
+      'const staticHandler = createStaticHandler(app, options, headersMap);',
+      `const staticHandler = createStaticHandler(app, options, undefined);\n\tconst __cmpSecurity = __cmpStaticSecurityHeaders(headersMap, ${HAS_PRERENDERED_PAGES});`,
+      fail,
+    )
+    patched = replaceOnce(patched, 'return (req, res) => {', 'return (req, res) => {\n\t\t__cmpSecurity(req, res);', fail)
+    return `import { staticSecurityHeaders as __cmpStaticSecurityHeaders } from ${sourcePath('./src/server/security.ts')};\n${patched}`
   },
-}
+})
 
 // No site/domain here: the public origin comes from PUBLIC_ORIGIN at runtime (src/server/env.ts).
 //

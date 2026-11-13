@@ -86,7 +86,7 @@ test('a server-rendered page: every security header, its inline content hashed',
 
 test('a prerendered page (served as a file, before the middleware): every header, a hash-based CSP header', async ({ request }) => {
   expect(readFileSync('dist/client/index.html', 'utf8')).toContain('<html') // it is a file, not rendered per request
-  for (const path of ['/', '/sk/', '/sk']) {
+  for (const path of ['/', '/sk/', '/sk', '/index.html', '/sk/index.html']) {
     const res = await request.get(path)
     expect(res.status(), path).toBe(200)
     expect(res.headers()['x-request-id'], `${path} is served as a file`).toBeUndefined()
@@ -144,7 +144,7 @@ test.describe('state-changing requests from another origin are refused (CSRF)', 
 })
 
 test.describe('under the CSP', () => {
-  for (const path of ['/', '/sign-in']) {
+  for (const path of ['/', '/index.html', '/sk/index.html', '/sign-in']) {
     test(`${path}: the theme toggle (a React island) and the theme script work, with no CSP violation`, async ({ page }) => {
       await watchCsp(page)
       await page.emulateMedia({ colorScheme: 'light' })

@@ -85,7 +85,23 @@ describe('staticSecurityHeaders (files the node adapter serves before the app)',
     expect(serve('/sk').get('content-security-policy')).toBe('sk-policy')
     expect(serve('/sk/').get('content-security-policy')).toBe('sk-policy')
     expect(serve('/s%6b/').get('content-security-policy')).toBe('sk-policy')
-    for (const other of ['/s', '/sk/x', '/skx', '/x/sk', '/%E0%A4%A']) expect(serve(other).get('content-security-policy'), other).toBe(BASELINE_CSP)
+    for (const other of ['/s', '/sk/x', '/skx', '/x/sk', '/%E0%A4%A', '/sk.html', '/skindex.html', '/sk/index.htm']) {
+      expect(serve(other).get('content-security-policy'), other).toBe(BASELINE_CSP)
+    }
+  })
+
+  test('a direct /index.html URL is the same page, under its own policy', () => {
+    expect(serve('/index.html').get('content-security-policy')).toBe('home-policy')
+    expect(serve('/sk/index.html').get('content-security-policy')).toBe('sk-policy')
+    expect(serve('/sk/index.html?x=1').get('content-security-policy')).toBe('sk-policy')
+  })
+
+  test('the server does not start when there are prerendered pages but no policy for them', () => {
+    for (const missing of [undefined, [], [{ pathname: '/', headers: [] }]]) {
+      expect(() => staticSecurityHeaders(missing, true)).toThrow(/_headers\.json/)
+    }
+    expect(() => staticSecurityHeaders(pages, true)).not.toThrow()
+    expect(() => staticSecurityHeaders(undefined, false)).not.toThrow() // no prerendered page, nothing to find
   })
 })
 
