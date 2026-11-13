@@ -19,6 +19,8 @@ const LOCAL = {
 declare module 'vitest' {
   export interface ProvidedContext {
     databaseUrls: RoleUrls
+    /** The admin connection on this run's database: for tests that must change the schema (then roll back). */
+    databaseAdminUrl: string
   }
 }
 
@@ -39,6 +41,7 @@ export default async function setup(project: TestProject) {
   await initDatabase(admin, urls)
   await migrateDatabase(urls.migrate)
   project.provide('databaseUrls', urls)
+  project.provide('databaseAdminUrl', onDatabase(admin, database))
 
   return async () => {
     const client = new pg.Client({ connectionString: admin })

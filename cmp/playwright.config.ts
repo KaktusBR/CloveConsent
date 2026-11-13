@@ -24,7 +24,6 @@ export default defineConfig({
       NODE_ENV: 'test',
       PUBLIC_ORIGIN: origin,
       DATABASE_URL: database,
-      DATABASE_URL_MIGRATE: process.env.DATABASE_URL_MIGRATE ?? 'postgres://cmp_owner:cmp_owner@localhost:5432/cmp',
       DATABASE_URL_SYSTEM: process.env.DATABASE_URL_SYSTEM ?? 'postgres://cmp_system:cmp_system@localhost:5432/cmp',
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? 'e2e-only-secret-e2e-only-secret-0000',
       SMTP_URL: process.env.SMTP_URL ?? 'smtp://localhost:1025',

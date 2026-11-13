@@ -2,7 +2,7 @@
 // `app.account_id` set for that transaction only, so the row-level security policies show and accept
 // only that account's rows. asSystem is the audited way around it, for super-admin and worker code.
 import { sql } from 'drizzle-orm'
-import { auditLog } from './schema'
+import { appendAuditEvent } from './audit'
 import { appDatabase, systemDatabase, type Transaction } from './client'
 
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer'
@@ -20,6 +20,26 @@ export type TenantTx = Transaction & { readonly [tenantBrand]: true }
 /** A transaction on the system role: sees what cmp_system's policies allow, across accounts. */
 export type SystemTx = Transaction & { readonly [systemBrand]: true }
 
+/**
+ * The handle given to a callback: the transaction while the callback runs; afterwards any use throws
+ * before reaching the connection (which by then is back in the pool, possibly serving another account).
+ */
+async function runScoped<T, H>(tx: Transaction, label: string, fn: (handle: H) => Promise<T>): Promise<T> {
+  let open = true
+  const handle = new Proxy(tx, {
+    get(target, prop) {
+      if (!open) throw new Error(`${label}: the transaction has ended; use its handle only inside the callback`)
+      const value: unknown = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  try {
+    return await fn(handle as H)
+  } finally {
+    open = false
+  }
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Run `fn` in one transaction that sees and writes only `scope.accountId`'s tenant rows. */
@@ -27,7 +47,7 @@ export async function withAccount<T>(scope: AccountScope, fn: (tx: TenantTx) => 
   if (!UUID.test(scope.accountId)) throw new TypeError('withAccount: the account id must be a uuid')
   return appDatabase.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.account_id', ${scope.accountId}, true)`)
-    return fn(tx as TenantTx)
+    return runScoped(tx, 'withAccount', fn)
   })
 }
 
@@ -38,6 +58,6 @@ export async function withAccount<T>(scope: AccountScope, fn: (tx: TenantTx) => 
  */
 export async function asSystem<T>(reason: string, fn: (tx: SystemTx) => Promise<T>): Promise<T> {
   if (reason.trim() === '') throw new TypeError('asSystem: a reason is required')
-  await systemDatabase.insert(auditLog).values({ action: 'system.access', meta: { reason: reason.trim() } })
-  return systemDatabase.transaction((tx) => fn(tx as SystemTx))
+  await appendAuditEvent(systemDatabase, { action: 'system.access', meta: { reason: reason.trim() }, actorUserId: null, accountId: null })
+  return systemDatabase.transaction((tx) => runScoped(tx, 'asSystem', fn))
 }

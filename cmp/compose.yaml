@@ -1,6 +1,7 @@
 # Development services only: `docker compose up -d` in cmp/. Credentials here are local-only.
 # Postgres starts with only its superuser (postgres/postgres, the DATABASE_URL_ADMIN of .env.example);
 # `npm run db:init` then creates the cmp_owner, cmp_app and cmp_system roles and the cmp database.
+# The owner and admin URLs belong in .env.db only; a service running the app or worker gets .env, never .env.db.
 name: cloveconsent-cmp
 
 services:

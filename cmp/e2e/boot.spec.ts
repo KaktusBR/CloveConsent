@@ -37,7 +37,6 @@ test('the server refuses to start when the prerendered pages have no CSP (_heade
       NODE_ENV: 'test',
       PUBLIC_ORIGIN: 'http://localhost:4398',
       DATABASE_URL: database,
-      DATABASE_URL_MIGRATE: database,
       DATABASE_URL_SYSTEM: database,
       BETTER_AUTH_SECRET: 'e2e-only-secret-e2e-only-secret-0000',
       SMTP_URL: 'smtp://localhost:1025',

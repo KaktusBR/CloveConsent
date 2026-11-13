@@ -19,9 +19,9 @@
     "test": "npm run i18n && vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:e2e": "playwright test",
-    "db:init": "node --env-file-if-exists=.env scripts/db-init.ts",
+    "db:init": "node --env-file-if-exists=.env --env-file-if-exists=.env.db scripts/db-init.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts"
+    "db:migrate": "node --env-file-if-exists=.env.db scripts/migrate.ts"
   },
   "dependencies": {
     "@astrojs/node": "11.1.12",

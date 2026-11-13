@@ -1,3 +1,4 @@
+import type pg from 'pg'
 import { beforeAll, describe, expect, test } from 'vitest'
 import { asRole, errorCode, newId } from './raw'
 
@@ -8,6 +9,49 @@ import { asRole, errorCode, newId } from './raw'
 const IDENTITY_TABLES: readonly string[] = []
 /** audit_log also holds system and global events, which belong to no account (ruling R2). */
 const NULLABLE_ACCOUNT: readonly string[] = ['audit_log']
+
+const TABLES = `select c.relname as table from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p')`
+
+/** The account rule as Postgres stores it (deparsed from isCurrentAccount). */
+const ACCOUNT_RULE = `(account_id = (NULLIF(current_setting('app.account_id'::text, true), ''::text))::uuid)`
+
+/**
+ * Every way a tenant table breaks the rule: no forced row-level security, no account_id (or a nullable one
+ * outside NULLABLE_ACCOUNT), no policy for the app role, or a permissive policy the app role can use (its
+ * own, PUBLIC's, or an inherited role's) whose expression is anything but exactly the account rule.
+ */
+async function tenantViolations(c: pg.Client): Promise<string[]> {
+  const { rows: tables } = await c.query<{ table: string; rls: boolean; forced: boolean; has_account: boolean; account_nullable: boolean }>(`
+    select c.relname as table, c.relrowsecurity as rls, c.relforcerowsecurity as forced,
+           exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'account_id' and not a.attisdropped) as has_account,
+           exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'account_id' and not a.attisdropped and not a.attnotnull) as account_nullable
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind in ('r', 'p')`)
+  const { rows: policies } = await c.query<{ table: string; name: string; cmd: string; qual: string | null; with_check: string | null }>(`
+    select p.tablename as table, p.policyname as name, p.cmd, p.qual, p.with_check
+    from pg_policies p
+    where p.schemaname = 'public' and p.permissive = 'PERMISSIVE'
+      and exists (select 1 from unnest(p.roles) r
+                  where case when r = 'public' then true else pg_has_role('cmp_app', r, 'MEMBER') end)`)
+  const out: string[] = []
+  for (const t of tables.filter((t) => !IDENTITY_TABLES.includes(t.table))) {
+    if (!t.rls || !t.forced) out.push(`${t.table}: row-level security not enabled and forced`)
+    if (!t.has_account) out.push(`${t.table}: no account_id`)
+    if (t.account_nullable && !NULLABLE_ACCOUNT.includes(t.table)) out.push(`${t.table}: account_id is nullable`)
+    const own = policies.filter((p) => p.table === t.table)
+    if (own.length === 0) out.push(`${t.table}: no policy for cmp_app`)
+    for (const p of own) {
+      const usingOk = p.qual === ACCOUNT_RULE
+      const checkOk = p.with_check === ACCOUNT_RULE
+      const ok =
+        p.cmd === 'INSERT' ? checkOk
+        : p.cmd === 'SELECT' || p.cmd === 'DELETE' ? usingOk
+        : usingOk && (p.with_check === null || checkOk) // UPDATE, ALL: a missing check reuses USING
+      if (!ok) out.push(`${t.table}: policy ${p.name} (${p.cmd}) is not exactly the account rule: using ${p.qual}, check ${p.with_check}`)
+    }
+  }
+  return out
+}
 
 const accountA = newId()
 const accountB = newId()
@@ -54,28 +98,29 @@ describe('row-level security as the app role', () => {
 })
 
 describe('the database catalog', () => {
-  test('every tenant table has account_id, forced row-level security and an account policy for the app role', async () => {
-    const tables = await asRole('migrate', async (c) =>
-      (
-        await c.query<{ table: string; rls: boolean; forced: boolean; has_account: boolean; account_nullable: boolean; app_policies: string[] }>(`
-          select c.relname as table, c.relrowsecurity as rls, c.relforcerowsecurity as forced,
-                 exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'account_id' and not a.attisdropped) as has_account,
-                 exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'account_id' and not a.attisdropped and not a.attnotnull) as account_nullable,
-                 coalesce(array(
-                   select coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '')
-                   from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname and 'cmp_app' = any (p.roles)
-                 ), '{}') as app_policies
-          from pg_class c join pg_namespace n on n.oid = c.relnamespace
-          where n.nspname = 'public' and c.relkind in ('r', 'p')`)
-      ).rows,
-    )
-    expect(tables.map((t) => t.table)).toContain('audit_log')
-    for (const t of tables.filter((t) => !IDENTITY_TABLES.includes(t.table))) {
-      expect({ table: t.table, rls: t.rls, forced: t.forced, hasAccount: t.has_account }).toEqual({ table: t.table, rls: true, forced: true, hasAccount: true })
-      expect(t.account_nullable, `${t.table}: account_id must be not null`).toBe(NULLABLE_ACCOUNT.includes(t.table))
-      expect(t.app_policies.length, `${t.table}: policies for cmp_app`).toBeGreaterThan(0)
-      for (const p of t.app_policies) expect(p, `${t.table}: every cmp_app policy compares account_id to app.account_id`).toMatch(/account_id = .*current_setting\('app\.account_id'::text, true\)/)
-    }
+  test('every tenant table has account_id, forced row-level security and only exact account policies for the app role', async () => {
+    const tables = await asRole('migrate', async (c) => (await c.query<{ table: string }>(TABLES)).rows.map((r) => r.table))
+    expect(tables).toContain('audit_log')
+    expect(await asRole('migrate', tenantViolations)).toEqual([])
+  })
+
+  test.each([
+    ['a permissive TO PUBLIC policy that allows everything', `create policy sneaky on audit_log for select using (true)`],
+    ['an app policy that ORs anything onto the account rule', `create policy sneaky on audit_log for select to cmp_app using (account_id = nullif(current_setting('app.account_id', true), '')::uuid or true)`],
+    ['an app insert policy with no check', `create policy sneaky on audit_log for insert to cmp_app with check (account_id is not null)`],
+    ['a policy for a role the app inherits', `create role cmp_test_parent nologin; grant cmp_test_parent to cmp_app; create policy sneaky on audit_log for select to cmp_test_parent using (true)`],
+  ])('the sweep catches %s', async (_name, ddl) => {
+    // as the admin (the owner cannot create roles), inside a transaction that is rolled back
+    const violations = await asRole('admin', async (c) => {
+      await c.query('begin')
+      try {
+        await c.query(ddl)
+        return await tenantViolations(c)
+      } finally {
+        await c.query('rollback')
+      }
+    })
+    expect(violations.join(' | ')).toContain('sneaky')
   })
 
   test('no role of the app is a superuser or bypasses row-level security, and only the owner owns tables', async () => {

@@ -3,5 +3,4 @@ import { inject } from 'vitest'
 
 const urls = inject('databaseUrls')
 process.env.DATABASE_URL = urls.app
-process.env.DATABASE_URL_MIGRATE = urls.migrate
 process.env.DATABASE_URL_SYSTEM = urls.system

@@ -4,11 +4,12 @@ import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { inject } from 'vitest'
 
-export type RoleName = 'app' | 'migrate' | 'system'
+export type RoleName = 'app' | 'migrate' | 'system' | 'admin'
 
 /** Run `fn` on a fresh connection as the given role, then close it. */
 export async function asRole<T>(role: RoleName, fn: (client: pg.Client) => Promise<T>): Promise<T> {
-  const client = new pg.Client({ connectionString: inject('databaseUrls')[role] })
+  const url = role === 'admin' ? inject('databaseAdminUrl') : inject('databaseUrls')[role]
+  const client = new pg.Client({ connectionString: url })
   await client.connect()
   try {
     return await fn(client)

@@ -27,6 +27,7 @@ docker compose up -d
 
 # 4. Environment
 cp .env.example .env    # then set BETTER_AUTH_SECRET (see the comment in the file)
+cp .env.db.example .env.db   # owner and admin URLs, read only by db:init and db:migrate
 
 # 5. Database roles, database and migrations (see Database)
 npm run db:init
@@ -48,15 +49,21 @@ an error that names the variable and what it must be; values are never printed o
 | Variable | Required | Meaning |
 |---|---|---|
 | `DATABASE_URL` | yes | `postgres://` URL as `cmp_app`, the runtime role (row-level security applies) |
-| `DATABASE_URL_MIGRATE` | yes | `postgres://` URL as `cmp_owner`; migrations only |
 | `DATABASE_URL_SYSTEM` | yes | `postgres://` URL as `cmp_system`; audited system work only |
-| `DATABASE_URL_ADMIN` | for `db:init`, `test:db` | a role that may create roles and databases (locally the compose superuser); never read by the app |
 | `BETTER_AUTH_SECRET` | yes | at least 32 bytes |
 | `PUBLIC_ORIGIN` | yes | the app's public origin, e.g. `https://consent.example`; `http` only for `localhost`, `127.0.0.1`, `[::1]` and never with `NODE_ENV=production`; no path. Links, cookies and emails derive from it: no domain is written in the code |
 | `SMTP_URL` | yes | `smtp://` or `smtps://` URL |
 | `MAIL_FROM` | yes | `address` or `Name <address>` |
 | `SUPER_ADMIN_EMAILS` | no | comma-separated email addresses |
 | `NODE_ENV` | no | `development` (default), `test` or `production` |
+
+Not in the app's environment, on purpose (the owner role can turn row-level security off): these live in
+`.env.db` (from `.env.db.example`) and are read only by the database scripts, never by the app or worker.
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `DATABASE_URL_MIGRATE` | `db:migrate`, `db:init`, `test:db` | `postgres://` URL as `cmp_owner`; migrations only |
+| `DATABASE_URL_ADMIN` | `db:init`, `test:db` | a role that may create roles and databases (locally the compose superuser) |
 
 The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 
@@ -73,9 +80,9 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm run check:words` | fails on user-visible text written in `.astro`/`.tsx` sources and on incomplete catalogs (see Languages) |
 | `npm test` | unit tests (Vitest) |
 | `npm run test:db` | database tests against the compose Postgres: creates the roles and a fresh database, migrates it from scratch, drops it at the end (needs `DATABASE_URL_ADMIN`, defaults to the compose superuser) |
-| `npm run db:init` | creates or updates the three roles and the database (`DATABASE_URL_ADMIN`; idempotent) |
+| `npm run db:init` | creates or updates the three roles and the database (reads `.env` and `.env.db`; idempotent) |
 | `npm run db:generate` | writes a migration to `drizzle/` from `src/server/data/schema/` (then add FORCE RLS and grants by hand, see Database) |
-| `npm run db:migrate` | applies the migrations as `cmp_owner` (refuses any other role) |
+| `npm run db:migrate` | applies the migrations as `cmp_owner` (reads `.env.db` only; refuses any other role) |
 | `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); needs `docker compose up -d` |
 
 ## Languages
@@ -138,14 +145,20 @@ Tenant data:
   audit log first.
 - `audit(tx, event)` (`src/server/data/audit.ts`) appends to `audit_log` in the caller's transaction and
   refuses `meta` keys that look like secrets (password, token, secret, cookie, authorization, API key).
-  `audit_log` is append-only: `cmp_app` and `cmp_system` may SELECT and INSERT, never UPDATE or DELETE.
+  `audit_log` is append-only: `cmp_app` and `cmp_system` may SELECT and INSERT the event columns only
+  (never `id` or `created_at`, so no row is backdated), never UPDATE or DELETE.
+- A transaction handle given to a `withAccount`/`asSystem` callback throws once the callback has
+  returned: keep it inside the callback.
   The app reads and writes only its account's rows; system and global events (no account) are written
   and read by the system role.
 
 Migrations: `npm run db:generate` after changing the schema. drizzle-kit does not emit
-`FORCE ROW LEVEL SECURITY` or grants: add them to the generated SQL (as in `drizzle/0000_audit_log.sql`).
+`FORCE ROW LEVEL SECURITY` or grants: add them to the generated SQL (as in `drizzle/0000_audit_log.sql`
+and the column grants of `drizzle/0001_audit_log_column_grants.sql`). The sweep in `test/db/rls.test.ts`
+fails on any permissive policy the app role can use (its own, PUBLIC's or an inherited role's) whose
+expression is not exactly the account rule.
 In production the image runs them as a one-shot service before the app: `node scripts/migrate.ts`
-(needs only `DATABASE_URL_MIGRATE`).
+(needs only `DATABASE_URL_MIGRATE`, which the app and worker containers never receive).
 
 ## Health
 
@@ -164,7 +177,7 @@ One image runs either process. Build from the repository root (the image builds 
 docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://consent.example -t cloveconsent-cmp .
 docker run --read-only --env-file cmp/.env -p 4321:4321 cloveconsent-cmp            # app
 docker run --read-only --env-file cmp/.env cloveconsent-cmp node dist/worker.js      # worker
-docker run --read-only --env-file cmp/.env cloveconsent-cmp node scripts/migrate.ts  # migrations, one-shot
+docker run --read-only --env-file cmp/.env.db cloveconsent-cmp node scripts/migrate.ts  # migrations, one-shot
 ```
 
 Inside a container `localhost` is the container itself: point the URLs at the database and SMTP hosts

@@ -1,5 +1,6 @@
+import { sql } from 'drizzle-orm'
 import { SENSITIVE_KEY } from '../log'
-import { auditLog } from './schema'
+import type { Database } from './client'
 import type { SystemTx, TenantTx } from './scope'
 
 export interface AuditEvent {
@@ -34,21 +35,22 @@ function sensitiveKey(value: unknown, path = ''): string | null {
   return null
 }
 
-/**
- * Append an event to the audit log, inside the caller's transaction (it commits or rolls back with the
- * action it records). In a TenantTx the row-level security policy refuses any account but the scope's.
- */
-export async function audit(tx: TenantTx | SystemTx, e: AuditEvent): Promise<void> {
+/** Validate and insert one event: only the event columns, as the roles' column grants allow (never id or created_at). */
+export async function appendAuditEvent(db: Pick<Database, 'execute'>, e: AuditEvent): Promise<void> {
   if (e.action.length > 100 || !ACTION.test(e.action)) throw new TypeError('audit: the action must be a short dotted name')
   const meta = e.meta ?? {}
   const key = sensitiveKey(meta)
   // the key path only, never the value
   if (key !== null) throw new TypeError(`audit: meta must not hold secrets (key ${key})`)
-  await tx.insert(auditLog).values({
-    action: e.action,
-    target: e.target ?? null,
-    meta,
-    actorUserId: e.actorUserId,
-    accountId: e.accountId,
-  })
+  await db.execute(sql`
+    insert into audit_log (actor_user_id, account_id, action, target, meta)
+    values (${e.actorUserId}, ${e.accountId}, ${e.action}, ${e.target ?? null}, ${JSON.stringify(meta)}::jsonb)`)
+}
+
+/**
+ * Append an event to the audit log, inside the caller's transaction (it commits or rolls back with the
+ * action it records). In a TenantTx the row-level security policy refuses any account but the scope's.
+ */
+export function audit(tx: TenantTx | SystemTx, e: AuditEvent): Promise<void> {
+  return appendAuditEvent(tx, e)
 }

@@ -16,7 +16,11 @@ const CLIENT = resolve(DATA_DIR, 'client')
 const AUTH_DATABASE = resolve(DATA_DIR, 'auth-database')
 const AUTH_DIR = resolve(SRC_DIR, 'server', 'auth')
 
-const DRIVERS = /^(pg|postgres|drizzle-orm\/node-postgres|drizzle-orm\/postgres-js)(\/.*)?$/
+// Postgres client packages (any subpath), and every drizzle-orm subpath except the driver-free query
+// builder (`drizzle-orm`, `drizzle-orm/pg-core`): its drivers (node-postgres, postgres-js, neon-*, pglite,
+// pg-proxy, aws-data-api/pg, …, and any added later) each open a database connection.
+const DRIVERS = /^(pg|pg-pool|pg-native|postgres|@neondatabase\/[^/]+|@vercel\/postgres|@electric-sql\/pglite)(\/.*)?$/
+const DRIZZLE_SUBPATH = /^drizzle-orm\/(?!pg-core(\/|$))/
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts'])
 
 /** The specifier as a path without extension or /index, when it names a file in this app. */
@@ -33,7 +37,7 @@ function resolveLocal(specifier, fromFile) {
 const isInside = (file, dir) => file.toLowerCase().startsWith(`${dir}${sep}`.toLowerCase())
 
 function why(specifier, fromFile) {
-  if (DRIVERS.test(specifier)) return `'${specifier}' is a database driver`
+  if (DRIVERS.test(specifier) || DRIZZLE_SUBPATH.test(specifier)) return `'${specifier}' is a database driver`
   const local = resolveLocal(specifier, fromFile)
   if (local === null) return null
   if (local.toLowerCase() === CLIENT.toLowerCase()) return `'${specifier}' is the data layer's database client`

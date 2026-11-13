@@ -15,9 +15,10 @@ function isMailbox(value: string): boolean {
   return address !== undefined && z.email().safeParse(address).success
 }
 
+// The owner (DATABASE_URL_MIGRATE) and admin (DATABASE_URL_ADMIN) credentials are deliberately not
+// here: the app and worker never hold them. scripts/migrate.ts and scripts/db-init.ts read their own.
 const schema = z.object({
   DATABASE_URL: urlOf('postgres:', 'postgresql:'),
-  DATABASE_URL_MIGRATE: urlOf('postgres:', 'postgresql:'),
   DATABASE_URL_SYSTEM: urlOf('postgres:', 'postgresql:'),
   BETTER_AUTH_SECRET: z.string().refine((v) => Buffer.byteLength(v, 'utf8') >= 32),
   PUBLIC_ORIGIN: z.string().refine(isOrigin).transform((v) => new URL(v).origin),
@@ -36,7 +37,6 @@ export type Env = Readonly<z.infer<typeof schema>>
 /** What each variable must be. Error messages use only these texts, never a value from the environment. */
 const REQUIREMENT: Record<keyof z.infer<typeof schema>, string> = {
   DATABASE_URL: 'a postgres:// URL (the app role)',
-  DATABASE_URL_MIGRATE: 'a postgres:// URL (the owner role, migrations only)',
   DATABASE_URL_SYSTEM: 'a postgres:// URL (the system role)',
   BETTER_AUTH_SECRET: 'a secret of at least 32 bytes',
   PUBLIC_ORIGIN: 'a bare https origin (http only for localhost, and never in production)',

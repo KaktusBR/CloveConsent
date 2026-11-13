@@ -5,7 +5,6 @@ const SECRET = 'k3y-'.repeat(8) + 'tail' // 36 bytes
 
 const valid = (): Record<string, string | undefined> => ({
   DATABASE_URL: 'postgres://cmp_app:app-pw@localhost:5432/cmp',
-  DATABASE_URL_MIGRATE: 'postgres://cmp_owner:owner-pw@localhost:5432/cmp',
   DATABASE_URL_SYSTEM: 'postgres://cmp_system:system-pw@localhost:5432/cmp',
   BETTER_AUTH_SECRET: SECRET,
   PUBLIC_ORIGIN: 'https://consent.example',
@@ -49,7 +48,15 @@ describe('parseEnv', () => {
     expect(parseEnv({ ...valid(), PUBLIC_ORIGIN: 'https://consent.example/' }).PUBLIC_ORIGIN).toBe('https://consent.example')
   })
 
-  test.each(['DATABASE_URL', 'DATABASE_URL_MIGRATE', 'DATABASE_URL_SYSTEM', 'BETTER_AUTH_SECRET', 'PUBLIC_ORIGIN', 'SMTP_URL', 'MAIL_FROM'])(
+  test('the runtime environment never needs nor keeps the owner or admin database credentials', () => {
+    const env = parseEnv(valid())
+    expect(Object.keys(env)).not.toContain('DATABASE_URL_MIGRATE')
+    const given = parseEnv({ ...valid(), DATABASE_URL_MIGRATE: 'postgres://cmp_owner:owner-pw@localhost:5432/cmp', DATABASE_URL_ADMIN: 'postgres://postgres:pw@localhost:5432/postgres' })
+    expect(Object.keys(given)).not.toContain('DATABASE_URL_MIGRATE')
+    expect(Object.keys(given)).not.toContain('DATABASE_URL_ADMIN')
+  })
+
+  test.each(['DATABASE_URL', 'DATABASE_URL_SYSTEM', 'BETTER_AUTH_SECRET', 'PUBLIC_ORIGIN', 'SMTP_URL', 'MAIL_FROM'])(
     'a missing %s is named',
     (name) => {
       const err = errorOf({ ...valid(), [name]: undefined })

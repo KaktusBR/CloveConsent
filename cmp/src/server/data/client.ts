@@ -4,7 +4,7 @@
 // Two pools, two roles, never a role switch:
 //   app     DATABASE_URL         cmp_app, row-level security applies (withAccount, authDatabase)
 //   system  DATABASE_URL_SYSTEM  cmp_system, only the policies granted to it (asSystem)
-// The owner role (DATABASE_URL_MIGRATE) is used by scripts/migrate.ts only.
+// The owner role (DATABASE_URL_MIGRATE) is used by scripts/migrate.ts only and is not in the app's env.
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { env } from '../env'

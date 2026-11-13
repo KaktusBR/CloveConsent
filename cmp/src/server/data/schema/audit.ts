@@ -3,8 +3,9 @@ import { index, jsonb, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-
 import { appRole, isCurrentAccount, systemRole } from './tenancy'
 
 /**
- * Append-only record of sensitive actions. Grants (in the migration): SELECT and INSERT to cmp_app and
- * cmp_system, never UPDATE, DELETE or TRUNCATE to anyone but the owner, which has no policy.
+ * Append-only record of sensitive actions. Grants (in the migrations): SELECT, and INSERT of the event
+ * columns only (not id or created_at), to cmp_app and cmp_system; never UPDATE, DELETE or TRUNCATE.
+ * Inserts therefore go through appendAuditEvent (src/server/data/audit.ts), which names only those columns.
  *
  * - cmp_app reads and writes only rows of the current account. Rows with no account (global and system
  *   events) are invisible to it and it cannot write them.

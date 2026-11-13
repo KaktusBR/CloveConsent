@@ -4,7 +4,7 @@ import { audit } from '../../src/server/data/audit'
 import { authDatabase } from '../../src/server/data/auth-database'
 import { closeDatabases } from '../../src/server/data/client'
 import { auditLog } from '../../src/server/data/schema'
-import { asSystem, withAccount, type AccountScope } from '../../src/server/data/scope'
+import { asSystem, withAccount, type AccountScope, type SystemTx, type TenantTx } from '../../src/server/data/scope'
 import { newId } from './raw'
 
 const scopeOf = (accountId: string): AccountScope => ({ accountId, userId: newId(), role: 'owner' })
@@ -28,7 +28,11 @@ describe('withAccount', () => {
   test("writing a row for account B from account A's scope is refused and nothing is written", async () => {
     const a = scopeOf(newId())
     const b = scopeOf(newId())
-    await expect(withAccount(a, (tx) => audit(tx, { action: 'probe.cross', actorUserId: a.userId, accountId: b.accountId }))).rejects.toThrow()
+    const refused = await withAccount(a, (tx) => audit(tx, { action: 'probe.cross', actorUserId: a.userId, accountId: b.accountId })).then(
+      () => null,
+      (err: { code?: string; cause?: { code?: string; message?: string } }) => ({ code: err.cause?.code ?? err.code, message: err.cause?.message }),
+    )
+    expect(refused).toEqual({ code: '42501', message: expect.stringMatching(/row-level security policy/) })
     expect(await withAccount(b, (tx) => tx.select().from(auditLog))).toEqual([])
   })
 
@@ -60,6 +64,28 @@ describe('withAccount', () => {
       await expect(withAccount({ ...scopeOf(newId()), accountId }, async () => { ran = true })).rejects.toThrow(/account id/i)
     }
     expect(ran).toBe(false)
+  })
+})
+
+describe('a transaction handle used after its scope ended', () => {
+  test('throws a clear error before touching the connection', async () => {
+    const a = scopeOf(newId())
+    let tenant: TenantTx | undefined
+    let system: SystemTx | undefined
+    await withAccount(a, async (tx) => { tenant = tx })
+    await asSystem('test: leak the handle', async (tx) => { system = tx })
+    expect(() => tenant!.select().from(auditLog)).toThrow(/transaction.*(ended|over)/i)
+    expect(() => system!.select().from(auditLog)).toThrow(/transaction.*(ended|over)/i)
+    await expect(audit(tenant!, { action: 'probe.late', actorUserId: null, accountId: a.accountId })).rejects.toThrow(/transaction.*(ended|over)/i)
+  })
+
+  test('works normally while the scope is open, also inside nested helpers', async () => {
+    const a = scopeOf(newId())
+    const rows = await withAccount(a, async (tx) => {
+      await audit(tx, { action: 'probe.live', actorUserId: a.userId, accountId: a.accountId })
+      return tx.select().from(auditLog)
+    })
+    expect(rows.map((r) => r.action)).toEqual(['probe.live'])
   })
 })
 

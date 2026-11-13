@@ -48,6 +48,22 @@ describe('audit', () => {
   })
 })
 
+describe('the app role writes only the event columns', () => {
+  test.each([
+    ['created_at', `'2000-01-01T00:00:00Z'`],
+    ['id', `gen_random_uuid()`],
+  ])('an insert that sets %s is refused', async (column, value) => {
+    const code = await asRole('app', async (c) => {
+      await c.query('begin')
+      await c.query(`select set_config('app.account_id', $1, true)`, [scope.accountId])
+      const out = await errorCode(c.query(`insert into audit_log (account_id, action, ${column}) values ($1, 'probe.column', ${value})`, [scope.accountId]))
+      await c.query('rollback')
+      return out
+    })
+    expect(code).toBe('42501')
+  })
+})
+
 describe('audit_log is append-only', () => {
   beforeAll(async () => {
     await withAccount(scope, (tx) => audit(tx, { action: 'probe.append', actorUserId: scope.userId, accountId: scope.accountId }))
