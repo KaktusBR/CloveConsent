@@ -34,18 +34,33 @@ function create(options: ConstructorOptions, log: Logger, role: string): PgBoss 
   return boss
 }
 
+export class QueueSchemaError extends Error {
+  override readonly name = 'QueueSchemaError'
+  constructor(cause: unknown) {
+    super('job queue: the pgboss schema is missing or of another version than this pg-boss; apply the migrations (npm run db:migrate)', { cause })
+  }
+}
+
+/** Start an instance; on a schema it cannot use (migrate: false), fail with a QueueSchemaError and close its pool. */
+async function start(boss: PgBoss): Promise<PgBoss> {
+  try {
+    return await boss.start()
+  } catch (err) {
+    await boss.stop({ graceful: false, close: true }).catch(() => {})
+    // pg-boss's checks when it may not migrate (contractor.check)
+    if (/requires migrations|is not installed/.test((err as Error).message)) throw new QueueSchemaError(err)
+    throw err
+  }
+}
+
 // ---- enqueue (app role) ----
 
 let appQueue: Promise<PgBoss> | undefined
 
 function app(): Promise<PgBoss> {
-  appQueue ??= create(
-    { connectionString: env.DATABASE_URL, application_name: 'cmp-app-queue', max: 3, supervise: false, registerInstance: false },
-    defaultLog,
-    'app',
-  )
-    .start()
-    .catch((err: unknown) => {
+  appQueue ??= start(
+    create({ connectionString: env.DATABASE_URL, application_name: 'cmp-app-queue', max: 3, supervise: false, registerInstance: false }, defaultLog, 'app'),
+  ).catch((err: unknown) => {
       appQueue = undefined // the next enqueue tries again
       throw err
     })
@@ -82,24 +97,27 @@ export async function closeQueue(): Promise<void> {
 
 // ---- worker (system role) ----
 
-export interface QueueJob<T> {
+export interface QueueJob {
   id: string
   name: string
-  data: T
+  /** As stored: anything a role that may insert jobs wrote. Check it before use. */
+  data: unknown
   /** 0 on the first attempt. */
   retryCount: number
   retryLimit: number
   /** For a dead-lettered job: the job that failed, and how many retries it had. */
   sourceId: string | null
   sourceRetryCount: number | null
+  /** Overwrite the stored data (to drop what must not outlive the job; a dead-letter copy takes the data as it is then). */
+  replaceData(data: object): Promise<void>
 }
 
 /** Resolve to complete the job, throw to fail it (retried while it has retries left), or say it can never succeed. */
-export type JobHandler<T> = (job: QueueJob<T>) => Promise<void | 'dead-letter'>
+export type JobHandler = (job: QueueJob) => Promise<void | 'dead-letter'>
 
 export interface QueueWorker {
   /** Take jobs from `name`, one at a time. */
-  work<T>(name: string, handler: JobHandler<T>, options?: { pollingIntervalSeconds?: number }): Promise<void>
+  work(name: string, handler: JobHandler, options?: { pollingIntervalSeconds?: number }): Promise<void>
   /** One maintenance pass now (expire, retry, delete old jobs); the worker also runs it on a timer. */
   supervise(): Promise<void>
   /** Stop fetching, wait up to `timeoutMs` for the jobs in hand to finish, then close the connections. */
@@ -107,15 +125,16 @@ export interface QueueWorker {
 }
 
 export async function startQueueWorker({ log = defaultLog, supervise = true }: { log?: Logger; supervise?: boolean } = {}): Promise<QueueWorker> {
-  const boss = await create(
-    { connectionString: env.DATABASE_URL_SYSTEM, application_name: 'cmp-worker', max: 5, supervise, instanceName: 'worker' },
-    log,
-    'worker',
-  ).start()
+  const boss = await start(
+    create({ connectionString: env.DATABASE_URL_SYSTEM, application_name: 'cmp-worker', max: 5, supervise, instanceName: 'worker' }, log, 'worker'),
+  )
+  const replaceData = async (name: string, id: string, data: object) => {
+    await boss.getDb().executeSql(`update ${QUEUE_SCHEMA}.job set data = $1::jsonb where name = $2 and id = $3`, [JSON.stringify(data), name, id])
+  }
   return {
-    async work<T>(name: string, handler: JobHandler<T>, { pollingIntervalSeconds = 2 } = {}) {
+    async work(name: string, handler: JobHandler, { pollingIntervalSeconds = 2 } = {}) {
       const options = { batchSize: 1, includeMetadata: true, perJobResults: true, pollingIntervalSeconds } as const
-      await boss.work<T, unknown, typeof options>(name, options, async (jobs: JobWithMetadata<T>[]) => {
+      await boss.work<unknown, unknown, typeof options>(name, options, async (jobs: JobWithMetadata<unknown>[]) => {
         const results: JobResult[] = []
         for (const job of jobs) {
           const outcome = await handler({
@@ -126,6 +145,7 @@ export async function startQueueWorker({ log = defaultLog, supervise = true }: {
             retryLimit: job.retryLimit,
             sourceId: job.sourceId,
             sourceRetryCount: job.sourceRetryCount,
+            replaceData: (data) => replaceData(job.name, job.id, data),
           })
           results.push({ id: job.id, status: outcome === 'dead-letter' ? 'deadletter' : 'completed' })
         }

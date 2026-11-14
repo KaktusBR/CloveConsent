@@ -57,7 +57,7 @@ export class MailError extends Error {
 
 const MAX_TEXT = 200
 const MAX_LINK = 2048
-const CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u // control characters, line and paragraph separators
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u // control and format characters (bidi overrides), line and paragraph separators
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
 
 function checkValue(field: string, kind: FieldKind, value: unknown): void {
@@ -80,6 +80,7 @@ function checkValue(field: string, kind: FieldKind, value: unknown): void {
 
 /** A clean copy of a valid mail; throws MailError otherwise. */
 export function checkMail(input: MailJob): MailJob {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new MailError('mail', 'must be an object')
   const { to, template, locale, data } = input
   if (typeof to !== 'string' || !z.email().safeParse(to).success) throw new MailError('to', 'must be one email address')
   if (typeof template !== 'string' || !Object.hasOwn(TEMPLATES, template)) throw new MailError('template', 'is not a known template')
@@ -148,39 +149,82 @@ export async function deliverMail(job: MailJob, transport: MailTransport, log: L
 
 /** Safe parts of a delivery error: no message (an SMTP reply can quote the recipient). */
 function errorFields(err: unknown): Record<string, unknown> {
-  const e = err as { name?: unknown; code?: unknown; responseCode?: unknown; command?: unknown }
+  const e = (err ?? {}) as { name?: unknown; code?: unknown; responseCode?: unknown; command?: unknown }
   return { name: e.name, code: e.code, responseCode: e.responseCode, command: e.command }
 }
 
-/** The worker's handler of `mail.send`: deliver, log each failed attempt, and rethrow so the queue retries. */
+/** A failed delivery as the queue stores it (the job's output): its safe parts only. */
+export class MailDeliveryError extends Error {
+  override readonly name = 'MailDeliveryError'
+  constructor(readonly details: Record<string, unknown>) {
+    super(`mail delivery failed (${typeof details.code === 'string' ? details.code : 'no code'})`)
+  }
+}
+
+/** A string field of stored job data, which may be anything a role that inserts jobs wrote. */
+function stringField(value: unknown, key: string): string | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const field = (value as Record<string, unknown>)[key]
+  return typeof field === 'string' ? field : null
+}
+
+/**
+ * What a mail job keeps once it is done (sent, or failed for good): template and language. Never the
+ * recipient or the values, whose links may carry a one-time token; the dead-letter copy takes this too.
+ */
+function summary(data: unknown): { template: MailTemplate | null; locale: Locale | null } {
+  const template = stringField(data, 'template')
+  const locale = stringField(data, 'locale')
+  return {
+    template: template !== null && Object.hasOwn(TEMPLATES, template) ? (template as MailTemplate) : null,
+    locale: locale !== null && (locales as readonly string[]).includes(locale) ? (locale as Locale) : null,
+  }
+}
+
+/** Overwrite the job's data with its summary; a failure is logged, never thrown (the mail may be sent already). */
+async function scrub(job: QueueJob, log: Logger): Promise<void> {
+  try {
+    await job.replaceData(summary(job.data))
+  } catch (err) {
+    log.warn({ error: (err as Error).message }, 'mail job data not cleared')
+  }
+}
+
+/**
+ * The worker's handler of `mail.send`: deliver, log each failed attempt, and fail with a sanitized error
+ * so the queue retries. Once the job is done (sent, invalid, or out of retries) its data is cut down to
+ * the summary.
+ */
 export function mailHandler(transport: MailTransport, log: Logger = defaultLog) {
-  return async (job: QueueJob<MailJob>): Promise<void | 'dead-letter'> => {
+  return async (job: QueueJob): Promise<void | 'dead-letter'> => {
     const jobLog = log.child({ jobId: job.id })
+    const kept = summary(job.data)
+    let mail: MailJob
     try {
-      checkMail(job.data)
+      mail = checkMail(job.data as MailJob)
     } catch (err) {
       // never valid, so never deliverable: straight to the dead-letter queue
-      jobLog.error({ template: job.data.template, field: (err as MailError).field }, 'mail job invalid')
+      jobLog.error({ ...kept, field: err instanceof MailError ? err.field : null }, 'mail job invalid')
+      await scrub(job, jobLog)
       return 'dead-letter'
     }
     try {
-      await deliverMail(job.data, transport, jobLog)
+      await deliverMail(mail, transport, jobLog)
     } catch (err) {
-      jobLog.warn(
-        { template: job.data.template, attempt: job.retryCount + 1, attempts: job.retryLimit + 1, error: errorFields(err) },
-        'mail delivery failed',
-      )
-      throw err
+      const error = errorFields(err)
+      jobLog.warn({ ...kept, attempt: job.retryCount + 1, attempts: job.retryLimit + 1, error }, 'mail delivery failed')
+      if (job.retryCount >= job.retryLimit) await scrub(job, jobLog)
+      throw new MailDeliveryError(error)
     }
+    await scrub(job, jobLog)
   }
 }
 
 /** The worker's handler of the dead-letter queue: the mail was never sent, which the log must show. */
 export function deadMailHandler(log: Logger = defaultLog) {
-  return async (job: QueueJob<MailJob>): Promise<void> => {
-    log.error(
-      { jobId: job.id, failedJobId: job.sourceId, template: job.data.template, locale: job.data.locale, attempts: (job.sourceRetryCount ?? 0) + 1 },
-      'mail dead-lettered',
-    )
+  return async (job: QueueJob): Promise<void> => {
+    log.error({ jobId: job.id, failedJobId: job.sourceId, ...summary(job.data), attempts: (job.sourceRetryCount ?? 0) + 1 }, 'mail dead-lettered')
+    // a job that expired on its last attempt reaches here with its full data
+    await scrub(job, log.child({ jobId: job.id }))
   }
 }

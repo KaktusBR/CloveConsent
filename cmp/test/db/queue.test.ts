@@ -3,10 +3,10 @@
 // dead-letter queue, and the privileges of the queue schema.
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { closeDatabases } from '../../src/server/data/client'
-import { closeQueue, startQueueWorker } from '../../src/server/data/queue'
+import { closeQueue, QueueSchemaError, startQueueWorker } from '../../src/server/data/queue'
 import { asSystem, withAccount, type AccountScope } from '../../src/server/data/scope'
 import type { MailJob, MailTransport } from '../../src/server/jobs/mail'
-import { sendMail } from '../../src/server/jobs/mail'
+import { checkMail, sendMail } from '../../src/server/jobs/mail'
 import { enqueue } from '../../src/server/jobs/queue'
 import { startWorker } from '../../src/worker'
 import { captureLog } from '../unit/capture-log'
@@ -33,6 +33,19 @@ async function jobsTo(to: string) {
     )).rows,
   )
 }
+
+/** The job `id` and its dead-letter copy, as stored, read as the owner. */
+async function jobsOf(id: string) {
+  return asRole('migrate', async (c) =>
+    (await c.query<{ id: string; name: string; state: string; retry_count: number; data: unknown; source_id: string | null; row: string }>(
+      `select id, name, state, retry_count, data, source_id, row_to_json(j)::text as row from pgboss.job j where id = $1 or source_id = $1 order by created_on`,
+      [id],
+    )).rows,
+  )
+}
+
+/** Queue a checked mail and return its job id (sendMail returns nothing). */
+const queue = (mail: MailJob) => enqueue('mail.send', checkMail(mail))
 
 async function until<T>(what: string, probe: () => Promise<T | undefined>, timeoutMs = 20_000): Promise<T> {
   const deadline = Date.now() + timeoutMs
@@ -89,7 +102,8 @@ describe('the worker', () => {
     const to = address('mailpit')
     const worker = await startWorker({ log: captureLog().log, pollingIntervalSeconds: 0.5 })
     try {
-      await sendMail({ to, template: 'invitation', locale: 'sk', data: { url: `${ORIGIN}/invitation/${newId()}`, inviter: '<script>alert(1)</script>', account: 'Acme' } })
+      const url = `${ORIGIN}/invitation/tok_${newId()}`
+      const jobId = await queue({ to, template: 'invitation', locale: 'sk', data: { url, inviter: '<script>alert(1)</script>', account: 'Acme' } })
       const id = await until('the message in Mailpit', async () => {
         const res = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${to}"`)}`)
         const body = (await res.json()) as { messages: { ID: string }[] }
@@ -100,7 +114,14 @@ describe('the worker', () => {
       expect(message.HTML).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
       expect(message.HTML).not.toContain('<script>')
       expect(message.Text).toContain('<script>alert(1)</script> vás pozýva')
-      await until('the job to complete', async () => ((await jobsTo(to))[0]?.state === 'completed' ? true : undefined))
+      const [done] = await until('the job to complete', async () => {
+        const rows = await jobsOf(jobId)
+        return rows[0]?.state === 'completed' ? rows : undefined
+      })
+      // the used link (one-time token) and the recipient are not kept
+      expect(done?.data).toEqual({ template: 'invitation', locale: 'sk' })
+      expect(done?.row).not.toContain(url)
+      expect(done?.row).not.toContain(to)
     } finally {
       await worker.stop()
     }
@@ -116,21 +137,28 @@ describe('the worker', () => {
     const failing: MailTransport = {
       sendMail: (message) => {
         if (message.to === to) attempts++
-        return Promise.reject(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' }))
+        return Promise.reject(Object.assign(new Error(`550 5.1.1 <${to}> unknown user`), { code: 'EENVELOPE', responseCode: 550 }))
       },
     }
     const worker = await startWorker({ transport: failing, log, pollingIntervalSeconds: 0.5 })
     try {
-      await sendMail(mail)
-      const id = (await jobsTo(to))[0]?.id
+      const id = await queue(mail)
       const dead = await until('the dead-letter log line', async () => lines.find((l) => l.msg === 'mail dead-lettered' && l.failedJobId === id), 40_000)
       expect(dead).toMatchObject({ level: 'error', template: 'verify-email', attempts: 6 })
       expect(attempts).toBe(6)
-      const jobs = await jobsTo(to)
+      const jobs = await until('the dead letter to complete', async () => {
+        const rows = await jobsOf(id)
+        return rows[1]?.state === 'completed' ? rows : undefined
+      })
       expect(jobs).toEqual([
-        expect.objectContaining({ name: 'mail.send', state: 'failed', retry_count: 5 }),
-        expect.objectContaining({ name: 'mail.send.dead' }),
+        expect.objectContaining({ name: 'mail.send', state: 'failed', retry_count: 5, data: { template: 'verify-email', locale: 'en' } }),
+        expect.objectContaining({ name: 'mail.send.dead', source_id: id, data: { template: 'verify-email', locale: 'en' } }),
       ])
+      // neither the failed job nor its dead-letter copy keeps the link, the recipient or the SMTP reply
+      for (const row of jobs.map((j) => j.row)) {
+        expect(row).not.toContain(mail.data.url)
+        expect(row).not.toContain(to)
+      }
       expect(lines.filter((l) => l.msg === 'mail delivery failed' && l.jobId === id)).toHaveLength(6)
       const all = JSON.stringify(lines)
       expect(all).not.toContain(mail.data.url)
@@ -152,8 +180,7 @@ describe('the worker', () => {
       },
     }
     const worker = await startWorker({ transport: slow, log: captureLog().log, pollingIntervalSeconds: 0.5 })
-    const to = address('graceful')
-    await sendMail(verify(to))
+    const id = await queue(verify(address('graceful')))
     await held
     let stopped = false
     const stopping = worker.stop().then(() => (stopped = true))
@@ -161,7 +188,41 @@ describe('the worker', () => {
     expect(stopped).toBe(false)
     release()
     await stopping
-    expect((await jobsTo(to))[0]?.state).toBe('completed')
+    expect((await jobsOf(id))[0]?.state).toBe('completed')
+  })
+
+  test('malformed job data written straight into the queue is dead-lettered once and logged, not retried', async () => {
+    // cmp_app may insert any row into the job table, so the worker must not trust what it finds there
+    const ids = await asRole('app', async (c) => {
+      const out: string[] = []
+      for (const data of [null, '"x"', '{"template": 5}', '[]']) {
+        const { rows } = await c.query<{ id: string }>(
+          `insert into pgboss.job_common (name, data, retry_limit, dead_letter, policy) values ('mail.send', $1::jsonb, 5, 'mail.send.dead', 'standard') returning id`,
+          [data],
+        )
+        out.push(rows[0]?.id ?? '')
+      }
+      return out
+    })
+    const { log, lines } = captureLog()
+    const worker = await startWorker({ transport: { sendMail: () => Promise.reject(new Error('never called')) }, log, pollingIntervalSeconds: 0.5 })
+    try {
+      for (const id of ids) {
+        const rows = await until(`the dead letter of ${id} to complete`, async () => {
+          const r = await jobsOf(id)
+          return r[1]?.state === 'completed' ? r : undefined
+        })
+        expect(rows).toEqual([
+          expect.objectContaining({ name: 'mail.send', state: 'failed', retry_count: 0 }),
+          expect.objectContaining({ name: 'mail.send.dead', state: 'completed' }),
+        ])
+        expect(lines.filter((l) => l.msg === 'mail job invalid' && l.jobId === id)).toHaveLength(1)
+        expect(lines.filter((l) => l.msg === 'mail dead-lettered' && l.failedJobId === id)).toHaveLength(1)
+      }
+      expect(lines.filter((l) => l.msg === 'mail delivery failed' || l.level === 'warn')).toEqual([])
+    } finally {
+      await worker.stop()
+    }
   })
 
   test("the worker's maintenance pass runs on its role without errors", async () => {
@@ -219,6 +280,41 @@ describe('the queue schema', () => {
     for (const statement of ['create table pgboss.sneaky (id int)', 'drop table pgboss.job_common', 'truncate pgboss.job_common', 'alter table pgboss.queue add column x int']) {
       expect(await asRole('system', (c) => errorCode(c.query(statement))), statement).toBe('42501')
     }
+  })
+
+  test('the app role may run only the function its insert uses; the schema-changing ones stay with the owner', async () => {
+    const functions = await asRole('migrate', async (c) =>
+      (await c.query<{ name: string; app: boolean; system: boolean }>(
+        `select p.proname as name, has_function_privilege('cmp_app', p.oid, 'EXECUTE') as app, has_function_privilege('cmp_system', p.oid, 'EXECUTE') as system
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'pgboss' order by 1`,
+      )).rows,
+    )
+    expect(functions).toEqual([
+      { name: 'create_queue', app: false, system: false },
+      { name: 'delete_queue', app: false, system: false },
+      { name: 'job_now', app: true, system: true },
+      { name: 'job_table_format', app: false, system: false },
+      { name: 'job_table_run', app: false, system: false },
+      { name: 'job_table_run_async', app: false, system: false },
+    ])
+    for (const statement of [`select pgboss.create_queue('sneaky', '{"policy":"standard"}'::jsonb)`, `select pgboss.delete_queue('mail.send')`, `select pgboss.job_table_run('select 1')`]) {
+      expect(await asRole('app', (c) => errorCode(c.query(statement))), statement).toBe('42501')
+    }
+  })
+
+  test('app and worker refuse to start on a pgboss schema of another version, saying what to do', async () => {
+    await closeQueue()
+    await asRole('migrate', (c) => c.query('update pgboss.version set version = version + 1'))
+    try {
+      const worker = await startQueueWorker({ log: captureLog().log }).catch((e: unknown) => e)
+      expect(worker).toBeInstanceOf(QueueSchemaError)
+      expect((worker as Error).message).toMatch(/npm run db:migrate/)
+      await expect(enqueue('mail.send', verify(address('version')))).rejects.toBeInstanceOf(QueueSchemaError)
+    } finally {
+      await asRole('migrate', (c) => c.query('update pgboss.version set version = version - 1'))
+    }
+    // and they start again once the schema matches
+    await expect(enqueue('mail.send', verify(address('version')), { startAfter: new Date(Date.now() + 3_600_000) })).resolves.toMatch(/^[0-9a-f-]{36}$/)
   })
 
   test('mail is retried 5 times with backoff, then dead-lettered; mail jobs are deleted after a day', async () => {

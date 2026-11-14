@@ -179,8 +179,19 @@ task needs, never an account's records or secrets.
   queues it; the worker renders it (`src/emails/*.tsx`: subject and body from the catalog, HTML and plain
   text, no remote content) and sends it over `SMTP_URL`. Links must be on `PUBLIC_ORIGIN`.
 - A failed mail is retried 5 times with backoff (30 s doubling, at most an hour), then moved to
-  `mail.send.dead` and logged as `mail dead-lettered`. Logs never carry the recipient, links or bodies.
-- The worker stops on SIGTERM: it takes no new job and lets the ones in hand finish (up to 30 s).
+  `mail.send.dead` and logged as `mail dead-lettered`. A job whose data is not a valid mail goes there at
+  once. Logs never carry the recipient, links or bodies.
+- Once a mail job is done (sent, invalid or out of retries) its stored data is cut down to template and
+  language: no recipient, and no link (links can carry one-time tokens), in the job or its dead-letter
+  copy. A failure is stored as code and SMTP reply code only.
+- Only the owner may run pg-boss's schema-changing SQL functions; the runtime roles run `job_now()` only
+  (`drizzle/0003_job_queue_functions.sql`). The owner's new functions get no EXECUTE for PUBLIC: grant
+  what the runtime roles need in the migration that creates a function.
+- App and worker refuse to start when the `pgboss` schema is not the version their pg-boss expects
+  (`QueueSchemaError`: apply the migrations).
+- The worker stops on SIGTERM or SIGINT, also during startup: it takes no new job, lets the ones in hand
+  finish (up to 30 s) and exits 0; it exits 1 when it cannot start or stop cleanly.
+  `test/db/worker-process.test.ts` checks this on Linux (CI); Windows has no signals to send.
 
 ## Health
 

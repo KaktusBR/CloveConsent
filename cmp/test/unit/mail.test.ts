@@ -1,6 +1,7 @@
 import { createTransport } from 'nodemailer'
 import { describe, expect, test } from 'vitest'
-import { checkMail, deliverMail, MAIL_TEMPLATES, MailError, renderMail, type MailJob, type MailTransport } from '../../src/server/jobs/mail'
+import type { QueueJob } from '../../src/server/data/queue'
+import { checkMail, deadMailHandler, deliverMail, MAIL_TEMPLATES, mailHandler, MailDeliveryError, MailError, renderMail, type MailJob, type MailTransport } from '../../src/server/jobs/mail'
 import { captureLog } from './capture-log'
 
 // PUBLIC_ORIGIN and MAIL_FROM of vitest.config.ts
@@ -36,8 +37,8 @@ function memoryTransport() {
 describe('delivery', () => {
   test('a mail job reaches the transport with the subject in the requested language, as HTML and plain text', async () => {
     const { transport, sent } = memoryTransport()
-    await deliverMail(job('verify-email', 'sk'), transport)
-    await deliverMail(job('verify-email', 'en'), transport)
+    await deliverMail(job('verify-email', 'sk'), transport, captureLog().log)
+    await deliverMail(job('verify-email', 'en'), transport, captureLog().log)
     expect(sent.map((m) => m.subject)).toEqual(['Potvrďte svoju e-mailovú adresu', 'Confirm your email address'])
     const [sk] = sent
     expect(sk?.to.map((t) => t.address)).toEqual(['ana@example.test'])
@@ -124,6 +125,16 @@ describe('checkMail', () => {
     expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, account: 'x'.repeat(201) }))).toThrow(MailError)
   })
 
+  test('refuses a text value with a bidi override or another invisible format character', () => {
+    const rlo = String.fromCodePoint(0x202e) // RIGHT-TO-LEFT OVERRIDE: "Ana<RLO>gpj.exe" shows as "Anaexe.jpg"
+    expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, inviter: `Ana${rlo}gpj.exe` }))).toThrow(MailError)
+    expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, account: `Acme${String.fromCodePoint(0x200b)}` }))).toThrow(MailError)
+  })
+
+  test('refuses a mail that is not an object at all', () => {
+    for (const input of [null, 'mail', 42, []]) expect(() => checkMail(input as unknown as MailJob)).toThrow(MailError)
+  })
+
   test('refuses an unknown state or a time that is not one', () => {
     expect(() => checkMail(job('two-factor-changed', 'en', { ...DATA['two-factor-changed'], state: 'maybe' }))).toThrow(MailError)
     expect(() => checkMail(job('new-sign-in', 'en', { ...DATA['new-sign-in'], when: 'yesterday' }))).toThrow(MailError)
@@ -144,5 +155,69 @@ describe('logging', () => {
     expect(all).not.toContain(TOKEN)
     expect(all).not.toContain('ana@example.test')
     expect(all).not.toContain('Obnovenie hesla')
+  })
+})
+
+/** A job as the worker hands it over, recording what the handler writes back. */
+function queued(data: unknown, attempt = { retryCount: 0, retryLimit: 5 }) {
+  const written: object[] = []
+  const queueJob: QueueJob = {
+    id: 'job-1',
+    name: 'mail.send',
+    data,
+    ...attempt,
+    sourceId: null,
+    sourceRetryCount: null,
+    replaceData: async (d) => {
+      written.push(d)
+    },
+  }
+  return { queueJob, written }
+}
+
+describe('the worker handlers', () => {
+  const failing: MailTransport = {
+    sendMail: () => Promise.reject(Object.assign(new Error('550 5.1.1 <ana@example.test> unknown user'), { code: 'EENVELOPE', responseCode: 550 })),
+  }
+
+  test('a sent mail keeps only its template and language: no recipient, no link', async () => {
+    const { transport } = memoryTransport()
+    const { queueJob, written } = queued(job('verify-email', 'sk'))
+    await expect(mailHandler(transport, captureLog().log)(queueJob)).resolves.toBeUndefined()
+    expect(written).toEqual([{ template: 'verify-email', locale: 'sk' }])
+  })
+
+  test('a failed attempt with retries left keeps the data for the retry and fails with a sanitized error', async () => {
+    const { queueJob, written } = queued(job('verify-email', 'en'), { retryCount: 2, retryLimit: 5 })
+    const error = await mailHandler(failing, captureLog().log)(queueJob).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(MailDeliveryError)
+    expect((error as Error).message).not.toContain('ana@example.test')
+    expect(JSON.stringify(error)).not.toContain('ana@example.test')
+    expect(written).toEqual([])
+  })
+
+  test('the last failed attempt cuts the data down before the queue copies it to the dead-letter queue', async () => {
+    const { queueJob, written } = queued(job('verify-email', 'en'), { retryCount: 5, retryLimit: 5 })
+    await expect(mailHandler(failing, captureLog().log)(queueJob)).rejects.toBeInstanceOf(MailDeliveryError)
+    expect(written).toEqual([{ template: 'verify-email', locale: 'en' }])
+  })
+
+  test.each([null, 'x', 42, [], { template: 5 }, { to: 'ana@example.test', template: 'verify-email', locale: 'en', data: null }])(
+    'malformed job data (%j) is dead-lettered at once and logged, never thrown',
+    async (data) => {
+      const { log, lines } = captureLog()
+      const { queueJob, written } = queued(data)
+      await expect(mailHandler(memoryTransport().transport, log)(queueJob)).resolves.toBe('dead-letter')
+      expect(lines.map((l) => l.msg)).toEqual(['mail job invalid'])
+      expect(written).toHaveLength(1)
+      expect(JSON.stringify(written)).not.toContain('ana@example.test')
+    },
+  )
+
+  test.each([null, 'x', { template: 'verify-email', locale: 'sk' }])('the dead-letter handler logs any data (%j) and never throws', async (data) => {
+    const { log, lines } = captureLog()
+    const { queueJob } = queued(data)
+    await expect(deadMailHandler(log)({ ...queueJob, sourceId: 'job-0', sourceRetryCount: 5 })).resolves.toBeUndefined()
+    expect(lines).toEqual([expect.objectContaining({ msg: 'mail dead-lettered', failedJobId: 'job-0', attempts: 6 })])
   })
 })

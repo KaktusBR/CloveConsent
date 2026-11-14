@@ -1,0 +1,136 @@
+{
+  "id": "83d51c88-9a97-4022-ac86-45e060fb87fd",
+  "prevId": "d781b67c-1e84-4599-9a9e-1a4f73a6db6d",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.audit_log": {
+      "name": "audit_log",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "actor_user_id": {
+          "name": "actor_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target": {
+          "name": "target",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {
+        "audit_log_account_created_idx": {
+          "name": "audit_log_account_created_idx",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "audit_log_app_select": {
+          "name": "audit_log_app_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "cmp_app"
+          ],
+          "using": "\"audit_log\".\"account_id\" = nullif(current_setting('app.account_id', true), '')::uuid"
+        },
+        "audit_log_app_insert": {
+          "name": "audit_log_app_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "cmp_app"
+          ],
+          "withCheck": "\"audit_log\".\"account_id\" = nullif(current_setting('app.account_id', true), '')::uuid"
+        },
+        "audit_log_system_select": {
+          "name": "audit_log_system_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "cmp_system"
+          ],
+          "using": "true"
+        },
+        "audit_log_system_insert": {
+          "name": "audit_log_system_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "cmp_system"
+          ],
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
