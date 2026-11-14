@@ -17,10 +17,11 @@ const POOL = resolve(DATA_DIR, 'pool')
 const AUTH_DATABASE = resolve(DATA_DIR, 'auth-database')
 const AUTH_DIR = resolve(SRC_DIR, 'server', 'auth')
 
-// Postgres client packages (any subpath), and every drizzle-orm subpath except the driver-free query
-// builder (`drizzle-orm`, `drizzle-orm/pg-core`): its drivers (node-postgres, postgres-js, neon-*, pglite,
-// pg-proxy, aws-data-api/pg, …, and any added later) each open a database connection.
-const DRIVERS = /^(pg|pg-pool|pg-native|postgres|@neondatabase\/[^/]+|@vercel\/postgres|@electric-sql\/pglite)(\/.*)?$/
+// Postgres client packages (any subpath), the job queue (pg-boss opens its own connections), and every
+// drizzle-orm subpath except the driver-free query builder (`drizzle-orm`, `drizzle-orm/pg-core`): its
+// drivers (node-postgres, postgres-js, neon-*, pglite, pg-proxy, aws-data-api/pg, …, and any added later)
+// each open a database connection.
+const DRIVERS = /^(pg|pg-pool|pg-native|pg-boss|postgres|@neondatabase\/[^/]+|@vercel\/postgres|@electric-sql\/pglite)(\/.*)?$/
 const DRIZZLE_SUBPATH = /^drizzle-orm\/(?!pg-core(\/|$))/
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts'])
 

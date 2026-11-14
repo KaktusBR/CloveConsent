@@ -160,6 +160,28 @@ expression is not exactly the account rule.
 In production the image runs them as a one-shot service before the app: `node scripts/migrate.ts`
 (needs only `DATABASE_URL_MIGRATE`, which the app and worker containers never receive).
 
+## Jobs and email
+
+Background jobs use pg-boss in its own schema, `pgboss`, installed by a migration as the owner
+(`drizzle/0002_job_queue.sql`); pg-boss never changes the schema at runtime. Upgrading pg-boss is a new
+migration from `getMigrationPlans('pgboss', <installed version>)`: the worker refuses to start on a
+schema of another version. The queue is not tenant data (no row-level security): a job carries what one
+task needs, never an account's records or secrets.
+
+| Role | Can in `pgboss` |
+|---|---|
+| `cmp_app` | enqueue: read the queue settings, insert a job and read back its id; never read a job's data |
+| `cmp_system` | the worker: fetch, complete, fail, retry, clean up (DML on its tables, no DDL) |
+
+- `enqueue(name, data, { tx })` (`src/server/jobs/queue.ts`): with `tx` (from `withAccount`/`asSystem`)
+  the job exists only if that transaction commits.
+- `sendMail({ to, template, locale, data }, { tx })` (`src/server/jobs/mail.ts`) checks the mail and
+  queues it; the worker renders it (`src/emails/*.tsx`: subject and body from the catalog, HTML and plain
+  text, no remote content) and sends it over `SMTP_URL`. Links must be on `PUBLIC_ORIGIN`.
+- A failed mail is retried 5 times with backoff (30 s doubling, at most an hour), then moved to
+  `mail.send.dead` and logged as `mail dead-lettered`. Logs never carry the recipient, links or bodies.
+- The worker stops on SIGTERM: it takes no new job and lets the ones in hand finish (up to 30 s).
+
 ## Health
 
 - `GET /healthz`: `200 ok` while the process is up.

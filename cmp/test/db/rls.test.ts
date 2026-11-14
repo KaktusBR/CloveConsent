@@ -123,6 +123,24 @@ describe('the database catalog', () => {
     expect(violations.join(' | ')).toContain('sneaky')
   })
 
+  test('tables live only in the swept public schema, the job queue or the migrations journal', async () => {
+    // A new schema must be swept like public, or be shown not to hold tenant data. pgboss is the job
+    // queue (no tenant data, the app may only insert jobs: test/db/queue.test.ts); drizzle holds the
+    // migrations journal, which only the owner can reach.
+    const schemas = await asRole('migrate', async (c) =>
+      (await c.query<{ schema: string }>(
+        `select distinct n.nspname as schema from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where c.relkind in ('r', 'p', 'v', 'm', 'f') and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname not like 'pg_toast%'
+         order by 1`,
+      )).rows.map((r) => r.schema),
+    )
+    expect(schemas).toEqual(['drizzle', 'pgboss', 'public'])
+    const reach = await asRole('migrate', async (c) =>
+      (await c.query<{ role: string; usage: boolean }>(`select r as role, has_schema_privilege(r, 'drizzle', 'USAGE') as usage from unnest(array['cmp_app', 'cmp_system']) r`)).rows,
+    )
+    expect(reach).toEqual([{ role: 'cmp_app', usage: false }, { role: 'cmp_system', usage: false }])
+  })
+
   test('no role of the app is a superuser or bypasses row-level security, and only the owner owns tables', async () => {
     const roles = await asRole('migrate', async (c) =>
       (await c.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean; rolcreaterole: boolean; rolcreatedb: boolean }>(

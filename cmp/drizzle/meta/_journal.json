@@ -15,6 +15,13 @@
       "when": 1794598220957,
       "tag": "0001_audit_log_column_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794599211787,
+      "tag": "0002_job_queue",
+      "breakpoints": true
     }
   ]
 }

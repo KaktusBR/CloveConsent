@@ -39,6 +39,8 @@ describe('database client import rule', () => {
     ["import { drizzle } from 'drizzle-orm/aws-data-api/pg'", 'src/server/x.ts'],
     ["import { migrate } from 'drizzle-orm/node-postgres/migrator'", 'src/server/x.ts'],
     ["import { drizzle } from 'drizzle-orm/some-future-driver'", 'src/server/x.ts'],
+    ["import { PgBoss } from 'pg-boss'", 'src/server/jobs/x.ts'],
+    ["const { PgBoss } = await import('pg-boss')", 'src/worker.ts'],
   ])('%s is refused in %s', async (code, file) => {
     expect(await restricted(file, `${code}\nexport {}\n`)).toHaveLength(1)
   })
@@ -74,7 +76,7 @@ describe('database client import rule', () => {
       ['src/pages/x.ts', "import { databaseAnswers } from '../server/data/ready'\nexport { databaseAnswers }\n"],
       ['src/server/x.ts', "import { x } from './client'\nexport { x }\n"],
       ['src/server/x.ts', "import { x } from './data/clients'\nexport { x }\n"],
-      ['src/pages/x.ts', "import x from 'pgx'\nimport y from 'pg-boss'\nexport { x, y }\n"],
+      ['src/pages/x.ts', "import x from 'pgx'\nimport y from 'pg-bossy'\nexport { x, y }\n"],
       ['src/pages/x.ts', "import { eq, sql } from 'drizzle-orm'\nimport { pgTable } from 'drizzle-orm/pg-core'\nexport { eq, sql, pgTable }\n"],
       ['src/pages/x.ts', "const m = await import('./other')\nexport { m }\n"],
     ] as const) {
