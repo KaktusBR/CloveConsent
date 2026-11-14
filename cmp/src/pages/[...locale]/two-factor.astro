@@ -1,0 +1,23 @@
+---
+import TwoFactorForm from '../../components/auth/TwoFactorForm'
+import AuthPage from '../../layouts/AuthPage.astro'
+import { localeFromParam, localizedPath, sameSitePath } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+
+// The second sign-in step. Better Auth's challenge cookie says whose; without it the code is refused.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const next = sameSitePath(Astro.url.searchParams.get('next')) ?? localizedPath('/account/security', locale)
+Astro.response.headers.set('Cache-Control', 'no-store')
+---
+
+<AuthPage title={m.two_factor_title()} heading={m.two_factor_heading()}>
+  <p>{m.two_factor_intro()}</p>
+  <TwoFactorForm client:load next={next} />
+  <p class="text-sm">
+    <a class="underline underline-offset-4" href={localizedPath('/sign-in', locale)}>{m.two_factor_restart()}</a>
+  </p>
+</AuthPage>

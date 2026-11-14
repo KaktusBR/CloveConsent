@@ -1,0 +1,21 @@
+---
+import Base from './Base.astro'
+
+interface Props {
+  /** Document title, already translated. */
+  title: string
+  /** The page's heading, already translated. */
+  heading: string
+  /** False for a page whose URL carries a one-time value (a reset token): not indexed. */
+  indexable?: boolean
+}
+
+const { title, heading, indexable = true } = Astro.props
+---
+
+<Base title={title} indexable={indexable}>
+  <main class="mx-auto grid max-w-md gap-6 px-4 py-12">
+    <h1 class="text-3xl font-semibold tracking-tight">{heading}</h1>
+    <slot />
+  </main>
+</Base>

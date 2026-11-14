@@ -1,16 +1,29 @@
 ---
-import Base from '../../layouts/Base.astro'
-import { localeFromParam } from '../../i18n/locale'
+import SignInForm from '../../components/auth/SignInForm'
+import AuthPage from '../../layouts/AuthPage.astro'
+import { localeFromParam, localizedPath, sameSitePath } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
+import { completeSession } from '../../server/auth/guard'
 
-// Rendered per request, at /sign-in and /sk/sign-in. The form arrives with authentication.
+// Rendered per request, at /sign-in and /sk/sign-in.
 export const prerender = false
 
-if (!localeFromParam(Astro.params.locale)) return Astro.rewrite('/404')
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+// `next` only when it is a path on this site; anything else (//host, https://host …) is ignored.
+const next = sameSitePath(Astro.url.searchParams.get('next')) ?? localizedPath('/account/security', locale)
+Astro.response.headers.set('Cache-Control', 'no-store')
+if (await completeSession(Astro.request.headers)) return Astro.redirect(next, 303)
+
+const twoFactorHref = `${localizedPath('/two-factor', locale)}?${new URLSearchParams({ next })}`
 ---
 
-<Base title={m.sign_in_title()}>
-  <main class="mx-auto max-w-md px-4 py-12">
-    <h1 class="text-3xl font-semibold tracking-tight">{m.sign_in_heading()}</h1>
-  </main>
-</Base>
+<AuthPage title={m.sign_in_title()} heading={m.sign_in_heading()}>
+  <SignInForm client:load next={next} twoFactorHref={twoFactorHref} />
+  <p class="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+    <a class="underline underline-offset-4" href={localizedPath('/forgot-password', locale)}>{m.sign_in_forgot_link()}</a>
+    <a class="underline underline-offset-4" href={localizedPath('/sign-up', locale)}>{m.sign_in_sign_up_link()}</a>
+    <a class="underline underline-offset-4" href={localizedPath('/verify-email', locale)}>{m.sign_in_resend_link()}</a>
+  </p>
+</AuthPage>

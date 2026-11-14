@@ -1,0 +1,18 @@
+---
+import SignUpForm from '../../components/auth/SignUpForm'
+import AuthPage from '../../layouts/AuthPage.astro'
+import { localeFromParam, localizedPath } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+---
+
+<AuthPage title={m.sign_up_title()} heading={m.sign_up_heading()}>
+  <SignUpForm client:load sentHref={`${localizedPath('/verify-email', locale)}?status=sent`} />
+  <p class="text-sm">
+    <a class="underline underline-offset-4" href={localizedPath('/sign-in', locale)}>{m.sign_up_sign_in_link()}</a>
+  </p>
+</AuthPage>

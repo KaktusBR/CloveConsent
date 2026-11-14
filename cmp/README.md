@@ -194,6 +194,37 @@ task needs, never an account's records or secrets.
   exits 0. It exits 1 when it cannot start, or if stopping throws.
   `test/db/worker-process.test.ts` checks this on Linux (CI); Windows has no signals to send.
 
+## Sign-in
+
+Better Auth (`src/server/auth/auth.ts`), answering at `/api/auth/*`; pages `/sign-up`, `/sign-in`,
+`/verify-email`, `/forgot-password`, `/reset-password`, `/two-factor`, `/account/security` (each also
+under `/sk/`).
+
+- Email and password (12 to 128 characters, refused when Have I Been Pwned knows it: only the first five
+  characters of its SHA-1 leave the server). Signing in needs a confirmed address; a confirmation link
+  never signs anyone in. A password reset signs out every session.
+- Second factor: TOTP with 10 single-use backup codes (both stored encrypted with
+  `BETTER_AUTH_SECRET`); "trust this device" is refused. Passkeys (WebAuthn, relying party = the host of
+  `PUBLIC_ORIGIN`, user verification required) count as both factors.
+- `requireUser(Astro)` / `completeSession(headers)` (`src/server/auth/guard.ts`) accept a session only
+  when the address is confirmed and, for a user with 2FA on, the session was created by the second step
+  or a passkey (`auth_session.second_factor`). Turning 2FA on ends the user's other sessions.
+- Sessions live in the database (7 days, no cookie cache, so revoking is immediate). Cookies:
+  `cmp.session_token`, HttpOnly, SameSite=Lax, and `__Secure-` + Secure when `PUBLIC_ORIGIN` is https.
+- Rate limits are stored in `auth_rate_limit` (shared by every process, survive restarts), per client
+  address and path: sign-in 5/min, sign-up 3/min, reset request 3/5 min, reset 5/5 min, resend
+  confirmation 3/5 min, second-factor codes 5/min (and 10 wrong codes lock the second step for 15 min),
+  passkey sign-in 10/min, anything else 100/min. The address is read from `X-Forwarded-For`, which only
+  the reverse proxy may set: it must replace a client's value (a list of several addresses falls into
+  one shared bucket per path).
+- Auth mail (confirmation, reset, 2FA on/off) goes through `sendMail` in the language of the page the
+  request came from. Better Auth gives its mail callbacks no transaction: a mail is queued on its own
+  (a failure to queue fails the request; at worst a mail for a change later rolled back, whose link then
+  does not work).
+- Tables `auth_*` (`src/server/data/schema/auth.ts`): identity data, no `account_id`, no row-level
+  security; only `cmp_app` may use them, with the privileges listed in `test/db/rls.test.ts`. Created by
+  the migrations; Better Auth never migrates at runtime.
+
 ## Health
 
 - `GET /healthz`: `200 ok` while the process is up.

@@ -91,6 +91,20 @@ export function localeSwitchTarget(next: string | null, locale: Locale): string 
   return isLocalTarget(target) ? target : home
 }
 
+/**
+ * A `next=` value (where to go after signing in) as a path on this site, or null when it is anything
+ * else: `//host`, `/\host`, `https:...`, `/.//host` and every other spelling that could leave the site,
+ * by the same checks as {@link localeSwitchTarget}. The language prefix, if any, is kept.
+ */
+export function sameSitePath(next: string | null | undefined): string | null {
+  if (typeof next !== 'string' || !next.startsWith('/')) return null
+  const url = new URL(next, SENTINEL)
+  if (url.origin !== SENTINEL) return null
+  // dot segments resolved (`/a/..//host` is `//host`): refused, not repaired
+  const target = url.pathname + url.search
+  return isLocalTarget(target) && isLocalTarget(next) ? target : null
+}
+
 /** The first shipped language in an Accept-Language header, by q-value; `de-AT` also tries `de`. */
 function fromAcceptLanguage(header: string): Locale | null {
   const ranges = header

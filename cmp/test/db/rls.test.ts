@@ -4,9 +4,21 @@ import { asRole, errorCode, newId } from './raw'
 
 /**
  * Better Auth's identity tables (Tasks 6-8) carry no account_id and are guarded by Better Auth, not by
- * row-level security (ruling R2). Every other table in the public schema is tenant data.
+ * row-level security (ruling R2). Every other table in the public schema is tenant data. Each one is
+ * listed with exactly the privileges the app role holds on it (what Better Auth does there) and why;
+ * the system role and PUBLIC hold none, and none has row-level security (an explicit decision: the
+ * sweep below fails a table that turns it on without moving off this list).
  */
-const IDENTITY_TABLES: readonly string[] = []
+const IDENTITY_GRANTS: Readonly<Record<string, { app: readonly string[]; why: string }>> = {
+  auth_user: { app: ['INSERT', 'SELECT', 'UPDATE'], why: 'people who sign in; never deleted by the app' },
+  auth_credential: { app: ['INSERT', 'SELECT', 'UPDATE'], why: 'password hashes; never deleted by the app' },
+  auth_session: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'sign-in sessions, revoked by deleting' },
+  auth_verification: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'one-time challenges and tokens, consumed by deleting' },
+  auth_two_factor: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'encrypted TOTP secrets and backup codes, deleted when 2FA is turned off' },
+  auth_passkey: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'passkey public keys, removable by their owner' },
+  auth_rate_limit: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'rate-limit windows shared by every app process, pruned by deleting' },
+}
+const IDENTITY_TABLES: readonly string[] = Object.keys(IDENTITY_GRANTS)
 /** audit_log also holds system and global events, which belong to no account (ruling R2). */
 const NULLABLE_ACCOUNT: readonly string[] = ['audit_log']
 
@@ -102,6 +114,30 @@ describe('the database catalog', () => {
     const tables = await asRole('migrate', async (c) => (await c.query<{ table: string }>(TABLES)).rows.map((r) => r.table))
     expect(tables).toContain('audit_log')
     expect(await asRole('migrate', tenantViolations)).toEqual([])
+  })
+
+  test('identity tables: no row-level security, the listed privileges for the app role, none for anyone else', async () => {
+    const found = await asRole('migrate', async (c) => {
+      const { rows: tables } = await c.query<{ table: string; rls: boolean }>(
+        `select c.relname as table, c.relrowsecurity as rls from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relname like 'auth\\_%' order by 1`,
+      )
+      const { rows: grants } = await c.query<{ table: string; grantee: string; privilege: string }>(
+        `select table_name as table, grantee, privilege_type as privilege from information_schema.role_table_grants
+         where table_schema = 'public' and table_name like 'auth\\_%' and grantee <> 'cmp_owner' order by 1, 2, 3`,
+      )
+      const { rows: columns } = await c.query<{ table: string; grantee: string }>(
+        `select distinct table_name as table, grantee from information_schema.column_privileges
+         where table_schema = 'public' and table_name like 'auth\\_%' and grantee not in ('cmp_owner', 'cmp_app')`,
+      )
+      return { tables, grants, columns }
+    })
+    expect(found.tables.map((t) => t.table).sort()).toEqual([...IDENTITY_TABLES].sort())
+    expect(found.tables.filter((t) => t.rls)).toEqual([])
+    expect(found.columns).toEqual([])
+    const expected = Object.entries(IDENTITY_GRANTS).flatMap(([table, { app }]) => app.map((privilege) => ({ table, grantee: 'cmp_app', privilege })))
+    const key = (g: { table: string; grantee: string; privilege: string }) => `${g.table} ${g.grantee} ${g.privilege}`
+    expect(found.grants.map(key).sort()).toEqual(expected.map(key).sort())
   })
 
   test.each([

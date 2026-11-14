@@ -1,0 +1,82 @@
+---
+import PasskeySettings, { type PasskeyItem } from '../../../components/auth/PasskeySettings'
+import SignOutButton from '../../../components/auth/SignOutButton'
+import TwoFactorSettings from '../../../components/auth/TwoFactorSettings'
+import { Button } from '../../../components/ui/button'
+import Base from '../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { auth } from '../../../server/auth/auth'
+import { requireUser } from '../../../server/auth/guard'
+
+// The signed-in person's security settings: two-factor authentication, passkeys, signed-in sessions.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const signedIn = await requireUser(Astro)
+if (signedIn instanceof Response) return signedIn
+
+const headers = Astro.request.headers
+const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
+
+// Only what the page shows: never a session token.
+const sessions = (await auth.api.listSessions({ headers }))
+  .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+  .map((s) => ({ id: s.id, current: s.id === signedIn.session.id, device: s.userAgent || null, lastActive: when.format(s.updatedAt) }))
+const passkeys: PasskeyItem[] = (await auth.api.listPasskeys({ headers })).map((p) => ({
+  id: p.id,
+  name: p.name || m.security_passkey_default_name(),
+  added: day.format(new Date(p.createdAt)),
+}))
+const signInHref = localizedPath('/sign-in', locale)
+---
+
+<Base title={m.security_title()}>
+  <main class="mx-auto grid max-w-2xl gap-10 px-4 py-12">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <h1 class="text-3xl font-semibold tracking-tight">{m.security_heading()}</h1>
+      <SignOutButton client:load signInHref={signInHref} />
+    </div>
+    <p class="text-muted-foreground">{m.security_signed_in_as({ email: signedIn.user.email })}</p>
+
+    <section class="grid gap-4" aria-labelledby="two-factor-heading">
+      <h2 id="two-factor-heading" class="text-xl font-semibold">{m.security_two_factor_heading()}</h2>
+      <TwoFactorSettings client:load enabled={signedIn.user.twoFactorEnabled === true} />
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="passkeys-heading">
+      <h2 id="passkeys-heading" class="text-xl font-semibold">{m.security_passkeys_heading()}</h2>
+      <p>{m.security_passkeys_intro()}</p>
+      <PasskeySettings client:load passkeys={passkeys} />
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="sessions-heading">
+      <h2 id="sessions-heading" class="text-xl font-semibold">{m.security_sessions_heading()}</h2>
+      <ul class="grid gap-2">
+        {
+          sessions.map((s) => (
+            <li class="flex items-center justify-between gap-4 rounded-md border p-3" data-session={s.id}>
+              <span class="grid gap-1">
+                <span class="text-sm break-all">{s.device ?? m.security_session_unknown_device()}</span>
+                <span class="text-muted-foreground text-sm">
+                  {s.current ? m.security_session_current() : m.security_session_last_active({ when: s.lastActive })}
+                </span>
+              </span>
+              {!s.current && (
+                <form method="post" action="/api/account/revoke-session">
+                  <input type="hidden" name="session" value={s.id} />
+                  <Button type="submit" variant="outline" size="sm">
+                    {m.security_session_revoke()}
+                  </Button>
+                </form>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </main>
+</Base>

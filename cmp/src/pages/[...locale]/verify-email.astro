@@ -1,0 +1,36 @@
+---
+import ResendVerificationForm from '../../components/auth/ResendVerificationForm'
+import AuthPage from '../../layouts/AuthPage.astro'
+import { localeFromParam, localizedPath } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+
+// After sign-up (`status=sent`), and where the emailed link lands once Better Auth has checked it
+// (`status=verified`, or `error=` when the link was bad or expired).
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const params = Astro.url.searchParams
+const state = params.has('error') ? 'failed' : params.get('status') === 'verified' ? 'verified' : params.get('status') === 'sent' ? 'sent' : 'resend'
+---
+
+<AuthPage title={m.verify_email_title()} heading={m.verify_email_heading()}>
+  {state === 'sent' && <p role="status">{m.verify_email_sent()}</p>}
+  {state === 'failed' && <p role="alert" class="text-destructive font-medium">{m.auth_error_link_invalid()}</p>}
+  {state === 'resend' && <p>{m.verify_email_intro()}</p>}
+  {
+    state === 'verified' ? (
+      <>
+        <p role="status">{m.verify_email_done()}</p>
+        <p>
+          <a class="font-medium underline underline-offset-4" href={localizedPath('/sign-in', locale)}>
+            {m.sign_in_heading()}
+          </a>
+        </p>
+      </>
+    ) : (
+      <ResendVerificationForm client:load />
+    )
+  }
+</AuthPage>
