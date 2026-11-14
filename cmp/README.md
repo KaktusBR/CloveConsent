@@ -190,7 +190,8 @@ task needs, never an account's records or secrets.
 - App and worker refuse to start when the `pgboss` schema is not the version their pg-boss expects
   (`QueueSchemaError`: apply the migrations).
 - The worker stops on SIGTERM or SIGINT, also during startup: it takes no new job, lets the ones in hand
-  finish (up to 30 s) and exits 0; it exits 1 when it cannot start or stop cleanly.
+  finish (up to 30 s; a job still running then is left to the queue, which expires and retries it) and
+  exits 0. It exits 1 when it cannot start, or if stopping throws.
   `test/db/worker-process.test.ts` checks this on Linux (CI); Windows has no signals to send.
 
 ## Health

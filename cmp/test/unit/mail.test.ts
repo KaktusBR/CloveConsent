@@ -129,6 +129,21 @@ describe('checkMail', () => {
     const rlo = String.fromCodePoint(0x202e) // RIGHT-TO-LEFT OVERRIDE: "Ana<RLO>gpj.exe" shows as "Anaexe.jpg"
     expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, inviter: `Ana${rlo}gpj.exe` }))).toThrow(MailError)
     expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, account: `Acme${String.fromCodePoint(0x200b)}` }))).toThrow(MailError)
+    for (const cp of [0x200e, 0x200f, 0x061c, 0x2066, 0x2069, 0x2060, 0xfeff, 0x180e, 0x206a, 0xe0041]) {
+      expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, inviter: `Ana${String.fromCodePoint(cp)}` })), cp.toString(16)).toThrow(MailError)
+    }
+  })
+
+  test('accepts the zero-width joiner and non-joiner, which many scripts and emoji need', () => {
+    const zwnj = String.fromCodePoint(0x200c)
+    const zwj = String.fromCodePoint(0x200d)
+    for (const name of [
+      `شرکت${zwnj}ها`, // Persian: "companies"
+      `क्${zwj}ष क्${zwnj}ष`, // Devanagari conjunct forms
+      `Ana 👩${zwj}💻`, // emoji sequence
+    ]) {
+      expect(() => checkMail(job('invitation', 'en', { ...DATA.invitation, account: name })), name).not.toThrow()
+    }
   })
 
   test('refuses a mail that is not an object at all', () => {
@@ -161,18 +176,23 @@ describe('logging', () => {
 /** A job as the worker hands it over, recording what the handler writes back. */
 function queued(data: unknown, attempt = { retryCount: 0, retryLimit: 5 }) {
   const written: object[] = []
+  const sourceWritten: object[] = []
   const queueJob: QueueJob = {
     id: 'job-1',
     name: 'mail.send',
     data,
     ...attempt,
     sourceId: null,
+    sourceName: null,
     sourceRetryCount: null,
     replaceData: async (d) => {
       written.push(d)
     },
+    replaceSourceData: async (d) => {
+      sourceWritten.push(d)
+    },
   }
-  return { queueJob, written }
+  return { queueJob, written, sourceWritten }
 }
 
 describe('the worker handlers', () => {
@@ -216,8 +236,11 @@ describe('the worker handlers', () => {
 
   test.each([null, 'x', { template: 'verify-email', locale: 'sk' }])('the dead-letter handler logs any data (%j) and never throws', async (data) => {
     const { log, lines } = captureLog()
-    const { queueJob } = queued(data)
-    await expect(deadMailHandler(log)({ ...queueJob, sourceId: 'job-0', sourceRetryCount: 5 })).resolves.toBeUndefined()
+    const { queueJob, written, sourceWritten } = queued(data)
+    await expect(deadMailHandler(log)({ ...queueJob, sourceId: 'job-0', sourceName: 'mail.send', sourceRetryCount: 5 })).resolves.toBeUndefined()
     expect(lines).toEqual([expect.objectContaining({ msg: 'mail dead-lettered', failedJobId: 'job-0', attempts: 6 })])
+    // both the copy and the failed job it came from keep only the summary
+    expect(written).toHaveLength(1)
+    expect(sourceWritten).toEqual(written)
   })
 })

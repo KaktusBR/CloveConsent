@@ -1,7 +1,8 @@
 // Background worker process: same image as the app, started with `node dist/worker.js` (npm run worker).
 // Takes jobs from the queue (src/server/data/queue.ts) as the system role, one at a time per queue.
 // On SIGTERM or SIGINT (also during startup) it stops taking jobs, lets the ones in hand finish (up to
-// 30 s), then exits 0; it exits 1 when it fails to start or to stop cleanly.
+// 30 s; one still running then is left to the queue to expire and retry), then exits 0. It exits 1 when
+// it fails to start, or if stopping throws.
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { startQueueWorker } from './server/data/queue'

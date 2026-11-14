@@ -169,6 +169,43 @@ describe('the worker', () => {
     }
   })
 
+  test('a dead letter that still holds the full data (its job expired on its last attempt) is cut down, with the failed job it came from', async () => {
+    // pg-boss's supervisor fails an expired job without the handler: both rows still hold recipient and link
+    const to = address('expired')
+    const mail = checkMail(verify(to))
+    const { sourceId, deadId } = await asRole('migrate', async (c) => {
+      const source = await c.query<{ id: string }>(
+        `insert into pgboss.job_common (name, data, state, retry_limit, retry_count, policy) values ('mail.send', $1::jsonb, 'failed', 5, 5, 'standard') returning id`,
+        [JSON.stringify(mail)],
+      )
+      const id = source.rows[0]?.id ?? ''
+      const dead = await c.query<{ id: string }>(
+        `insert into pgboss.job_common (name, data, retry_limit, policy, source_name, source_id, source_retry_count) values ('mail.send.dead', $1::jsonb, 0, 'standard', 'mail.send', $2, 5) returning id`,
+        [JSON.stringify(mail), id],
+      )
+      return { sourceId: id, deadId: dead.rows[0]?.id ?? '' }
+    })
+    const { log, lines } = captureLog()
+    const worker = await startWorker({ log, pollingIntervalSeconds: 0.5 })
+    try {
+      const rows = await until('the dead letter to complete', async () => {
+        const r = await jobsOf(sourceId)
+        return r.find((j) => j.id === deadId)?.state === 'completed' ? r : undefined
+      })
+      expect(rows.map((r) => r.data)).toEqual([
+        { template: 'verify-email', locale: 'en' },
+        { template: 'verify-email', locale: 'en' },
+      ])
+      for (const row of rows.map((r) => r.row)) {
+        expect(row).not.toContain(mail.data.url)
+        expect(row).not.toContain(to)
+      }
+      expect(lines.filter((l) => l.msg === 'mail dead-lettered' && l.failedJobId === sourceId)).toHaveLength(1)
+    } finally {
+      await worker.stop()
+    }
+  })
+
   test('stop() lets the job in hand finish before it resolves', async () => {
     let inHand: () => void = () => {}
     let release: () => void = () => {}

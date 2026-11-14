@@ -57,7 +57,15 @@ export class MailError extends Error {
 
 const MAX_TEXT = 200
 const MAX_LINK = 2048
-const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u // control and format characters (bidi overrides), line and paragraph separators
+/** Control and invisible format characters (bidi controls, zero-width space, BOM, tags), line and paragraph separators. */
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+/** Except the zero-width non-joiner and joiner: Persian, Devanagari, Bengali, Sinhala … and emoji sequences need them. */
+const JOINERS: ReadonlySet<number> = new Set([0x200c, 0x200d])
+
+function hasControl(value: string): boolean {
+  for (const [char] of value.matchAll(CONTROL)) if (!JOINERS.has(char.codePointAt(0) ?? 0)) return true
+  return false
+}
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
 
 function checkValue(field: string, kind: FieldKind, value: unknown): void {
@@ -67,7 +75,7 @@ function checkValue(field: string, kind: FieldKind, value: unknown): void {
     return
   }
   if (kind === 'text') {
-    if (value.trim() === '' || value.length > MAX_TEXT || CONTROL.test(value)) {
+    if (value.trim() === '' || value.length > MAX_TEXT || hasControl(value)) {
       throw new MailError(field, `must be one line of 1 to ${MAX_TEXT} characters`)
     }
   } else if (kind === 'link') {
@@ -223,8 +231,16 @@ export function mailHandler(transport: MailTransport, log: Logger = defaultLog) 
 /** The worker's handler of the dead-letter queue: the mail was never sent, which the log must show. */
 export function deadMailHandler(log: Logger = defaultLog) {
   return async (job: QueueJob): Promise<void> => {
-    log.error({ jobId: job.id, failedJobId: job.sourceId, ...summary(job.data), attempts: (job.sourceRetryCount ?? 0) + 1 }, 'mail dead-lettered')
-    // a job that expired on its last attempt reaches here with its full data
-    await scrub(job, log.child({ jobId: job.id }))
+    const kept = summary(job.data)
+    log.error({ jobId: job.id, failedJobId: job.sourceId, ...kept, attempts: (job.sourceRetryCount ?? 0) + 1 }, 'mail dead-lettered')
+    // a job that expired on its last attempt reaches here with its full data, and so does the failed job
+    // it was copied from: pg-boss failed it without our handler
+    const jobLog = log.child({ jobId: job.id })
+    await scrub(job, jobLog)
+    try {
+      await job.replaceSourceData(kept)
+    } catch (err) {
+      jobLog.warn({ error: (err as Error).message }, 'mail job data not cleared')
+    }
   }
 }

@@ -107,7 +107,10 @@ export interface QueueJob {
   retryLimit: number
   /** For a dead-lettered job: the job that failed, and how many retries it had. */
   sourceId: string | null
+  sourceName: string | null
   sourceRetryCount: number | null
+  /** For a dead-lettered job: overwrite the stored data of the job it was copied from (nothing otherwise). */
+  replaceSourceData(data: object): Promise<void>
   /** Overwrite the stored data (to drop what must not outlive the job; a dead-letter copy takes the data as it is then). */
   replaceData(data: object): Promise<void>
 }
@@ -144,8 +147,12 @@ export async function startQueueWorker({ log = defaultLog, supervise = true }: {
             retryCount: job.retryCount,
             retryLimit: job.retryLimit,
             sourceId: job.sourceId,
+            sourceName: job.sourceName,
             sourceRetryCount: job.sourceRetryCount,
             replaceData: (data) => replaceData(job.name, job.id, data),
+            replaceSourceData: async (data) => {
+              if (job.sourceName !== null && job.sourceId !== null) await replaceData(job.sourceName, job.sourceId, data)
+            },
           })
           results.push({ id: job.id, status: outcome === 'dead-letter' ? 'deadletter' : 'completed' })
         }
