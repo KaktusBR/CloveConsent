@@ -25,7 +25,7 @@ test.beforeEach(async ({ context }) => {
 })
 
 const newEmail = (label: string) => `e2e-${label}-${randomUUID()}@example.test`
-/** Long, random, so never in a breach corpus (Have I Been Pwned is asked for real). */
+/** Long, random: not in the stand-in's breach corpus (e2e/pwned-stand-in.mjs). */
 const newPassword = () => `pw-${randomUUID()}`
 
 /** The text of the newest mail to `to` whose subject is `subject`, waiting for the worker to send it. */
@@ -145,7 +145,7 @@ test('a breached password is refused with the translated message', async ({ page
   await expectAccessible(page)
   await page.getByLabel(sk('auth_name_label')).fill('E2E Osoba')
   await page.getByLabel(sk('auth_email_label')).fill(newEmail('breached'))
-  await page.getByLabel(sk('auth_password_label')).fill('password1234')
+  await page.getByLabel(sk('auth_password_label')).fill('cmp-e2e-only-breached-3f9c2a7d')
   await page.getByRole('button', { name: sk('sign_up_submit') }).click()
   await expect(page.getByRole('alert')).toHaveText(sk('auth_error_password_compromised'))
 })

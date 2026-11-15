@@ -15,7 +15,7 @@ import type { SystemTx, TenantTx } from './scope'
 
 export const QUEUE_SCHEMA = 'pgboss'
 
-/** Shared by both instances: the installed schema as is, no scheduler, no DDL (stats tables, reindexing). */
+/** Shared by both instances: the installed schema as is, no scheduler (the worker turns its own on), no DDL (stats tables, reindexing). */
 const COMMON: ConstructorOptions = {
   schema: QUEUE_SCHEMA,
   migrate: false,
@@ -121,6 +121,8 @@ export type JobHandler = (job: QueueJob) => Promise<void | 'dead-letter'>
 export interface QueueWorker {
   /** Take jobs from `name`, one at a time. */
   work(name: string, handler: JobHandler, options?: { pollingIntervalSeconds?: number }): Promise<void>
+  /** Create (or update) a recurring job: `name` is sent on `cron` (UTC) by this instance's scheduler. */
+  schedule(name: string, cron: string): Promise<void>
   /** One maintenance pass now (expire, retry, delete old jobs); the worker also runs it on a timer. */
   supervise(): Promise<void>
   /** Stop fetching, wait up to `timeoutMs` for the jobs in hand to finish, then close the connections. */
@@ -129,7 +131,8 @@ export interface QueueWorker {
 
 export async function startQueueWorker({ log = defaultLog, supervise = true }: { log?: Logger; supervise?: boolean } = {}): Promise<QueueWorker> {
   const boss = await start(
-    create({ connectionString: env.DATABASE_URL_SYSTEM, application_name: 'cmp-worker', max: 5, supervise, instanceName: 'worker' }, log, 'worker'),
+    // the worker's instance runs the scheduler (recurring jobs, e.g. auth.cleanup); the app's never does
+    create({ connectionString: env.DATABASE_URL_SYSTEM, application_name: 'cmp-worker', max: 5, supervise, schedule: true, instanceName: 'worker' }, log, 'worker'),
   )
   const replaceData = async (name: string, id: string, data: object) => {
     await boss.getDb().executeSql(`update ${QUEUE_SCHEMA}.job set data = $1::jsonb where name = $2 and id = $3`, [JSON.stringify(data), name, id])
@@ -159,6 +162,7 @@ export async function startQueueWorker({ log = defaultLog, supervise = true }: {
         return results
       })
     },
+    schedule: (name, cron) => boss.schedule(name, cron, {}, { tz: 'UTC' }),
     supervise: () => boss.supervise(),
     stop: ({ timeoutMs = 30_000 } = {}) => boss.stop({ graceful: true, timeout: timeoutMs, close: true }),
   }

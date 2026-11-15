@@ -15,6 +15,9 @@ const serverEnv = {
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? 'e2e-only-secret-e2e-only-secret-0000',
   SMTP_URL: process.env.SMTP_URL ?? 'smtp://localhost:1025',
   MAIL_FROM: process.env.MAIL_FROM ?? 'noreply@localhost.test',
+  // the tests act as the reverse proxy: their X-Forwarded-For names a client per test (fresh rate-limit
+  // windows), as Traefik does in production; the server trusts it only from this machine
+  TRUSTED_PROXIES: '127.0.0.1,::1',
 }
 
 // The built server and worker, as in production.
@@ -28,7 +31,8 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      command: 'npm run build && node dist/server/entry.mjs',
+      // Have I Been Pwned answered by a local stand-in: no live network call in a test
+      command: 'npm run build && node --import ./e2e/pwned-stand-in.mjs dist/server/entry.mjs',
       url: `${origin}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

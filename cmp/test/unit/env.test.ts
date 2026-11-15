@@ -44,6 +44,15 @@ describe('parseEnv', () => {
     expect(env.SUPER_ADMIN_EMAILS).toEqual([])
   })
 
+  test('TRUSTED_PROXIES: none by default; addresses and CIDR ranges, IPv4 and IPv6', () => {
+    expect(parseEnv(valid()).TRUSTED_PROXIES).toEqual([])
+    expect(parseEnv({ ...valid(), TRUSTED_PROXIES: ' 10.0.0.0/8, 192.0.2.10 ,fd00::/8,::1' }).TRUSTED_PROXIES).toEqual(['10.0.0.0/8', '192.0.2.10', 'fd00::/8', '::1'])
+  })
+
+  test.each(['10.0.0.0/33', 'fd00::/129', 'proxy.internal', '10.0.0', '0.0.0.0/0', '::/0', '10.0.0.0/8,'])('TRUSTED_PROXIES rejects %j', (value) => {
+    expect(errorOf({ ...valid(), TRUSTED_PROXIES: value }).variables).toEqual(['TRUSTED_PROXIES'])
+  })
+
   test('a trailing slash on PUBLIC_ORIGIN is normalised away', () => {
     expect(parseEnv({ ...valid(), PUBLIC_ORIGIN: 'https://consent.example/' }).PUBLIC_ORIGIN).toBe('https://consent.example')
   })

@@ -319,7 +319,7 @@ describe('the queue schema', () => {
     }
   })
 
-  test('the app role may run only the function its insert uses; the schema-changing ones stay with the owner', async () => {
+  test('the app role may run only the function its insert uses; the schema-changing ones stay with the owner (the worker: create_queue without a table of its own, for the scheduler)', async () => {
     const functions = await asRole('migrate', async (c) =>
       (await c.query<{ name: string; app: boolean; system: boolean }>(
         `select p.proname as name, has_function_privilege('cmp_app', p.oid, 'EXECUTE') as app, has_function_privilege('cmp_system', p.oid, 'EXECUTE') as system
@@ -327,7 +327,7 @@ describe('the queue schema', () => {
       )).rows,
     )
     expect(functions).toEqual([
-      { name: 'create_queue', app: false, system: false },
+      { name: 'create_queue', app: false, system: true },
       { name: 'delete_queue', app: false, system: false },
       { name: 'job_now', app: true, system: true },
       { name: 'job_table_format', app: false, system: false },
@@ -337,6 +337,9 @@ describe('the queue schema', () => {
     for (const statement of [`select pgboss.create_queue('sneaky', '{"policy":"standard"}'::jsonb)`, `select pgboss.delete_queue('mail.send')`, `select pgboss.job_table_run('select 1')`]) {
       expect(await asRole('app', (c) => errorCode(c.query(statement))), statement).toBe('42501')
     }
+    // a queue with its own table is DDL: refused to the worker's role too
+    const partitioned = `select pgboss.create_queue('sneaky_${newId().slice(0, 8)}', '{"policy":"standard","partition":true}'::jsonb)`
+    expect(await asRole('system', (c) => errorCode(c.query(partitioned)))).toBe('42501')
   })
 
   test('app and worker refuse to start on a pgboss schema of another version, saying what to do', async () => {
@@ -359,6 +362,8 @@ describe('the queue schema', () => {
       (await c.query(`select name, retry_limit, retry_delay, retry_backoff, retry_delay_max, dead_letter, deletion_seconds, retention_seconds from pgboss.queue order by name`)).rows,
     )
     expect(queues).toEqual([
+      { name: '__pgboss__send-it', retry_limit: 2, retry_delay: 0, retry_backoff: false, retry_delay_max: null, dead_letter: null, deletion_seconds: 604_800, retention_seconds: 1_209_600 },
+      { name: 'auth.cleanup', retry_limit: 2, retry_delay: 60, retry_backoff: false, retry_delay_max: null, dead_letter: null, deletion_seconds: 86_400, retention_seconds: 3_600 },
       { name: 'mail.send', retry_limit: 5, retry_delay: 30, retry_backoff: true, retry_delay_max: 3600, dead_letter: 'mail.send.dead', deletion_seconds: 86_400, retention_seconds: 86_400 },
       { name: 'mail.send.dead', retry_limit: 0, retry_delay: 0, retry_backoff: false, retry_delay_max: null, dead_letter: null, deletion_seconds: 604_800, retention_seconds: 604_800 },
     ])

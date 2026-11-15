@@ -36,7 +36,8 @@ const BY_CODE: Readonly<Record<string, Message>> = {
 
 /** The translated message for a failed auth call, in the page's language. */
 export function authErrorMessage(error: { code?: string | undefined; status?: number | undefined } | null | undefined): string {
-  if (error?.status === 429) return m.auth_error_rate_limited()
+  // the code first: some refusals with a code of their own are 429s too (the second-step lockout)
   const message = error?.code !== undefined && Object.hasOwn(BY_CODE, error.code) ? BY_CODE[error.code] : undefined
-  return (message ?? m.auth_error_generic)()
+  if (message) return message()
+  return error?.status === 429 ? m.auth_error_rate_limited() : m.auth_error_generic()
 }

@@ -10,6 +10,8 @@ import type { MailJob } from './mail'
 /** The data of each job. */
 export interface JobData {
   'mail.send': MailJob
+  /** Delete expired identity rows (src/server/jobs/auth-cleanup.ts); no data. */
+  'auth.cleanup': Record<string, never>
 }
 
 export type JobName = keyof JobData

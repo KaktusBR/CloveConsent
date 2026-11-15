@@ -56,6 +56,7 @@ an error that names the variable and what it must be; values are never printed o
 | `MAIL_FROM` | yes | `address` or `Name <address>` |
 | `SUPER_ADMIN_EMAILS` | no | comma-separated email addresses |
 | `NODE_ENV` | no | `development` (default), `test` or `production` |
+| `TRUSTED_PROXIES` | no | comma-separated IP addresses or CIDR ranges of the reverse proxies whose `X-Forwarded-For` names the client (not `/0`); empty (default): the connection's peer is the client. See Sign-in |
 
 Not in the app's environment, on purpose (the owner role can turn row-level security off): these live in
 `.env.db` (from `.env.db.example`) and are read only by the database scripts, never by the app or worker.
@@ -184,8 +185,9 @@ task needs, never an account's records or secrets.
 - Once a mail job is done (sent, invalid or out of retries) its stored data is cut down to template and
   language: no recipient, and no link (links can carry one-time tokens), in the job or its dead-letter
   copy. A failure is stored as code and SMTP reply code only.
-- Only the owner may run pg-boss's schema-changing SQL functions; the runtime roles run `job_now()` only
-  (`drizzle/0003_job_queue_functions.sql`). The owner's new functions get no EXECUTE for PUBLIC: grant
+- Only the owner may run pg-boss's schema-changing SQL functions; the runtime roles run `job_now()`, and
+  the worker also `create_queue()` for its scheduler's own queue, which without a table of its own is an
+  insert it may do anyway (`drizzle/0003_job_queue_functions.sql`, `drizzle/0005_auth_cleanup.sql`). The owner's new functions get no EXECUTE for PUBLIC: grant
   what the runtime roles need in the migration that creates a function.
 - App and worker refuse to start when the `pgboss` schema is not the version their pg-boss expects
   (`QueueSchemaError`: apply the migrations).
@@ -208,15 +210,25 @@ under `/sk/`).
   `PUBLIC_ORIGIN`, user verification required) count as both factors.
 - `requireUser(Astro)` / `completeSession(headers)` (`src/server/auth/guard.ts`) accept a session only
   when the address is confirmed and, for a user with 2FA on, the session was created by the second step
-  or a passkey (`auth_session.second_factor`). Turning 2FA on ends the user's other sessions.
-- Sessions live in the database (7 days, no cookie cache, so revoking is immediate). Cookies:
+  or a passkey, or replaced a session that was (`auth_session.second_factor`; e.g. change-password).
+  Turning 2FA on ends the user's other sessions.
+- Sessions live in the database (7 days, sliding: a page render renews one older than a day, cookie
+  included; no cookie cache, so revoking is immediate). Cookies:
   `cmp.session_token`, HttpOnly, SameSite=Lax, and `__Secure-` + Secure when `PUBLIC_ORIGIN` is https.
 - Rate limits are stored in `auth_rate_limit` (shared by every process, survive restarts), per client
   address and path: sign-in 5/min, sign-up 3/min, reset request 3/5 min, reset 5/5 min, resend
   confirmation 3/5 min, second-factor codes 5/min (and 10 wrong codes lock the second step for 15 min),
-  passkey sign-in 10/min, anything else 100/min. The address is read from `X-Forwarded-For`, which only
-  the reverse proxy may set: it must replace a client's value (a list of several addresses falls into
-  one shared bucket per path).
+  passkey sign-in 10/min, anything else 100/min; and per account, from any address, sign-in 10 per 15
+  min (keyed by a hash of the email address; a passkey still works then).
+- The client address is never a header the client chose (`src/server/auth/handler.ts`,
+  `src/server/client-address.ts`): it is the connection's peer, unless that peer is listed in
+  `TRUSTED_PROXIES`, in which case `X-Forwarded-For` is read right to left past the trusted proxies.
+  A request whose address is unknown is refused (no shared bucket). **Behind Dokploy's Traefik**, set
+  `TRUSTED_PROXIES` to the address range Traefik connects from (its Docker network, e.g. the
+  `dokploy-network` subnet) and nothing wider; the app port must not be reachable except through
+  Traefik. Without it every request counts as coming from Traefik, so all clients share one limit.
+- A worker job, `auth.cleanup` (pg-boss scheduler, every 15 minutes), deletes expired sessions and
+  challenges and rate-limit rows idle for over an hour: they hold client addresses and user agents.
 - Auth mail (confirmation, reset, 2FA on/off) goes through `sendMail` in the language of the page the
   request came from. Better Auth gives its mail callbacks no transaction: a mail is queued on its own
   (a failure to queue fails the request; at worst a mail for a change later rolled back, whose link then

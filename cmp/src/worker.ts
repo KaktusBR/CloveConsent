@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { startQueueWorker } from './server/data/queue'
 import { env } from './server/env'
+import { AUTH_CLEANUP, AUTH_CLEANUP_CRON, authCleanupHandler } from './server/jobs/auth-cleanup'
 import { createMailTransport, deadMailHandler, MAIL_DEAD_LETTER, mailHandler, type MailTransport } from './server/jobs/mail'
 import { log as defaultLog, type Logger } from './server/log'
 
@@ -27,6 +28,8 @@ export async function startWorker({ transport = createMailTransport(), log = def
   const queue = await startQueueWorker({ log })
   await queue.work('mail.send', mailHandler(transport, log), { pollingIntervalSeconds })
   await queue.work(MAIL_DEAD_LETTER, deadMailHandler(log), { pollingIntervalSeconds })
+  await queue.schedule(AUTH_CLEANUP, AUTH_CLEANUP_CRON)
+  await queue.work(AUTH_CLEANUP, authCleanupHandler(log), { pollingIntervalSeconds })
   return {
     async stop() {
       await queue.stop()

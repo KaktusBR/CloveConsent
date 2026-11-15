@@ -1,16 +1,23 @@
 import type { APIRoute } from 'astro'
 
-import { auth } from '../../../server/auth/auth'
+import { handleAuth } from '../../../server/auth/handler'
 
 export const prerender = false
 
 /**
  * Better Auth's endpoints (sign-up, sign-in, verification, second factor, passkeys, sessions). A request
  * other than GET or HEAD reaches here only with this site's Origin (src/middleware.ts); Better Auth adds
- * its own origin and Fetch Metadata checks. Answers are never cached.
+ * its own origin and Fetch Metadata checks. The client address its rate limits count is the socket peer,
+ * or what a trusted proxy says (src/server/auth/handler.ts). Answers are never cached.
  */
-export const ALL: APIRoute = async ({ request }) => {
-  const answer = await auth.handler(request)
+export const ALL: APIRoute = async (context) => {
+  let peer: string | undefined
+  try {
+    peer = context.clientAddress
+  } catch {
+    // the adapter could not tell: handleAuth refuses the request
+  }
+  const answer = await handleAuth(context.request, peer)
   // a copy: the headers of a redirect Better Auth built may be immutable
   const response = new Response(answer.body, answer)
   response.headers.set('Cache-Control', 'no-store')

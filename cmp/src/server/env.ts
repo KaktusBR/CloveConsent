@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { parseRange } from './client-address'
 import { isOrigin, parseUrl } from './origin'
 
 const urlOf = (...protocols: string[]) =>
@@ -30,6 +31,12 @@ const schema = z.object({
     .transform((v) => v.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))
     .pipe(z.array(z.email())),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // the reverse proxies whose X-Forwarded-For names the client (src/server/client-address.ts); none: the socket peer
+  TRUSTED_PROXIES: z
+    .string()
+    .default('')
+    .transform((v) => (v.trim() === '' ? [] : v.split(',').map((s) => s.trim())))
+    .refine((list) => list.every((entry) => parseRange(entry) !== null)),
 })
 
 export type Env = Readonly<z.infer<typeof schema>>
@@ -44,6 +51,7 @@ const REQUIREMENT: Record<keyof z.infer<typeof schema>, string> = {
   MAIL_FROM: 'an email address, optionally as "Name <address>"',
   SUPER_ADMIN_EMAILS: 'a comma-separated list of email addresses',
   NODE_ENV: 'one of development, test, production',
+  TRUSTED_PROXIES: 'a comma-separated list of IP addresses or CIDR ranges (not /0), or empty',
 }
 
 export class EnvError extends Error {

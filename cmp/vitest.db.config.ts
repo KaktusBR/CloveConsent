@@ -9,6 +9,8 @@ const otherEnv = {
   SMTP_URL: 'smtp://localhost:1025',
   MAIL_FROM: 'noreply@localhost.test',
   NODE_ENV: 'test',
+  // the address the db tests' "proxy" requests come from (test/db/auth.test.ts)
+  TRUSTED_PROXIES: '192.0.2.10',
 }
 
 export default defineConfig({

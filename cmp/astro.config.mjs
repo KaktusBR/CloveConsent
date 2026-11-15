@@ -18,11 +18,13 @@ const sourcePath = (path) => JSON.stringify(fileURLToPath(new URL(path, import.m
  * The built server loads the middleware (and so src/server/env.ts) only on the first request.
  * Import the env module at the top of the adapter's server entry instead, so an invalid
  * environment stops the process before it listens. Pinned by e2e/boot.spec.ts.
+ * The auth module (Better Auth and its plugins) is loaded there too: evaluating it on the first request
+ * blocked the event loop for about 2 s, so the first requests (and /readyz's 2 s probe) timed out.
  */
 const validateEnvAtBoot = patchModule({
   name: 'cmp:validate-env-at-boot',
   module: '/@astrojs/node/dist/server.js',
-  edit: (code) => `import ${sourcePath('./src/server/env.ts')};\n${code}`,
+  edit: (code) => `import ${sourcePath('./src/server/env.ts')};\nimport ${sourcePath('./src/server/auth/auth.ts')};\n${code}`,
 })
 
 /**

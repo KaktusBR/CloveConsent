@@ -4,6 +4,7 @@ import en from '../../messages/en.json'
 import { sameSitePath } from '../../src/i18n/locale'
 import { authErrorMessage } from '../../src/lib/auth-errors'
 import { signInPath } from '../../src/server/auth/guard'
+import { clientAddress, trustedProxies } from '../../src/server/client-address'
 
 describe('next=: only a path on this site', () => {
   test.each([
@@ -44,11 +45,58 @@ describe('next=: only a path on this site', () => {
   })
 })
 
+describe('clientAddress: the address rate limits count, never chosen by the client', () => {
+  const proxies = trustedProxies(['10.0.0.0/8', 'fd00::/8'])
+  const none = trustedProxies([])
+
+  test('without trusted proxies, the socket peer, whatever X-Forwarded-For says', () => {
+    expect(clientAddress('203.0.113.5', '198.51.100.1', none)).toBe('203.0.113.5')
+    expect(clientAddress('203.0.113.5', null, none)).toBe('203.0.113.5')
+  })
+
+  test('a peer that is not a trusted proxy: its own address, the header is ignored', () => {
+    expect(clientAddress('203.0.113.5', '198.51.100.1', proxies)).toBe('203.0.113.5')
+  })
+
+  test('from a trusted proxy: the nearest address in X-Forwarded-For that is not a trusted proxy', () => {
+    expect(clientAddress('10.0.0.2', '198.51.100.1', proxies)).toBe('198.51.100.1')
+    // a client's own value is to the left of what the proxy appended
+    expect(clientAddress('10.0.0.2', '6.6.6.6, 198.51.100.1', proxies)).toBe('198.51.100.1')
+    expect(clientAddress('10.0.0.2', '198.51.100.1, 10.1.1.1', proxies)).toBe('198.51.100.1')
+    expect(clientAddress('fd00::2', '2001:db8::7', proxies)).toBe('2001:db8::7')
+  })
+
+  test('from a trusted proxy without a usable header: the proxy itself (never a shared bucket)', () => {
+    expect(clientAddress('10.0.0.2', null, proxies)).toBe('10.0.0.2')
+    expect(clientAddress('10.0.0.2', '10.1.1.1', proxies)).toBe('10.1.1.1')
+  })
+
+  test('a garbage hop stops the walk at the last trusted address', () => {
+    expect(clientAddress('10.0.0.2', 'not-an-ip', proxies)).toBe('10.0.0.2')
+    expect(clientAddress('10.0.0.2', '198.51.100.1, junk, 10.1.1.1', proxies)).toBe('10.1.1.1')
+  })
+
+  test('IPv4-mapped IPv6 peers are their IPv4 address', () => {
+    expect(clientAddress('::ffff:203.0.113.5', null, none)).toBe('203.0.113.5')
+    expect(clientAddress('::ffff:10.0.0.2', '198.51.100.1', proxies)).toBe('198.51.100.1')
+  })
+
+  test('no usable peer: no address (the request is refused, not bucketed with others)', () => {
+    expect(clientAddress(undefined, '198.51.100.1', proxies)).toBeNull()
+    expect(clientAddress('', null, none)).toBeNull()
+    expect(clientAddress('nonsense', null, none)).toBeNull()
+  })
+})
+
 describe('auth errors: translated by code, never the library text', () => {
   test('known codes have their own message', () => {
     expect(authErrorMessage({ code: 'INVALID_EMAIL_OR_PASSWORD', status: 401 })).toBe(en.auth_error_invalid_credentials)
     expect(authErrorMessage({ code: 'PASSWORD_COMPROMISED', status: 400 })).toBe(en.auth_error_password_compromised)
     expect(authErrorMessage({ code: 'INVALID_BACKUP_CODE', status: 401 })).toBe(en.auth_error_invalid_code)
+  })
+
+  test('a 429 with a code of its own keeps its message: the second-step lockout', () => {
+    expect(authErrorMessage({ code: 'ACCOUNT_TEMPORARILY_LOCKED', status: 429 })).toBe(en.auth_error_locked)
   })
 
   test('the rate limiter (no code) and unknown codes', () => {
