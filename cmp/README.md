@@ -218,15 +218,22 @@ under `/sk/`).
 - Rate limits are stored in `auth_rate_limit` (shared by every process, survive restarts), per client
   address and path: sign-in 5/min, sign-up 3/min, reset request 3/5 min, reset 5/5 min, resend
   confirmation 3/5 min, second-factor codes 5/min (and 10 wrong codes lock the second step for 15 min),
-  passkey sign-in 10/min, anything else 100/min; and per account, from any address, sign-in 10 per 15
-  min (keyed by a hash of the email address; a passkey still works then).
+  passkey sign-in 10/min, anything else 100/min.
+- Wrong passwords are counted after the check (never right ones), keyed by a hash of the email address:
+  4 per account and address in 15 min, then that address may not try that account again until the
+  window ends (it cannot lock the account for anyone else); 50 per account in an hour from any
+  addresses, a backstop against guessing spread over many addresses. Accepted residual: a large botnet
+  can keep one account's password sign-in blocked; its passkey sign-in still works.
 - The client address is never a header the client chose (`src/server/auth/handler.ts`,
-  `src/server/client-address.ts`): it is the connection's peer, unless that peer is listed in
+  `src/server/client-address.ts`): it is the connection's TCP peer, recorded by a patch of the node
+  adapter (`src/server/socket-peer.ts`; not Astro's `clientAddress`, which follows `X-Forwarded-For` once
+  `security.allowedDomains` is set), unless that peer is listed in
   `TRUSTED_PROXIES`, in which case `X-Forwarded-For` is read right to left past the trusted proxies.
   A request whose address is unknown is refused (no shared bucket). **Behind Dokploy's Traefik**, set
   `TRUSTED_PROXIES` to the address range Traefik connects from (its Docker network, e.g. the
   `dokploy-network` subnet) and nothing wider; the app port must not be reachable except through
-  Traefik. Without it every request counts as coming from Traefik, so all clients share one limit.
+  Traefik. Without it every request counts as coming from Traefik, so all clients share one limit. Any client-sent `x-cmp-client-address`
+  (the internal header that carries the address to Better Auth) is removed from every request.
 - A worker job, `auth.cleanup` (pg-boss scheduler, every 15 minutes), deletes expired sessions and
   challenges and rate-limit rows idle for over an hour: they hold client addresses and user agents.
 - Auth mail (confirmation, reset, 2FA on/off) goes through `sendMail` in the language of the page the

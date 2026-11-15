@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { BASELINE_CSP, checkOrigin, cspHash, securityHeaders, staticSecurityHeaders, withSecurityHeaders } from '../../src/server/security'
+import { BASELINE_CSP, checkOrigin, CLIENT_ADDRESS_HEADER, cspHash, securityHeaders, staticSecurityHeaders, stripInternalHeaders, withSecurityHeaders } from '../../src/server/security'
 
 /** The headers every response carries, with their exact values (Global Constraints). */
 const EXPECTED = {
@@ -131,5 +131,14 @@ describe('checkOrigin', () => {
     // the request's own URL (behind a proxy, the internal address) is never trusted
     expect(checkOrigin(req('POST', { Origin: 'http://internal:4321' }), origin)).toBe(false)
     expect(checkOrigin(req('OPTIONS', { Origin: 'https://evil.test' }), origin)).toBe(false)
+  })
+})
+
+describe('internal request headers', () => {
+  test('a client-sent x-cmp-client-address is removed from every request, in any letter case', () => {
+    const request = new Request('http://localhost:4321/account/security', { headers: { 'X-CMP-Client-Address': '203.0.113.9', accept: 'text/html' } })
+    stripInternalHeaders(request.headers)
+    expect(request.headers.has(CLIENT_ADDRESS_HEADER)).toBe(false)
+    expect(request.headers.get('accept')).toBe('text/html')
   })
 })

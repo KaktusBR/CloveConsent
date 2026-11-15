@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { localeOfPath, type Locale } from './i18n/locale'
 import { overwriteServerAsyncLocalStorage } from './paraglide/runtime.js'
 import { log } from './server/log'
-import { checkOrigin, withSecurityHeaders } from './server/security'
+import { checkOrigin, stripInternalHeaders, withSecurityHeaders } from './server/security'
 
 // No static import of ./server/env here: this module also runs when pages are prerendered at build
 // time, without the server's environment. The built server validates it before listening (astro.config.mjs).
@@ -25,6 +25,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   context.locals.locale = locale
   // Prerendered pages get their headers where they are served (astro.config.mjs).
   if (context.isPrerendered) return requestLocale.run({ locale }, () => next())
+
+  // a header only this app may set (the client address for Better Auth): never the client's
+  stripInternalHeaders(context.request.headers)
 
   const started = performance.now()
   const requestId = crypto.randomUUID()

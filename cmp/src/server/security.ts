@@ -136,3 +136,16 @@ export function checkOrigin(request: Request, publicOrigin: string): boolean {
   const origin = request.headers.get('origin')
   return origin !== null && origin === new URL(publicOrigin).origin
 }
+
+/**
+ * Request headers only this app may set: src/server/auth/handler.ts passes the client address to
+ * Better Auth in CLIENT_ADDRESS_HEADER. The middleware removes a client-sent one from every request,
+ * so no code reading request headers (an auth.api call from a page) can be given a forged address.
+ */
+export const CLIENT_ADDRESS_HEADER = 'x-cmp-client-address'
+const INTERNAL_HEADERS = [CLIENT_ADDRESS_HEADER] as const
+
+/** Removes the internal headers a client may have sent. */
+export function stripInternalHeaders(headers: Headers): void {
+  for (const name of INTERNAL_HEADERS) headers.delete(name)
+}

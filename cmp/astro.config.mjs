@@ -51,6 +51,21 @@ const securityHeadersOnFiles = patchModule({
   },
 })
 
+/**
+ * Records each request's TCP peer (`req.socket.remoteAddress`) for the rate limits of /api/auth/*
+ * (src/server/socket-peer.ts, src/server/auth/handler.ts), keyed by the Request object, so no header can
+ * set it. Not Astro's `clientAddress`: that is the leftmost X-Forwarded-For entry, chosen by the client,
+ * as soon as `security.allowedDomains` validates the Host. Pinned by e2e/client-address.spec.ts.
+ */
+const recordSocketPeer = patchModule({
+  name: 'cmp:record-socket-peer',
+  module: '/@astrojs/node/dist/serve-app.js',
+  edit(code, fail) {
+    const patched = replaceOnce(code, 'port: options.port\n\t\t\t});', 'port: options.port\n\t\t\t});\n\t\t\t__cmpRecordSocketPeer(request, req.socket?.remoteAddress);', fail)
+    return `import { recordSocketPeer as __cmpRecordSocketPeer } from ${sourcePath('./src/server/socket-peer.ts')};\n${patched}`
+  },
+})
+
 // No site/domain here: the public origin comes from PUBLIC_ORIGIN at runtime (src/server/env.ts).
 //
 // Languages: pages live under src/pages/[...locale]/, an optional first segment (none = English, `sk`), so
@@ -68,6 +83,8 @@ export default defineConfig({
   adapter: node({ mode: 'standalone', staticHeaders: true }),
   integrations: [react()],
   security: {
+    // allowedDomains, if ever set, makes Astro's clientAddress follow X-Forwarded-For: the rate limits
+    // must not change with it, and do not (they use the socket peer, recordSocketPeer above)
     checkOrigin: true,
     csp: {
       algorithm: 'SHA-256',
@@ -77,5 +94,5 @@ export default defineConfig({
   },
   // No Markdown pages; Shiki's inline styles would need 'unsafe-inline' under the CSP.
   markdown: { syntaxHighlight: false },
-  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, paraglideVitePlugin({ project: './project.inlang' })] },
+  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, recordSocketPeer, paraglideVitePlugin({ project: './project.inlang' })] },
 })

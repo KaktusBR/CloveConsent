@@ -11,14 +11,15 @@
 // is then rolled back (its link then fails as invalid). Delivery is at least once (the queue retries).
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { APIError, createAuthMiddleware } from 'better-auth/api'
+import { APIError, createAuthMiddleware, isAPIError } from 'better-auth/api'
 import { haveIBeenPwned, twoFactor } from 'better-auth/plugins'
 import { passkey } from '@better-auth/passkey'
 import { localeOfPath, localizedPath, LOCALE_COOKIE, preferredLocale, type Locale } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
 import { createHash } from 'node:crypto'
 import { authDatabase } from '../data/auth-database'
-import { consumeLimit } from '../data/auth-limits'
+import { CLIENT_ADDRESS_HEADER } from '../security'
+import { addToWindow, countInWindow } from '../data/auth-limits'
 import { authSchema } from '../data/schema'
 import { env } from '../env'
 import { log } from '../log'
@@ -26,13 +27,27 @@ import { sendMail } from '../jobs/mail'
 
 export const AUTH_BASE_PATH = '/api/auth'
 
-/** The request header carrying the client address to Better Auth (src/server/auth/handler.ts sets it). */
-export const CLIENT_ADDRESS_HEADER = 'x-cmp-client-address'
+/**
+ * Failed password sign-ins (ruling R19), counted after the credential check, beside Better Auth's
+ * per-address request limit:
+ * - per (account, address): 4 in 15 minutes, then that address may not try that account again until the
+ *   window ends. One address cannot lock an account for anyone else.
+ * - per account, from any address: 50 in an hour, a backstop against guessing spread over many addresses.
+ *   Accepted residual: a large botnet can keep one account's password sign-in blocked; its passkey
+ *   sign-in is not affected.
+ */
+const FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 50 } } as const
 
-/** Sign-ins per account, from any address. */
-const ACCOUNT_SIGN_IN = { window: 15 * 60, max: 10 }
-/** The account limit's key: a hash of the address, so the table holds no email address. */
-const accountLimitKey = (email: string) => `account:${createHash('sha256').update(email.trim().toLowerCase()).digest('base64url')}|/sign-in/email`
+/** The counters of a password sign-in request; keyed by a hash of the email, so the table holds no address in clear. */
+function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | undefined; request?: Request | undefined }): { pair: string; account: string } | null {
+  if (ctx.path !== '/sign-in/email') return null
+  const email = (ctx.body as { email?: unknown } | undefined)?.email
+  if (typeof email !== 'string') return null
+  const account = createHash('sha256').update(email.trim().toLowerCase()).digest('base64url')
+  // set by src/server/auth/handler.ts for every request it passes on
+  const address = (ctx.headers ?? ctx.request?.headers)?.get(CLIENT_ADDRESS_HEADER) ?? 'unknown'
+  return { pair: `sign-in-failures:${account}:${address}`, account: `sign-in-failures:${account}` }
+}
 
 /** Paths that create a session only after the second factor (or a passkey, which is both factors). */
 const SECOND_FACTOR_PATHS: ReadonlySet<string> = new Set(['/two-factor/verify-totp', '/two-factor/verify-backup-code', '/passkey/verify-authentication'])
@@ -162,13 +177,22 @@ function authOptions(publicOrigin: string) {
         if (ctx.path.startsWith('/two-factor/verify-') && (ctx.body as { trustDevice?: unknown } | undefined)?.trustDevice) {
           throw new APIError('BAD_REQUEST', { code: 'TRUST_DEVICE_NOT_ALLOWED', message: 'trusting a device is not allowed' })
         }
-        // Per account, from any address: password guessing spread over many addresses. (Counts every
-        // attempt; a passkey sign-in is not affected, so a person locked out this way can still use one.)
-        if (ctx.path === '/sign-in/email') {
-          const email = (ctx.body as { email?: unknown } | undefined)?.email
-          if (typeof email === 'string' && !(await consumeLimit(accountLimitKey(email), ACCOUNT_SIGN_IN.window, ACCOUNT_SIGN_IN.max))) {
-            throw new APIError('TOO_MANY_REQUESTS', { code: 'ACCOUNT_RATE_LIMITED', message: 'too many sign-ins for this account' })
+        // Failed passwords (ruling R19): refused before the check once this address has too many for this
+        // account, or the account has too many from anywhere.
+        const signIn = failureKeys(ctx)
+        if (signIn) {
+          const [pair, account] = await Promise.all([countInWindow(signIn.pair, FAILURES.pair.window), countInWindow(signIn.account, FAILURES.account.window)])
+          if (pair >= FAILURES.pair.max || account >= FAILURES.account.max) {
+            throw new APIError('TOO_MANY_REQUESTS', { code: 'SIGN_IN_LIMITED', message: 'too many failed sign-ins' })
           }
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        // only a wrong email or password counts (not a right one, nor an unverified address)
+        const signIn = failureKeys(ctx)
+        const returned = ctx.context.returned
+        if (signIn && isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD') {
+          await Promise.all([addToWindow(signIn.pair, FAILURES.pair.window), addToWindow(signIn.account, FAILURES.account.window)])
         }
       }),
     },

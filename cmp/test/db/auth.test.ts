@@ -273,13 +273,19 @@ describe('two-factor authentication', () => {
   })
 })
 
+/** One failed sign-in per browser, each for an account nobody has (only the per-address limit applies). */
+async function wrongSignIns(browsers: Browser[]): Promise<number[]> {
+  const statuses: number[] = []
+  for (const b of browsers) statuses.push((await b.call('/sign-in/email', { email: address('unknown'), password: 'wrong password 123' })).status)
+  return statuses
+}
+
 describe('rate limiting', () => {
   test('repeated failed sign-ins from one address are refused with 429, counted in the database', async () => {
     const email = await verifiedUser('limited')
     const browser = new Browser()
-    const statuses: number[] = []
-    for (let i = 0; i < 6; i++) statuses.push((await browser.call('/sign-in/email', { email, password: 'wrong password 123' })).status)
-    expect(statuses).toEqual([401, 401, 401, 401, 401, 429])
+    // a different (unknown) account each time: the per-account limits are not what is tested here
+    expect(await wrongSignIns(Array.from({ length: 6 }, () => browser))).toEqual([401, 401, 401, 401, 401, 429])
     // the right password is refused too until the window ends
     expect((await browser.call('/sign-in/email', { email, password: PASSWORD })).status).toBe(429)
     // another address is not affected
@@ -342,29 +348,21 @@ describe('sessions', () => {
 })
 
 describe('the client address of rate limits (only a trusted proxy may name it)', () => {
-  const failSignIns = async (browsers: Browser[], email: string) => {
-    const statuses: number[] = []
-    for (const b of browsers) statuses.push((await b.call('/sign-in/email', { email, password: 'wrong password 123' })).status)
-    return statuses
-  }
-
   test('a client that is not a trusted proxy cannot pick its bucket with X-Forwarded-For', async () => {
-    const email = await verifiedUser('spoof')
     const peer = nextIp()
     // one client, a different forged header on every request
     const browsers = Array.from({ length: 6 }, (_, i) => new Browser(peer, `203.0.113.${i + 1}`))
-    expect(await failSignIns(browsers, email)).toEqual([401, 401, 401, 401, 401, 429])
+    expect(await wrongSignIns(browsers)).toEqual([401, 401, 401, 401, 401, 429])
     const forged = await asRole('migrate', async (c) => (await c.query(`select 1 from auth_rate_limit where key like '203.0.113.%'`)).rowCount)
     expect(forged).toBe(0)
   })
 
   test('behind a trusted proxy, each client named by the proxy has its own bucket', async () => {
-    const email = await verifiedUser('proxied')
     const clients = Array.from({ length: 6 }, () => nextIp())
-    expect(await failSignIns(clients.map((c) => new Browser(PROXY, c)), email)).toEqual([401, 401, 401, 401, 401, 401])
-    // one client named six times (behind a forged value of its own) is limited (another account: the per-account limit is not what is tested)
+    expect(await wrongSignIns(clients.map((c) => new Browser(PROXY, c)))).toEqual([401, 401, 401, 401, 401, 401])
+    // one client named six times (behind a forged value of its own) is limited
     const one = nextIp()
-    expect(await failSignIns(Array.from({ length: 6 }, (_, i) => new Browser(PROXY, `203.0.113.${i + 1}, ${one}`)), await verifiedUser('proxied-one'))).toEqual([401, 401, 401, 401, 401, 429])
+    expect(await wrongSignIns(Array.from({ length: 6 }, (_, i) => new Browser(PROXY, `203.0.113.${i + 1}, ${one}`)))).toEqual([401, 401, 401, 401, 401, 429])
   })
 
   test('a request whose address is unknown is refused, never counted in a shared bucket', async () => {
@@ -375,7 +373,6 @@ describe('the client address of rate limits (only a trusted proxy may name it)',
   })
 
   test('a client-sent internal address header is replaced, not trusted', async () => {
-    const email = await verifiedUser('internal-header')
     const peer = nextIp()
     const browsers = Array.from({ length: 6 }, (_, i) => {
       const b = new Browser(peer)
@@ -383,21 +380,42 @@ describe('the client address of rate limits (only a trusted proxy may name it)',
       b.headers = (extra = {}) => headers({ ...extra, 'x-cmp-client-address': `203.0.113.${100 + i}` })
       return b
     })
-    expect(await failSignIns(browsers, email)).toEqual([401, 401, 401, 401, 401, 429])
+    expect(await wrongSignIns(browsers)).toEqual([401, 401, 401, 401, 401, 429])
   })
 })
 
-describe('per-account sign-in limit (guessing spread over many addresses)', () => {
-  test('more than 10 sign-ins for one account within 15 minutes are refused, from any address; other accounts are not affected', async () => {
-    const email = await verifiedUser('spread')
-    const statuses: number[] = []
-    for (let i = 0; i < 11; i++) statuses.push((await new Browser().call('/sign-in/email', { email, password: 'wrong password 123' })).status)
-    expect(statuses).toEqual([...Array<number>(10).fill(401), 429])
-    expect((await new Browser().call('/sign-in/email', { email, password: PASSWORD })).status).toBe(429)
-    expect((await new Browser().call('/sign-in/email', { email: email.toUpperCase(), password: PASSWORD })).status).toBe(429)
-    expect((await new Browser().call('/sign-in/email', { email: await verifiedUser('unaffected'), password: PASSWORD })).status).toBe(200)
-    // the key holds no address in clear
-    const keys = await asRole('migrate', async (c) => (await c.query<{ key: string }>(`select key from auth_rate_limit where key like 'account:%'`)).rows.map((r) => r.key))
+describe('failed password sign-ins per account (ruling R19)', () => {
+  const wrong = (b: Browser, email: string) => b.call('/sign-in/email', { email, password: 'wrong password 123' })
+
+  test('one address is stopped after 4 wrong passwords for an account, but cannot lock it for anyone else', async () => {
+    const email = await verifiedUser('pair')
+    const attacker = new Browser()
+    const answers = []
+    for (let i = 0; i < 5; i++) answers.push(await wrong(attacker, email))
+    expect(answers.map((a) => a.status)).toEqual([401, 401, 401, 401, 429])
+    // refused by this limit (5 requests are within Better Auth's per-address one)
+    expect(answers[4]?.json?.code).toBe('SIGN_IN_LIMITED')
+    // the right password from another address still works, as do further attempts from other addresses
+    expect((await new Browser().call('/sign-in/email', { email, password: PASSWORD })).status).toBe(200)
+    expect((await wrong(new Browser(), email)).status).toBe(401)
+  })
+
+  test('the account-wide cap (50 failures an hour, from any addresses) engages exactly at its threshold; correct sign-ins do not count', { timeout: 60_000 }, async () => {
+    const email = await verifiedUser('cap')
+    for (let i = 0; i < 49; i++) expect((await wrong(new Browser(), email)).status).toBe(401)
+    expect((await new Browser().call('/sign-in/email', { email, password: PASSWORD })).status).toBe(200)
+    expect((await wrong(new Browser(), email)).status).toBe(401) // the 50th failure
+    const capped = await new Browser().call('/sign-in/email', { email, password: PASSWORD })
+    expect(capped.status).toBe(429)
+    expect(capped.json?.code).toBe('SIGN_IN_LIMITED')
+    // another account is not affected
+    expect((await new Browser().call('/sign-in/email', { email: await verifiedUser('cap-other'), password: PASSWORD })).status).toBe(200)
+  })
+
+  test('the counters hold no email address in clear', async () => {
+    const email = await verifiedUser('keys')
+    await wrong(new Browser(), email)
+    const keys = await asRole('migrate', async (c) => (await c.query<{ key: string }>(`select key from auth_rate_limit where key like 'sign-in-failures:%'`)).rows.map((r) => r.key))
     expect(keys.length).toBeGreaterThan(0)
     expect(keys.join(' ')).not.toContain('@')
   })

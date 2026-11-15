@@ -7,7 +7,8 @@
 // a bucket with other requests nor lock them out.
 import { env } from '../env'
 import { clientAddress, trustedProxies } from '../client-address'
-import { auth, CLIENT_ADDRESS_HEADER, type AuthInstance } from './auth'
+import { CLIENT_ADDRESS_HEADER } from '../security'
+import { auth, type AuthInstance } from './auth'
 
 const proxies = trustedProxies(env.TRUSTED_PROXIES)
 
