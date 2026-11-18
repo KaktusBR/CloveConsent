@@ -6,23 +6,29 @@ import { sql } from 'drizzle-orm'
 import { appDatabase } from './client'
 
 /**
- * Take one of the `max` places of `key`'s window, in one statement (so concurrent requests can never
- * take more than `max`). False when the window is full; the count then stays at max + 1, which only marks
- * it full. A place taken for an attempt that turned out not to count is given back with {@link releaseInWindow}.
+ * Take one of the `max` places of `key`'s window, in one statement (the row is locked and the condition
+ * re-checked on it, so concurrent requests can never take more than `max`). Returns the start of the
+ * window the place was taken in, or false when the window is full; a refused attempt changes nothing. A
+ * place taken for an attempt that turned out not to count is given back with {@link releaseInWindow}.
  */
-export async function reserveInWindow(key: string, windowSeconds: number, max: number): Promise<boolean> {
+export async function reserveInWindow(key: string, windowSeconds: number, max: number): Promise<number | false> {
   const now = Date.now()
   const windowStart = now - windowSeconds * 1000
-  const result = await appDatabase.execute<{ count: number }>(sql`
+  const result = await appDatabase.execute<{ last_request: string | number }>(sql`
     insert into auth_rate_limit as r (key, count, last_request) values (${key}, 1, ${now})
     on conflict (key) do update set
-      count = case when r.last_request <= ${windowStart} then 1 when r.count <= ${max} then r.count + 1 else r.count end,
+      count = case when r.last_request <= ${windowStart} then 1 else r.count + 1 end,
       last_request = case when r.last_request <= ${windowStart} then ${now} else r.last_request end
-    returning count`)
-  return Number(result.rows[0]?.count ?? Infinity) <= max
+    where r.last_request <= ${windowStart} or r.count < ${max}
+    returning last_request`)
+  const row = result.rows[0]
+  return row === undefined ? false : Number(row.last_request)
 }
 
-/** Give back a place taken with {@link reserveInWindow}. */
-export async function releaseInWindow(key: string): Promise<void> {
-  await appDatabase.execute(sql`update auth_rate_limit set count = count - 1 where key = ${key} and count > 0`)
+/**
+ * Give back a place taken with {@link reserveInWindow} (`window` is what it returned). Only to the window it
+ * was taken in: once that window has ended and a new one started, there is nothing to give back.
+ */
+export async function releaseInWindow(key: string, window: number): Promise<void> {
+  await appDatabase.execute(sql`update auth_rate_limit set count = count - 1 where key = ${key} and last_request = ${window} and count > 0`)
 }

@@ -223,10 +223,12 @@ under `/sk/`).
   in 15 min, then that address may not try that account again until the window ends (it cannot lock the
   account for anyone else); 200 per account in an hour from any addresses, a backstop against guessing
   spread over many addresses. Each attempt takes its place in both windows atomically before the check
-  and gives it back unless the password was wrong, so concurrent attempts cannot exceed them. Accepted
-  residual: one address fails at most 16 times an hour for an account, so keeping one account's password
-  sign-in blocked takes at least 13 distinct IPv4 addresses or IPv6 /64s every hour; passkey sign-in is
-  never blocked.
+  and gives it back unless the password was wrong (only to the window it was taken in; a refused attempt
+  takes no place), so concurrent attempts cannot exceed them. Accepted residual: the windows are fixed,
+  so one address can fail about 19 or 20 times for an account inside one account hour (4 in each
+  15-minute window it touches), and keeping one account's password sign-in blocked takes about 11
+  distinct IPv4 addresses or IPv6 /64s every hour. A single customer with a /56 or /48 holds 256 or more
+  /64s and can do it alone. Passkey sign-in is never blocked.
 - An address is an IPv4 address or an IPv6 /64 (one subscriber line): every address of a /64 shares
   its limits.
 - The client address is never a header the client chose (`src/server/auth/handler.ts`,

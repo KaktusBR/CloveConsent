@@ -94,6 +94,69 @@ describe('clientAddress: the address rate limits count, never chosen by the clie
     expect(clientAddress('', null, none)).toBeNull()
     expect(clientAddress('nonsense', null, none)).toBeNull()
   })
+
+  test('an IPv4-mapped address in any spelling is its IPv4 address, also for the trusted-proxy check', () => {
+    expect(clientAddress('::ffff:1.2.3.4', null, none)).toBe('1.2.3.4')
+    expect(clientAddress('::FFFF:1.2.3.4', null, none)).toBe('1.2.3.4')
+    expect(clientAddress('::ffff:a00:2', '198.51.100.1', proxies)).toBe('198.51.100.1')
+    expect(clientAddress('10.0.0.2', '::ffff:c633:6401', proxies)).toBe('198.51.100.1')
+  })
+})
+
+describe('clientOf: an IPv4 address itself, an IPv6 address its /64', () => {
+  test.each([
+    // groups made only of the letter d are hex groups, never an IPv4 tail
+    ['1::5:d:d:d:d', '1:0:0:5::'],
+    ['2001:db8::5:dd:d:d', '2001:db8::'],
+    ['2001:db8:1:2:dd:d:d:d', '2001:db8:1:2::'],
+    ['2001:db8:1:2:d:dd:ddd:dddd', '2001:db8:1:2::'],
+    // an embedded IPv4 tail is the last two groups
+    ['1::2:3:4:1.2.3.4', '1:0:0:2::'],
+    ['64:ff9b::192.0.2.1', '64:ff9b::'],
+    ['1:2:3:4:5:6:1.2.3.4', '1:2:3:4::'],
+    // full form, compressed at the start, in the middle, at the end
+    ['2001:0db8:0001:0002:0003:0004:0005:0006', '2001:db8:1:2::'],
+    ['::1:2:3:4:5', '0:0:0:1::'],
+    ['::2:3:4:5:6:7:8', '0:2:3:4::'],
+    ['2001:db8:1::2:3', '2001:db8:1::'],
+    ['2001:db8:1:2::3', '2001:db8:1:2::'],
+    ['2001:db8:1:2:3::', '2001:db8:1:2::'],
+    ['2001:db8::', '2001:db8::'],
+    ['::1', '::'],
+    ['::', '::'],
+    // a zone id is not part of the address; letter case is not either
+    ['fe80::1%eth0', 'fe80::'],
+    ['fe80::1:2:3:4%25', 'fe80::'],
+    ['2001:DB8:1:2::ABCD', '2001:db8:1:2::'],
+    // IPv4, and IPv4-mapped IPv6 as its IPv4 address (not a /64)
+    ['203.0.113.5', '203.0.113.5'],
+    ['::ffff:1.2.3.4', '1.2.3.4'],
+    ['::FFFF:1.2.3.4', '1.2.3.4'],
+    ['::ffff:102:304', '1.2.3.4'],
+    ['0:0:0:0:0:ffff:c633:6401', '198.51.100.1'],
+  ])('%s → %s', (address, client) => {
+    expect(clientOf(address)).toBe(client)
+  })
+
+  test.each([
+    '',
+    'nonsense',
+    'd.d.d.d',
+    '1::5:d:d:d:d:d:d:d',
+    '1:2:3:4:5:6:7:8:9',
+    '1::2::3',
+    '1:2:3:4:5:6:7:1.2.3.4',
+    '::ffff:01.2.3.4',
+    '::ffff:1.2.3.256',
+    '12345::',
+    'fe80::1%',
+    '[::1]',
+    ' ::1',
+    '203.0.113.5/24',
+    '2001:db8::/64',
+  ])('%j is not an address: null (fails closed)', (address) => {
+    expect(clientOf(address)).toBeNull()
+  })
 })
 
 describe('auth errors: translated by code, never the library text', () => {

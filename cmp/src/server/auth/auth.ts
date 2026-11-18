@@ -34,12 +34,18 @@ export const AUTH_BASE_PATH = '/api/auth'
  *   window ends. One address cannot lock an account for anyone else.
  * - per account, from any address: 200 in an hour, a backstop against guessing spread over many addresses.
  * Each attempt takes a place in both windows before the password is checked, in one statement per window
- * (so concurrent attempts cannot exceed them), and gives it back unless the password was wrong.
- * Accepted residual: one address can fail at most 16 times an hour for an account (4 per 15-minute
- * window), so keeping one account's password sign-in blocked takes at least 13 distinct IPv4 addresses or
- * IPv6 /64s every hour; its passkey sign-in is never blocked.
+ * (so concurrent attempts cannot exceed them), and gives it back unless the password was wrong (to the
+ * window it was taken in only; a refused attempt takes no place).
+ * Accepted residual: the windows are fixed (they start at their first failure), so one address can fail
+ * up to about 19 or 20 times for an account inside one account hour (4 in each 15-minute window it
+ * touches). Keeping one account's password sign-in blocked therefore takes about 11 distinct IPv4
+ * addresses or IPv6 /64s every hour; a single customer with a /56 or /48 holds 256 or more /64s, so can
+ * do it alone. Its passkey sign-in is never blocked.
  */
 const FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 200 } } as const
+
+/** The windows a sign-in request took its places in, from the before-hook to the after-hook (keyed by the request). */
+const signInPlaces = new WeakMap<object, { pair: number; account: number }>()
 
 /** The counters of a password sign-in request; keyed by a hash of the email, so the table holds no address in clear. */
 function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | undefined; request?: Request | undefined }): { pair: string; account: string } | null {
@@ -185,19 +191,25 @@ function authOptions(publicOrigin: string) {
         const signIn = failureKeys(ctx)
         if (signIn) {
           const refuse = () => new APIError('TOO_MANY_REQUESTS', { code: 'SIGN_IN_LIMITED', message: 'too many failed sign-ins' })
-          if (!(await reserveInWindow(signIn.pair, FAILURES.pair.window, FAILURES.pair.max))) throw refuse()
-          if (!(await reserveInWindow(signIn.account, FAILURES.account.window, FAILURES.account.max))) {
-            await releaseInWindow(signIn.pair)
+          const pair = await reserveInWindow(signIn.pair, FAILURES.pair.window, FAILURES.pair.max)
+          if (pair === false) throw refuse()
+          const account = await reserveInWindow(signIn.account, FAILURES.account.window, FAILURES.account.max)
+          if (account === false) {
+            await releaseInWindow(signIn.pair, pair)
             throw refuse()
           }
+          const request = ctx.request ?? ctx.headers
+          if (request) signInPlaces.set(request, { pair, account })
         }
       }),
       after: createAuthMiddleware(async (ctx) => {
         // only a wrong email or password keeps its places (not a right one, nor an unverified address)
         const signIn = failureKeys(ctx)
+        const request = ctx.request ?? ctx.headers
+        const places = request ? signInPlaces.get(request) : undefined
         const returned = ctx.context.returned
         const failed = isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD'
-        if (signIn && !failed) await Promise.all([releaseInWindow(signIn.pair), releaseInWindow(signIn.account)])
+        if (signIn && places && !failed) await Promise.all([releaseInWindow(signIn.pair, places.pair), releaseInWindow(signIn.account, places.account)])
       }),
     },
 

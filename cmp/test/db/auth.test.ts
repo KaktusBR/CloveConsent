@@ -2,7 +2,7 @@
 // Auth's request handler (what /api/auth/* runs) and the app's guard. Mail is read from the queue (the
 // worker is not running here); Have I Been Pwned is answered by a local stand-in.
 import { createHash } from 'node:crypto'
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { authErrorMessage } from '../../src/lib/auth-errors'
 import { POST as revokeSession } from '../../src/pages/api/account/revoke-session'
 import { auth, createAuth, type AuthInstance } from '../../src/server/auth/auth'
@@ -11,6 +11,7 @@ import { completeSession, requireUser } from '../../src/server/auth/guard'
 import { enqueue } from '../../src/server/jobs/queue'
 import { startWorker } from '../../src/worker'
 import { closeDatabases } from '../../src/server/data/client'
+import { releaseInWindow, reserveInWindow } from '../../src/server/data/auth-limits'
 import { closeQueue } from '../../src/server/data/queue'
 import en from '../../messages/en.json'
 import { captureLog } from '../unit/capture-log'
@@ -447,6 +448,46 @@ describe('failed password sign-ins per account (ruling R19)', () => {
     expect(capped.json?.code).toBe('SIGN_IN_LIMITED')
     // another account is not affected
     expect((await new Browser().call('/sign-in/email', { email: await verifiedUser('cap-other'), password: PASSWORD })).status).toBe(200)
+  })
+
+  describe('the windows', () => {
+    const at = (ms: number) => vi.spyOn(Date, 'now').mockReturnValue(ms)
+    const key = () => `window-test:${newId()}`
+    afterEach(() => vi.restoreAllMocks())
+
+    test('a place given back after its window ended does not take one from the new window', async () => {
+      const k = key()
+      const t0 = 1_900_000_000_000
+      at(t0)
+      const old = await reserveInWindow(k, 60, 2)
+      expect(old).not.toBe(false)
+      at(t0 + 61_000) // the window has ended: a new one starts with this attempt
+      expect(await reserveInWindow(k, 60, 2)).not.toBe(false)
+      await releaseInWindow(k, old as number) // the first attempt's answer lands late
+      at(t0 + 62_000)
+      expect([await reserveInWindow(k, 60, 2), await reserveInWindow(k, 60, 2)].map((p) => p !== false)).toEqual([true, false])
+    })
+
+    test('a refused attempt leaves no mark: a place given back afterwards can be taken again', async () => {
+      const k = key()
+      at(1_900_000_000_000)
+      const first = await reserveInWindow(k, 60, 2)
+      expect(await reserveInWindow(k, 60, 2)).not.toBe(false)
+      expect(await reserveInWindow(k, 60, 2)).toBe(false) // full: refused
+      expect(await reserveInWindow(k, 60, 2)).toBe(false)
+      await releaseInWindow(k, first as number)
+      expect([await reserveInWindow(k, 60, 2), await reserveInWindow(k, 60, 2)].map((p) => p !== false)).toEqual([true, false])
+    })
+
+    test('a place is never given back twice past zero, and an unknown key is left alone', async () => {
+      const k = key()
+      at(1_900_000_000_000)
+      const place = await reserveInWindow(k, 60, 1)
+      await releaseInWindow(k, place as number)
+      await releaseInWindow(k, place as number)
+      await releaseInWindow(key(), place as number)
+      expect([await reserveInWindow(k, 60, 1), await reserveInWindow(k, 60, 1)].map((p) => p !== false)).toEqual([true, false])
+    })
   })
 
   test('the counters hold no email address in clear', async () => {
