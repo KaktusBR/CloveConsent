@@ -372,6 +372,14 @@ describe('the client address of rate limits (only a trusted proxy may name it)',
     expect(shared).toBe(0)
   })
 
+  test('IPv6: addresses in one /64 share the per-address bucket', async () => {
+    const prefix = `2001:db8:${(++ipCounter).toString(16)}:1`
+    const browsers = Array.from({ length: 6 }, (_, i) => new Browser(`${prefix}:${i + 1}::${(i + 7).toString(16)}`))
+    expect(await wrongSignIns(browsers)).toEqual([401, 401, 401, 401, 401, 429])
+    // another /64 is another client
+    expect(await wrongSignIns([new Browser(`2001:db8:${ipCounter.toString(16)}:2::1`)])).toEqual([401])
+  })
+
   test('a client-sent internal address header is replaced, not trusted', async () => {
     const peer = nextIp()
     const browsers = Array.from({ length: 6 }, (_, i) => {
@@ -387,6 +395,31 @@ describe('the client address of rate limits (only a trusted proxy may name it)',
 describe('failed password sign-ins per account (ruling R19)', () => {
   const wrong = (b: Browser, email: string) => b.call('/sign-in/email', { email, password: 'wrong password 123' })
 
+  test('IPv6: the (account, address) pair is per /64, so rotating within one /64 does not reset it', async () => {
+    const email = await verifiedUser('pair-v6')
+    const prefix = `2001:db8:${(++ipCounter).toString(16)}:9`
+    const statuses: number[] = []
+    for (let i = 0; i < 5; i++) statuses.push((await wrong(new Browser(`${prefix}:${i + 1}::1`), email)).status)
+    expect(statuses).toEqual([401, 401, 401, 401, 429])
+  })
+
+  test('concurrent wrong passwords from one address get exactly 4 tries (the check and the count are one step)', async () => {
+    const email = await verifiedUser('pair-race')
+    const peer = nextIp()
+    // Better Auth's per-address limit lets 5 of these through; ours must stop all but 4 of those
+    const answers = await Promise.all(Array.from({ length: 8 }, () => wrong(new Browser(peer), email)))
+    expect(answers.filter((a) => a.status === 401)).toHaveLength(4)
+    expect(answers.filter((a) => a.status === 429)).toHaveLength(4)
+  })
+
+  test('concurrent wrong passwords from many addresses get exactly 200 tries per account', { timeout: 180_000 }, async () => {
+    const email = await verifiedUser('account-race')
+    const answers = await Promise.all(Array.from({ length: 220 }, () => wrong(new Browser(), email)))
+    expect(answers.filter((a) => a.status === 401)).toHaveLength(200)
+    expect(answers.filter((a) => a.status === 429).every((a) => a.json?.code === 'SIGN_IN_LIMITED')).toBe(true)
+    expect((await new Browser().call('/sign-in/email', { email, password: PASSWORD })).status).toBe(429)
+  })
+
   test('one address is stopped after 4 wrong passwords for an account, but cannot lock it for anyone else', async () => {
     const email = await verifiedUser('pair')
     const attacker = new Browser()
@@ -400,11 +433,15 @@ describe('failed password sign-ins per account (ruling R19)', () => {
     expect((await wrong(new Browser(), email)).status).toBe(401)
   })
 
-  test('the account-wide cap (50 failures an hour, from any addresses) engages exactly at its threshold; correct sign-ins do not count', { timeout: 60_000 }, async () => {
+  test('the account-wide cap (200 failures an hour, from any addresses) engages exactly at its threshold; correct sign-ins do not count', { timeout: 180_000 }, async () => {
     const email = await verifiedUser('cap')
-    for (let i = 0; i < 49; i++) expect((await wrong(new Browser(), email)).status).toBe(401)
+    // 199 failures, from as many addresses, 20 at a time
+    for (let i = 0; i < 199; i += 20) {
+      const batch = await Promise.all(Array.from({ length: Math.min(20, 199 - i) }, () => wrong(new Browser(), email)))
+      expect(batch.every((a) => a.status === 401)).toBe(true)
+    }
     expect((await new Browser().call('/sign-in/email', { email, password: PASSWORD })).status).toBe(200)
-    expect((await wrong(new Browser(), email)).status).toBe(401) // the 50th failure
+    expect((await wrong(new Browser(), email)).status).toBe(401) // the 200th failure
     const capped = await new Browser().call('/sign-in/email', { email, password: PASSWORD })
     expect(capped.status).toBe(429)
     expect(capped.json?.code).toBe('SIGN_IN_LIMITED')

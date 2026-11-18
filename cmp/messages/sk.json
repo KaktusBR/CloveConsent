@@ -123,5 +123,6 @@
   "security_session_current": "Tento prehliadač",
   "security_session_last_active": "Naposledy aktívny {when}",
   "security_session_unknown_device": "Neznámy prehliadač",
-  "security_session_revoke": "Odhlásiť"
+  "security_session_revoke": "Odhlásiť",
+  "security_session_address": "Z adresy {address}"
 }

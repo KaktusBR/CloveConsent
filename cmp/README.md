@@ -219,15 +219,21 @@ under `/sk/`).
   address and path: sign-in 5/min, sign-up 3/min, reset request 3/5 min, reset 5/5 min, resend
   confirmation 3/5 min, second-factor codes 5/min (and 10 wrong codes lock the second step for 15 min),
   passkey sign-in 10/min, anything else 100/min.
-- Wrong passwords are counted after the check (never right ones), keyed by a hash of the email address:
-  4 per account and address in 15 min, then that address may not try that account again until the
-  window ends (it cannot lock the account for anyone else); 50 per account in an hour from any
-  addresses, a backstop against guessing spread over many addresses. Accepted residual: a large botnet
-  can keep one account's password sign-in blocked; its passkey sign-in still works.
+- Wrong passwords (never right ones), keyed by a hash of the email address: 4 per account and address
+  in 15 min, then that address may not try that account again until the window ends (it cannot lock the
+  account for anyone else); 200 per account in an hour from any addresses, a backstop against guessing
+  spread over many addresses. Each attempt takes its place in both windows atomically before the check
+  and gives it back unless the password was wrong, so concurrent attempts cannot exceed them. Accepted
+  residual: one address fails at most 16 times an hour for an account, so keeping one account's password
+  sign-in blocked takes at least 13 distinct IPv4 addresses or IPv6 /64s every hour; passkey sign-in is
+  never blocked.
+- An address is an IPv4 address or an IPv6 /64 (one subscriber line): every address of a /64 shares
+  its limits.
 - The client address is never a header the client chose (`src/server/auth/handler.ts`,
-  `src/server/client-address.ts`): it is the connection's TCP peer, recorded by a patch of the node
-  adapter (`src/server/socket-peer.ts`; not Astro's `clientAddress`, which follows `X-Forwarded-For` once
-  `security.allowedDomains` is set), unless that peer is listed in
+  `src/server/client-address.ts`): it is the connection's TCP peer, which the node adapter (a build
+  patch) and `astro dev` (a middleware) write into the internal header `x-cmp-socket-peer` after
+  deleting any copy the client sent (`src/server/socket-peer.ts`; not Astro's `clientAddress`, which
+  follows `X-Forwarded-For` under `security.allowedDomains`, set from `PUBLIC_ORIGIN` at build), unless that peer is listed in
   `TRUSTED_PROXIES`, in which case `X-Forwarded-For` is read right to left past the trusted proxies.
   A request whose address is unknown is refused (no shared bucket). **Behind Dokploy's Traefik**, set
   `TRUSTED_PROXIES` to the address range Traefik connects from (its Docker network, e.g. the

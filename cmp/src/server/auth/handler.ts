@@ -13,7 +13,7 @@ import { auth, type AuthInstance } from './auth'
 const proxies = trustedProxies(env.TRUSTED_PROXIES)
 
 /**
- * @param peer the socket address of the connection (Astro's `clientAddress`), undefined when unknown
+ * @param peer the TCP peer of the connection (src/server/socket-peer.ts), undefined when unknown
  */
 export async function handleAuth(request: Request, peer: string | undefined, instance: AuthInstance = auth): Promise<Response> {
   const address = clientAddress(peer, request.headers.get('x-forwarded-for'), proxies)

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { patchModule, replaceOnce } from './src/build/patch-module.ts'
 import { THEME_SCRIPT } from './src/lib/theme.ts'
 import { CSP_DIRECTIVES, cspHash } from './src/server/security.ts'
+import { socketPeerDevMiddleware } from './src/server/socket-peer.ts'
 
 const sourcePath = (path) => JSON.stringify(fileURLToPath(new URL(path, import.meta.url)).replaceAll('\\', '/'))
 
@@ -52,19 +53,34 @@ const securityHeadersOnFiles = patchModule({
 })
 
 /**
- * Records each request's TCP peer (`req.socket.remoteAddress`) for the rate limits of /api/auth/*
- * (src/server/socket-peer.ts, src/server/auth/handler.ts), keyed by the Request object, so no header can
- * set it. Not Astro's `clientAddress`: that is the leftmost X-Forwarded-For entry, chosen by the client,
- * as soon as `security.allowedDomains` validates the Host. Pinned by e2e/client-address.spec.ts.
+ * The TCP peer for the rate limits of /api/auth/* (src/server/socket-peer.ts, src/server/auth/handler.ts):
+ * the node adapter's request handler writes `req.socket.remoteAddress` into the internal header
+ * x-cmp-socket-peer of the incoming request, after deleting any copy the client sent, before Astro builds
+ * its Request. Being a header, it survives every Request Astro rebuilds from it (forwarded headers under
+ * allowedDomains, rewrites). Pinned by e2e/client-address.spec.ts. `astro dev` gets the same from
+ * socketPeerInDev below. Not Astro's `clientAddress` (the client-chosen leftmost X-Forwarded-For entry
+ * once allowedDomains validates the Host).
  */
-const recordSocketPeer = patchModule({
-  name: 'cmp:record-socket-peer',
+const stampSocketPeerOnRequests = patchModule({
+  name: 'cmp:stamp-socket-peer',
   module: '/@astrojs/node/dist/serve-app.js',
   edit(code, fail) {
-    const patched = replaceOnce(code, 'port: options.port\n\t\t\t});', 'port: options.port\n\t\t\t});\n\t\t\t__cmpRecordSocketPeer(request, req.socket?.remoteAddress);', fail)
-    return `import { recordSocketPeer as __cmpRecordSocketPeer } from ${sourcePath('./src/server/socket-peer.ts')};\n${patched}`
+    const anchor = 'request = createRequestFromNodeRequest(req, {'
+    const patched = replaceOnce(code, anchor, `__cmpStampSocketPeer(req);\n\t\t\t${anchor}`, fail)
+    return `import { stampSocketPeer as __cmpStampSocketPeer } from ${sourcePath('./src/server/socket-peer.ts')};\n${patched}`
   },
 })
+
+/** The dev server's equivalent: the same stamp on every request `astro dev` receives. */
+const socketPeerInDev = {
+  name: 'cmp:stamp-socket-peer-dev',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use(socketPeerDevMiddleware)
+  },
+}
+
+const publicHost = URL.canParse(process.env.PUBLIC_ORIGIN ?? '') ? new URL(process.env.PUBLIC_ORIGIN ?? '') : null
 
 // No site/domain here: the public origin comes from PUBLIC_ORIGIN at runtime (src/server/env.ts).
 //
@@ -83,8 +99,11 @@ export default defineConfig({
   adapter: node({ mode: 'standalone', staticHeaders: true }),
   integrations: [react()],
   security: {
-    // allowedDomains, if ever set, makes Astro's clientAddress follow X-Forwarded-For: the rate limits
-    // must not change with it, and do not (they use the socket peer, recordSocketPeer above)
+    // The public host (PUBLIC_ORIGIN, which every build needs): behind the reverse proxy, Astro builds the
+    // request URL from X-Forwarded-Host/Proto only when they name it. This also makes Astro's clientAddress
+    // follow X-Forwarded-For; the rate limits never use it: they count the TCP peer of the x-cmp-socket-peer
+    // header (stampSocketPeerOnRequests), or what a TRUSTED_PROXIES peer forwards (src/server/client-address.ts).
+    allowedDomains: publicHost ? [{ hostname: publicHost.hostname, protocol: publicHost.protocol.slice(0, -1) }] : [],
     checkOrigin: true,
     csp: {
       algorithm: 'SHA-256',
@@ -94,5 +113,5 @@ export default defineConfig({
   },
   // No Markdown pages; Shiki's inline styles would need 'unsafe-inline' under the CSP.
   markdown: { syntaxHighlight: false },
-  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, recordSocketPeer, paraglideVitePlugin({ project: './project.inlang' })] },
+  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, stampSocketPeerOnRequests, socketPeerInDev, paraglideVitePlugin({ project: './project.inlang' })] },
 })

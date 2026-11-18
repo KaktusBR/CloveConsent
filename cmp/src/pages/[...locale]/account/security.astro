@@ -25,7 +25,7 @@ const day = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UT
 // Only what the page shows: never a session token.
 const sessions = (await auth.api.listSessions({ headers }))
   .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-  .map((s) => ({ id: s.id, current: s.id === signedIn.session.id, device: s.userAgent || null, lastActive: when.format(s.updatedAt) }))
+  .map((s) => ({ id: s.id, current: s.id === signedIn.session.id, device: s.userAgent || null, address: s.ipAddress || null, lastActive: when.format(s.updatedAt) }))
 const passkeys: PasskeyItem[] = (await auth.api.listPasskeys({ headers })).map((p) => ({
   id: p.id,
   name: p.name || m.security_passkey_default_name(),
@@ -64,6 +64,7 @@ const signInHref = localizedPath('/sign-in', locale)
                 <span class="text-muted-foreground text-sm">
                   {s.current ? m.security_session_current() : m.security_session_last_active({ when: s.lastActive })}
                 </span>
+                {s.address && <span class="text-muted-foreground text-sm">{m.security_session_address({ address: s.address })}</span>}
               </span>
               {!s.current && (
                 <form method="post" action="/api/account/revoke-session">

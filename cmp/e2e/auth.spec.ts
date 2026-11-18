@@ -1,11 +1,10 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test'
+import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { totp } from '../test/totp'
 import { expectAccessible, expectAccessibleState } from './axe'
-
-const MAILPIT = process.env.MAILPIT_URL || 'http://localhost:8025'
+import { linkIn, mail } from './mailpit'
 
 function catalog(locale: string): (key: string) => string {
   const texts = JSON.parse(readFileSync(`messages/${locale}.json`, 'utf8')) as Record<string, string>
@@ -27,26 +26,6 @@ test.beforeEach(async ({ context }) => {
 const newEmail = (label: string) => `e2e-${label}-${randomUUID()}@example.test`
 /** Long, random: not in the stand-in's breach corpus (e2e/pwned-stand-in.mjs). */
 const newPassword = () => `pw-${randomUUID()}`
-
-/** The text of the newest mail to `to` whose subject is `subject`, waiting for the worker to send it. */
-async function mail(request: APIRequestContext, to: string, subject: string): Promise<string> {
-  const deadline = Date.now() + 30_000
-  for (;;) {
-    const found = await request.get(`${MAILPIT}/api/v1/search`, { params: { query: `to:"${to}" subject:"${subject}"` } })
-    const { messages } = (await found.json()) as { messages: { ID: string }[] }
-    const first = messages[0]
-    if (first) return ((await (await request.get(`${MAILPIT}/api/v1/message/${first.ID}`)).json()) as { Text: string }).Text
-    if (Date.now() > deadline) throw new Error(`no mail "${subject}" to ${to}`)
-    await new Promise((r) => setTimeout(r, 300))
-  }
-}
-
-/** The one link to this site in a mail's text. */
-function linkIn(text: string, baseURL: string): string {
-  const link = text.match(new RegExp(`${baseURL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\S+`))?.[0]
-  if (!link) throw new Error('no link in the mail')
-  return link
-}
 
 /** Signs up through the API and opens the verification link; returns the credentials. */
 async function verifiedUser(page: Page, baseURL: string) {
@@ -218,4 +197,22 @@ test('revoking a session on the Security page signs that browser out', async ({ 
   await otherPage.reload()
   await expect(otherPage).toHaveURL(/\/sign-in\?next=/)
   await other.close()
+})
+
+test('a page render never sees a client-sent x-cmp-client-address: the Security page shows the address the session was created from', async ({ browser, baseURL }) => {
+  const origin = baseURL ?? ''
+  const context = await browser.newContext({ baseURL: origin, extraHTTPHeaders: { 'X-Forwarded-For': '192.0.2.88' } })
+  const page = await context.newPage()
+  const { email, password } = await verifiedUser(page, origin)
+  await signIn(page, email, password)
+  await page.waitForURL('**/account/security')
+
+  // every later request (the page render and its auth.api calls) carries a forged internal header
+  await context.setExtraHTTPHeaders({ 'X-Forwarded-For': '192.0.2.88', 'X-Cmp-Client-Address': '198.51.100.250' })
+  await page.reload()
+  const sessions = page.getByRole('region', { name: en('security_sessions_heading') })
+  await expect(sessions.getByText(en('security_session_address').replace('{address}', '192.0.2.88'))).toBeVisible()
+  await expect(page.getByText('198.51.100.250')).toHaveCount(0)
+  await expectAccessible(page)
+  await context.close()
 })

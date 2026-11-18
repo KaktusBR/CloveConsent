@@ -35,13 +35,40 @@ function normalize(value: string | undefined): string | null {
 const isTrusted = (address: string, proxies: BlockList) => proxies.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6')
 
 /**
+ * The client an address stands for: an IPv4 address itself, an IPv6 address its /64 (the prefix one
+ * subscriber line or host gets; the rest is chosen freely by the client), written as an address
+ * (`2001:db8:1:2::`) so Better Auth and our counters take it as is.
+ */
+export function clientOf(input: string): string {
+  let address = input
+  if (isIP(address) !== 6) return address
+  // an embedded IPv4 tail (`64:ff9b::192.0.2.1`) as its two groups
+  const ipv4 = /(d+).(d+).(d+).(d+)$/.exec(address)
+  if (ipv4) {
+    const [a, b, c, d] = ipv4.slice(1).map(Number) as [number, number, number, number]
+    address = address.slice(0, ipv4.index) + `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  }
+  const [head = '', tail = ''] = address.split('::')
+  const left = head === '' ? [] : head.split(':')
+  const right = tail === '' ? [] : tail.split(':')
+  const groups = address.includes('::') ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right] : left
+  // the URL parser writes an IPv6 address in its canonical, compressed form
+  return new URL(`http://[${groups.slice(0, 4).join(':')}::]`).hostname.slice(1, -1)
+}
+
+/**
  * The client's address, or null when the peer is unknown (the request is then refused: it must never
  * share a bucket with other requests). From a trusted proxy, X-Forwarded-For is read right to left: each
  * trusted hop is skipped, the first untrusted address is the client; a hop that is not an address stops
- * the walk at the last trusted address (what the proxies could vouch for).
+ * the walk at the last trusted address (what the proxies could vouch for). An IPv6 client is its /64.
  */
 export function clientAddress(peer: string | undefined, forwardedFor: string | null, proxies: BlockList): string | null {
-  let address = normalize(peer)
+  const address = forwardedClient(normalize(peer), forwardedFor, proxies)
+  return address === null ? null : clientOf(address)
+}
+
+function forwardedClient(peer: string | null, forwardedFor: string | null, proxies: BlockList): string | null {
+  let address = peer
   if (address === null || !isTrusted(address, proxies)) return address
   const hops = (forwardedFor ?? '').split(',').map((h) => h.trim()).filter((h) => h !== '')
   for (let i = hops.length - 1; i >= 0; i--) {

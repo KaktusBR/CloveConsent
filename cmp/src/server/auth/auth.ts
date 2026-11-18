@@ -19,7 +19,7 @@ import { m } from '../../paraglide/messages.js'
 import { createHash } from 'node:crypto'
 import { authDatabase } from '../data/auth-database'
 import { CLIENT_ADDRESS_HEADER } from '../security'
-import { addToWindow, countInWindow } from '../data/auth-limits'
+import { releaseInWindow, reserveInWindow } from '../data/auth-limits'
 import { authSchema } from '../data/schema'
 import { env } from '../env'
 import { log } from '../log'
@@ -28,15 +28,18 @@ import { sendMail } from '../jobs/mail'
 export const AUTH_BASE_PATH = '/api/auth'
 
 /**
- * Failed password sign-ins (ruling R19), counted after the credential check, beside Better Auth's
- * per-address request limit:
+ * Failed password sign-ins (ruling R19), beside Better Auth's per-address request limit. An address is a
+ * client as src/server/client-address.ts sees it: an IPv4 address, or an IPv6 /64.
  * - per (account, address): 4 in 15 minutes, then that address may not try that account again until the
  *   window ends. One address cannot lock an account for anyone else.
- * - per account, from any address: 50 in an hour, a backstop against guessing spread over many addresses.
- *   Accepted residual: a large botnet can keep one account's password sign-in blocked; its passkey
- *   sign-in is not affected.
+ * - per account, from any address: 200 in an hour, a backstop against guessing spread over many addresses.
+ * Each attempt takes a place in both windows before the password is checked, in one statement per window
+ * (so concurrent attempts cannot exceed them), and gives it back unless the password was wrong.
+ * Accepted residual: one address can fail at most 16 times an hour for an account (4 per 15-minute
+ * window), so keeping one account's password sign-in blocked takes at least 13 distinct IPv4 addresses or
+ * IPv6 /64s every hour; its passkey sign-in is never blocked.
  */
-const FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 50 } } as const
+const FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 200 } } as const
 
 /** The counters of a password sign-in request; keyed by a hash of the email, so the table holds no address in clear. */
 function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | undefined; request?: Request | undefined }): { pair: string; account: string } | null {
@@ -177,23 +180,24 @@ function authOptions(publicOrigin: string) {
         if (ctx.path.startsWith('/two-factor/verify-') && (ctx.body as { trustDevice?: unknown } | undefined)?.trustDevice) {
           throw new APIError('BAD_REQUEST', { code: 'TRUST_DEVICE_NOT_ALLOWED', message: 'trusting a device is not allowed' })
         }
-        // Failed passwords (ruling R19): refused before the check once this address has too many for this
-        // account, or the account has too many from anywhere.
+        // Failed passwords (ruling R19): a place in the pair's window, then in the account's; refused
+        // when either is full (the pair is checked first, so a refused address never uses up the account's).
         const signIn = failureKeys(ctx)
         if (signIn) {
-          const [pair, account] = await Promise.all([countInWindow(signIn.pair, FAILURES.pair.window), countInWindow(signIn.account, FAILURES.account.window)])
-          if (pair >= FAILURES.pair.max || account >= FAILURES.account.max) {
-            throw new APIError('TOO_MANY_REQUESTS', { code: 'SIGN_IN_LIMITED', message: 'too many failed sign-ins' })
+          const refuse = () => new APIError('TOO_MANY_REQUESTS', { code: 'SIGN_IN_LIMITED', message: 'too many failed sign-ins' })
+          if (!(await reserveInWindow(signIn.pair, FAILURES.pair.window, FAILURES.pair.max))) throw refuse()
+          if (!(await reserveInWindow(signIn.account, FAILURES.account.window, FAILURES.account.max))) {
+            await releaseInWindow(signIn.pair)
+            throw refuse()
           }
         }
       }),
       after: createAuthMiddleware(async (ctx) => {
-        // only a wrong email or password counts (not a right one, nor an unverified address)
+        // only a wrong email or password keeps its places (not a right one, nor an unverified address)
         const signIn = failureKeys(ctx)
         const returned = ctx.context.returned
-        if (signIn && isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD') {
-          await Promise.all([addToWindow(signIn.pair, FAILURES.pair.window), addToWindow(signIn.account, FAILURES.account.window)])
-        }
+        const failed = isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD'
+        if (signIn && !failed) await Promise.all([releaseInWindow(signIn.pair), releaseInWindow(signIn.account)])
       }),
     },
 

@@ -123,5 +123,6 @@
   "security_session_current": "This browser",
   "security_session_last_active": "Last active {when}",
   "security_session_unknown_device": "Unknown browser",
-  "security_session_revoke": "Sign out"
+  "security_session_revoke": "Sign out",
+  "security_session_address": "From {address}"
 }

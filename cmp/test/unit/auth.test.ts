@@ -4,7 +4,7 @@ import en from '../../messages/en.json'
 import { sameSitePath } from '../../src/i18n/locale'
 import { authErrorMessage } from '../../src/lib/auth-errors'
 import { signInPath } from '../../src/server/auth/guard'
-import { clientAddress, trustedProxies } from '../../src/server/client-address'
+import { clientAddress, clientOf, trustedProxies } from '../../src/server/client-address'
 
 describe('next=: only a path on this site', () => {
   test.each([
@@ -63,7 +63,7 @@ describe('clientAddress: the address rate limits count, never chosen by the clie
     // a client's own value is to the left of what the proxy appended
     expect(clientAddress('10.0.0.2', '6.6.6.6, 198.51.100.1', proxies)).toBe('198.51.100.1')
     expect(clientAddress('10.0.0.2', '198.51.100.1, 10.1.1.1', proxies)).toBe('198.51.100.1')
-    expect(clientAddress('fd00::2', '2001:db8::7', proxies)).toBe('2001:db8::7')
+    expect(clientAddress('fd00::2', '2001:db8::7', proxies)).toBe('2001:db8::')
   })
 
   test('from a trusted proxy without a usable header: the proxy itself (never a shared bucket)', () => {
@@ -79,6 +79,14 @@ describe('clientAddress: the address rate limits count, never chosen by the clie
   test('IPv4-mapped IPv6 peers are their IPv4 address', () => {
     expect(clientAddress('::ffff:203.0.113.5', null, none)).toBe('203.0.113.5')
     expect(clientAddress('::ffff:10.0.0.2', '198.51.100.1', proxies)).toBe('198.51.100.1')
+  })
+
+  test('an IPv6 client is its /64 (one subscriber line): every address in it is the same client', () => {
+    expect(clientAddress('2001:db8:1:2:aaaa:bbbb:cccc:dddd', null, none)).toBe('2001:db8:1:2::')
+    expect(clientAddress('2001:db8:1:2::1', null, none)).toBe('2001:db8:1:2::')
+    expect(clientAddress('2001:db8:1:3::1', null, none)).toBe('2001:db8:1:3::')
+    expect(clientAddress('10.0.0.2', '2001:db8:9:8:1::5', proxies)).toBe('2001:db8:9:8::')
+    expect(clientAddress('::1', null, none)).toBe('::')
   })
 
   test('no usable peer: no address (the request is refused, not bucketed with others)', () => {
@@ -104,5 +112,13 @@ describe('auth errors: translated by code, never the library text', () => {
     expect(authErrorMessage({ code: 'SOMETHING_NEW', status: 500 })).toBe(en.auth_error_generic)
     expect(authErrorMessage({ code: 'toString', status: 400 })).toBe(en.auth_error_generic)
     expect(authErrorMessage(null)).toBe(en.auth_error_generic)
+  })
+})
+
+describe('clientOf', () => {
+  test('IPv6 with an embedded IPv4 tail is grouped by its /64 too', () => {
+    expect(clientOf('64:ff9b:1:2::192.0.2.1')).toBe('64:ff9b:1:2::')
+    expect(clientOf('2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff')).toBe('2001:db8:aaaa:bbbb::')
+    expect(clientOf('203.0.113.5')).toBe('203.0.113.5')
   })
 })
