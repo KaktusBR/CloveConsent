@@ -29,3 +29,12 @@ export async function errorCode(query: Promise<unknown>): Promise<string | null>
 }
 
 export const newId = (): string => randomUUID()
+
+/**
+ * Adds a new, empty account (`id`, else a fresh one) and returns its id (a row in auth_account, written as the owner role): audit_log.account_id
+ * references it, so a test's account ids must exist.
+ */
+export async function addAccount(id: string = randomUUID()): Promise<string> {
+  await asRole('migrate', (c) => c.query(`insert into auth_account (id, name, slug) values ($1, 'test account', $2)`, [id, id]))
+  return id
+}

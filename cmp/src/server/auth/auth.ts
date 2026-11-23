@@ -12,9 +12,9 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, isAPIError } from 'better-auth/api'
-import { haveIBeenPwned, twoFactor } from 'better-auth/plugins'
+import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins'
 import { passkey } from '@better-auth/passkey'
-import { localeOfPath, localizedPath, LOCALE_COOKIE, preferredLocale, type Locale } from '../../i18n/locale'
+import { localizedPath } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
 import { createHash } from 'node:crypto'
 import { authDatabase } from '../data/auth-database'
@@ -24,6 +24,12 @@ import { authSchema } from '../data/schema'
 import { env } from '../env'
 import { log } from '../log'
 import { sendMail } from '../jobs/mail'
+import { INVITATION_DAYS } from '../data/accounts'
+import { accountEndpoints, ACCOUNT_PATHS } from './account-endpoints'
+import { organizationRoles } from './permissions'
+import { localeOfRequest, pageLink } from './request-locale'
+
+export { localeOfRequest }
 
 export const AUTH_BASE_PATH = '/api/auth'
 
@@ -58,25 +64,35 @@ function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | un
   return { pair: `sign-in-failures:${account}:${address}`, account: `sign-in-failures:${account}` }
 }
 
+/**
+ * Better Auth's organization plugin is the product's accounts: its tables (renamed, see
+ * src/server/data/schema/auth.ts), the session's active account, and its roles (ours, from
+ * permissions.ts). None of its endpoints answers over HTTP (disabledPaths below): accounts are created,
+ * switched and their members changed through the app's own routes and the account endpoints
+ * (account-endpoints.ts), which answer 404 for another account's ids and write each change with its audit
+ * row in one transaction. Server code may still call its API (`auth.api.setActiveOrganization`).
+ */
+const accounts = organization({
+  roles: organizationRoles,
+  creatorRole: 'owner',
+  invitationExpiresIn: INVITATION_DAYS * 24 * 60 * 60,
+  requireEmailVerificationOnInvitation: true,
+  disableOrganizationDeletion: true,
+  schema: {
+    member: { fields: { organizationId: 'accountId' } },
+    invitation: {
+      fields: { organizationId: 'accountId' },
+      // the SHA-256 of the link's token (src/server/data/accounts.ts writes it; Better Auth never shows it)
+      additionalFields: { tokenHash: { type: 'string', required: true, input: false, returned: false } },
+    },
+    session: { fields: { activeOrganizationId: 'activeAccountId' } },
+  },
+})
+/** Every path of the organization plugin: none is served over HTTP. */
+export const ORGANIZATION_PATHS: readonly string[] = Object.values(accounts.endpoints).map((e) => e.path)
+
 /** Paths that create a session only after the second factor (or a passkey, which is both factors). */
 const SECOND_FACTOR_PATHS: ReadonlySet<string> = new Set(['/two-factor/verify-totp', '/two-factor/verify-backup-code', '/passkey/verify-authentication'])
-
-/**
- * The language of the page a request came from (its Referer on this site; the browser sends the full URL
- * to the same origin), else the reader's preferred one. Auth emails are written in it.
- */
-export function localeOfRequest(request: Request | undefined): Locale {
-  const referer = request?.headers.get('referer')
-  if (referer && URL.canParse(referer)) {
-    const url = new URL(referer)
-    if (url.origin === env.PUBLIC_ORIGIN) return localeOfPath(url.pathname)
-  }
-  const cookie = request?.headers.get('cookie')?.match(new RegExp(`(?:^|;\\s*)${LOCALE_COOKIE}=([^;]*)`))?.[1] ?? null
-  return preferredLocale(cookie, request?.headers.get('accept-language') ?? null)
-}
-
-/** An absolute link to a page of this site in `locale`. */
-const pageLink = (path: string, locale: Locale) => new URL(localizedPath(path, locale), env.PUBLIC_ORIGIN)
 
 /**
  * The Better Auth options for a public origin: the app uses PUBLIC_ORIGIN ({@link auth}); tests build
@@ -93,6 +109,7 @@ function authOptions(publicOrigin: string) {
     secret: env.BETTER_AUTH_SECRET,
     trustedOrigins: [origin.origin],
     telemetry: { enabled: false },
+    disabledPaths: [...ORGANIZATION_PATHS],
     database: drizzleAdapter(authDatabase, { provider: 'pg', schema: authSchema, transaction: true }),
 
     emailAndPassword: {
@@ -150,6 +167,9 @@ function authOptions(publicOrigin: string) {
         '/send-verification-email': { window: 300, max: 3 },
         '/two-factor/verify-*': { window: 60, max: 5 },
         '/passkey/verify-authentication': { window: 60, max: 10 },
+        // each invitation sends an email; an invitation link is tried by a signed-in person only
+        [ACCOUNT_PATHS.invite]: { window: 10 * 60, max: 20 },
+        [ACCOUNT_PATHS.accept]: { window: 60, max: 10 },
       },
     },
 
@@ -178,6 +198,8 @@ function authOptions(publicOrigin: string) {
         // a passkey counts as both factors, so the authenticator must verify the person (PIN or biometrics)
         authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
       }),
+      accounts,
+      accountEndpoints(),
     ],
 
     hooks: {

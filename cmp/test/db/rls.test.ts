@@ -1,10 +1,11 @@
 import type pg from 'pg'
 import { beforeAll, describe, expect, test } from 'vitest'
-import { asRole, errorCode, newId } from './raw'
+import { addAccount, asRole, errorCode, newId } from './raw'
 
 /**
- * Better Auth's identity tables (Tasks 6-8) carry no account_id and are guarded by Better Auth, not by
- * row-level security (ruling R2). Every other table in the public schema is tenant data. Each one is
+ * Better Auth's identity tables (Tasks 6-8) are guarded by Better Auth and the app's own checks, not by
+ * row-level security (ruling R2); the account tables (Task 7) say who belongs to an account, so the
+ * membership and invitation rows name one, but they are identity data too. Every other table in the public schema is tenant data. Each one is
  * listed with exactly the privileges the app role holds on it (what Better Auth does there) and why,
  * and what the system role holds (the worker's auth.cleanup job: DELETE, and SELECT of the one column it
  * filters on); PUBLIC holds none, and none has row-level security (an explicit decision: the sweep
@@ -23,6 +24,9 @@ const IDENTITY_GRANTS: Readonly<Record<string, IdentityGrants>> = {
   auth_two_factor: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'encrypted TOTP secrets and backup codes, deleted when 2FA is turned off' },
   auth_passkey: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'passkey public keys, removable by their owner' },
   auth_rate_limit: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], system: { delete: true, selectColumn: 'last_request' }, why: 'rate-limit windows shared by every app process; finished ones cleaned up' },
+  auth_account: { app: ['INSERT', 'SELECT', 'UPDATE'], why: 'accounts (the organization plugin): created and renamed, never deleted; locked by the owner trigger' },
+  auth_account_member: { app: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'], why: 'who belongs to which account with which role; members are removed by deleting' },
+  auth_account_invitation: { app: ['INSERT', 'SELECT', 'UPDATE'], why: 'invitations (hashed link tokens); they change status, never deleted' },
 }
 const IDENTITY_TABLES: readonly string[] = Object.keys(IDENTITY_GRANTS)
 /** audit_log also holds system and global events, which belong to no account (ruling R2). */
@@ -75,6 +79,8 @@ const accountA = newId()
 const accountB = newId()
 
 beforeAll(async () => {
+  await addAccount(accountA)
+  await addAccount(accountB)
   // rows of two accounts and one global row, written as the system role
   await asRole('system', (c) =>
     c.query(`insert into audit_log (account_id, action) values ($1, 'probe.raw'), ($2, 'probe.raw'), (null, 'probe.raw')`, [accountA, accountB]),

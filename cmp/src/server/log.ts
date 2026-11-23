@@ -37,3 +37,11 @@ export function createLogger(destination: DestinationStream = stdout(1)): Logger
 export const log: Logger = createLogger()
 
 export type { Logger }
+
+/**
+ * A request path as it is logged: the token of an invitation link (`/invite/<token>`, in any language) is
+ * a secret and is replaced by `:token`.
+ */
+export function pathForLog(pathname: string): string {
+  return pathname.replace(/(\/invite\/)[^/]+/gi, '$1:token')
+}

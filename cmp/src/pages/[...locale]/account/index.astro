@@ -1,0 +1,56 @@
+---
+import AccountSwitcher from '../../../components/AccountSwitcher'
+import { roleName } from '../../../components/accounts/roles'
+import Base from '../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { requireAccount } from '../../../server/auth/guard'
+import { can } from '../../../server/auth/permissions'
+import { accountOf, accountsOf } from '../../../server/data/accounts'
+
+// The account the person works in: its name, their role, the switch to their other accounts.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const here = await requireAccount(Astro)
+if (here instanceof Response) return here
+const { scope } = here
+const account = await accountOf(scope)
+if (!account) return Astro.rewrite('/404')
+const accounts = await accountsOf(scope.userId)
+---
+
+<Base title={m.account_title({ account: account.name })}>
+  <main class="mx-auto grid max-w-2xl gap-8 px-4 py-12">
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight">{account.name}</h1>
+      <p class="text-muted-foreground">{m.account_your_role({ role: roleName(scope.role) })}</p>
+    </div>
+    {accounts.length > 1 && <AccountSwitcher accounts={accounts} activeId={account.id} />}
+    <nav aria-label={m.account_nav_label()}>
+      <ul class="grid gap-2">
+        {
+          can(scope, 'member', 'invite') && (
+            <li>
+              <a class="underline underline-offset-4" href={localizedPath('/account/members', locale)}>
+                {m.account_members_link()}
+              </a>
+            </li>
+          )
+        }
+        <li>
+          <a class="underline underline-offset-4" href={localizedPath('/accounts/new', locale)}>
+            {m.account_new_link()}
+          </a>
+        </li>
+        <li>
+          <a class="underline underline-offset-4" href={localizedPath('/account/security', locale)}>
+            {m.account_security_link()}
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </main>
+</Base>

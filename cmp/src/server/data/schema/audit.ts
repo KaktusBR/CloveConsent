@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { index, jsonb, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { organization } from './auth'
 import { appRole, isCurrentAccount, systemRole } from './tenancy'
 
 /**
@@ -12,8 +13,8 @@ import { appRole, isCurrentAccount, systemRole } from './tenancy'
  * - cmp_system reads every row (super-admin audit viewer) and writes any row (system events,
  *   asSystem's access records).
  *
- * `account_id` will reference Better Auth's organization id (Task 7 adds the foreign key);
- * `actor_user_id` its user id (the auth config must generate uuid ids). `meta` never holds secrets:
+ * `account_id` references the account (auth_account; no action on delete: an account with audit rows
+ * cannot be deleted until account deletion decides what happens to them); `actor_user_id` is a user id. `meta` never holds secrets:
  * src/server/data/audit.ts refuses sensitive keys.
  */
 export const auditLog = pgTable(
@@ -22,7 +23,7 @@ export const auditLog = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     actorUserId: uuid('actor_user_id'),
-    accountId: uuid('account_id'),
+    accountId: uuid('account_id').references(() => organization.id),
     action: text('action').notNull(),
     target: text('target'),
     meta: jsonb('meta').$type<Record<string, unknown>>().notNull().default({}),

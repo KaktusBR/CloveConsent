@@ -1,0 +1,40 @@
+---
+import { Button } from '../../../components/ui/button'
+import { Input } from '../../../components/ui/input'
+import { Label } from '../../../components/ui/label'
+import AuthPage from '../../../layouts/AuthPage.astro'
+import { localeFromParam } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { requireUser } from '../../../server/auth/guard'
+
+// Create an account (the signed-in person becomes its owner).
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const signedIn = await requireUser(Astro)
+if (signedIn instanceof Response) return signedIn
+const invalid = Astro.url.searchParams.get('error') === 'name'
+---
+
+<AuthPage title={m.accounts_new_title()} heading={m.accounts_new_heading()}>
+  <p>{m.accounts_new_intro()}</p>
+  <form method="post" action="/api/accounts/create" class="grid gap-4">
+    <div class="grid gap-2">
+      <Label htmlFor="account-name">{m.accounts_new_name_label()}</Label>
+      <Input
+        id="account-name"
+        name="name"
+        required
+        maxLength={100}
+        autoComplete="organization"
+        aria-invalid={invalid ? 'true' : undefined}
+        aria-describedby={invalid ? 'account-name-hint account-name-error' : 'account-name-hint'}
+      />
+      <p id="account-name-hint" class="text-muted-foreground text-sm">{m.accounts_new_name_hint()}</p>
+      {invalid && <p id="account-name-error" role="alert" class="text-destructive text-sm font-medium">{m.accounts_new_error_name()}</p>}
+    </div>
+    <Button type="submit">{m.accounts_new_submit()}</Button>
+  </form>
+</AuthPage>

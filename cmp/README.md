@@ -248,9 +248,43 @@ under `/sk/`).
   request came from. Better Auth gives its mail callbacks no transaction: a mail is queued on its own
   (a failure to queue fails the request; at worst a mail for a change later rolled back, whose link then
   does not work).
-- Tables `auth_*` (`src/server/data/schema/auth.ts`): identity data, no `account_id`, no row-level
-  security; only `cmp_app` may use them, with the privileges listed in `test/db/rls.test.ts`. Created by
+- Tables `auth_*` (`src/server/data/schema/auth.ts`): identity data, no row-level security (the account
+  tables below name the account a membership or invitation belongs to, but are identity data too); only `cmp_app` may use them, with the privileges listed in `test/db/rls.test.ts`. Created by
   the migrations; Better Auth never migrates at runtime.
+
+## Accounts and members
+
+An account is the paying customer; a person can belong to several and switches between them. Better
+Auth's organization plugin is the account: its tables are `auth_account`, `auth_account_member` and
+`auth_account_invitation` (identity tables like the other `auth_*`, ruling R2), and the session's
+active account is `auth_session.active_account_id`. Pages: `/accounts/new`, `/account`,
+`/account/members`, `/invite/<token>` (each also under `/sk/`).
+
+- Roles and what they may do: `src/server/auth/permissions.ts` (`can(scope, resource, action)`). Owner:
+  everything; admin: everything but `billing:manage` and `account:delete`; editor: sites (create, update,
+  publish) and reading records; viewer: reading records. Only an owner may change or remove an owner or
+  make someone one. An account always keeps an owner: a database trigger refuses any change that would
+  leave none (`drizzle/0006_accounts.sql`), from any code path.
+- `locals.scope` (middleware, `signedInScope` in `src/server/auth/guard.ts`): the session's active
+  account, else the person's oldest, read from the memberships on every request; never a role from a
+  cookie. A removed member loses the account on their next request. `requireAccount(Astro)` for pages.
+- Another account's ids (members, invitations, the account itself) are not found: 404 with an empty
+  body, and nothing is read or changed; an id that does not exist answers the same.
+- Every member change (account created, invitation sent or canceled, invitation accepted, role changed,
+  member removed) runs in one transaction with its `audit_log` row (`src/server/data/accounts.ts`); an
+  invitation's email is queued in that transaction too.
+- Invitations: bound to one email address, valid 7 days, used once, cancellable. The link carries a
+  random token (32 bytes); only its SHA-256 is stored, and the request log writes the path as
+  `/invite/:token`. Accepting needs a complete session with the invited address. A link used by another
+  address, a second time, after expiry or after cancellation does nothing and the page says why.
+- The organization plugin's own endpoints are switched off over HTTP (`disabledPaths`): accounts are
+  created, switched and their members changed by the app's form routes (`/api/accounts/create`,
+  `/api/account/switch`, `/api/account/members`), and invitations go through two Better Auth endpoints of
+  ours (`/api/auth/account/invite`, `/api/auth/account/accept-invitation`,
+  `src/server/auth/account-endpoints.ts`), rate limited per client address: 20 invitations per 10 minutes,
+  10 accept attempts per minute.
+- `audit_log.account_id` references `auth_account` (no action on delete): an account with audit rows
+  cannot be deleted until account deletion decides what happens to them (it is not offered yet).
 
 ## Health
 

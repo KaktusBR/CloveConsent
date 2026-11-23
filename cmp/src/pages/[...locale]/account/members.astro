@@ -1,0 +1,135 @@
+---
+import InviteForm from '../../../components/accounts/InviteForm'
+import { assignableRoles, roleName } from '../../../components/accounts/roles'
+import { Button } from '../../../components/ui/button'
+import { NativeSelect } from '../../../components/ui/native-select'
+import Base from '../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { requireAccount } from '../../../server/auth/guard'
+import { can } from '../../../server/auth/permissions'
+import { accountOf, listMembers, listPendingInvitations } from '../../../server/data/accounts'
+
+// Members management of the account the person works in: owners and admins only (anyone else: 404).
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const here = await requireAccount(Astro)
+if (here instanceof Response) return here
+const { scope } = here
+if (!can(scope, 'member', 'invite')) return Astro.rewrite('/404')
+const account = await accountOf(scope)
+if (!account) return Astro.rewrite('/404')
+
+const [members, invitations] = await Promise.all([listMembers(scope), listPendingInvitations(scope)])
+const now = Date.now()
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
+const assignable = assignableRoles(scope.role)
+/** An owner's row can be changed by an owner only. */
+const manageable = (role: string) => role !== 'owner' || scope.role === 'owner'
+
+const DONE: Record<string, () => string> = {
+  invite: m.members_done_invite,
+  role: m.members_done_role,
+  remove: m.members_done_remove,
+  cancel: m.members_done_cancel,
+}
+const ERRORS: Record<string, () => string> = {
+  last_owner: m.members_error_last_owner,
+  owner_only: m.members_error_owner_only,
+  not_pending: m.members_error_not_pending,
+  role: m.auth_error_generic,
+}
+const done = DONE[Astro.url.searchParams.get('done') ?? '']?.()
+const error = ERRORS[Astro.url.searchParams.get('error') ?? '']?.()
+---
+
+<Base title={m.members_title({ account: account.name })}>
+  <main class="mx-auto grid max-w-2xl gap-10 px-4 py-12">
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight">{m.members_heading({ account: account.name })}</h1>
+      <a class="text-sm underline underline-offset-4" href={localizedPath('/account', locale)}>{m.members_back_link()}</a>
+    </div>
+    {error && <p role="alert" class="text-destructive text-sm font-medium">{error}</p>}
+    {done && <p role="status" class="text-sm">{done}</p>}
+
+    <section class="grid gap-4" aria-labelledby="members-heading">
+      <h2 id="members-heading" class="text-xl font-semibold">{m.members_list_heading()}</h2>
+      <ul class="grid gap-2">
+        {
+          members.map((member) => (
+            <li class="grid gap-3 rounded-md border p-3" data-member={member.email}>
+              <span class="grid gap-1">
+                <span class="font-medium break-all">
+                  {member.name}
+                  {member.userId === scope.userId && <span class="text-muted-foreground ms-1">{m.members_you()}</span>}
+                </span>
+                <span class="text-muted-foreground text-sm break-all">{member.email}</span>
+                <span class="text-sm">{roleName(member.role)}</span>
+              </span>
+              {manageable(member.role) && (
+                <div class="flex flex-wrap items-end gap-2">
+                  <form method="post" action="/api/account/members" class="flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="intent" value="role" />
+                    <input type="hidden" name="member" value={member.id} />
+                    <NativeSelect name="role" defaultValue={member.role} aria-label={m.members_role_label({ name: member.email })} className="w-auto">
+                      {assignable.map((r) => (
+                        <option value={r}>{roleName(r)}</option>
+                      ))}
+                    </NativeSelect>
+                    <Button type="submit" variant="outline" size="sm">
+                      {m.members_role_submit()}
+                    </Button>
+                  </form>
+                  <form method="post" action="/api/account/members">
+                    <input type="hidden" name="intent" value="remove" />
+                    <input type="hidden" name="member" value={member.id} />
+                    <Button type="submit" variant="outline" size="sm" aria-label={m.members_remove_label({ name: member.email })}>
+                      {m.members_remove()}
+                    </Button>
+                  </form>
+                </div>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="invitations-heading">
+      <h2 id="invitations-heading" class="text-xl font-semibold">{m.members_invitations_heading()}</h2>
+      {invitations.length === 0 && <p class="text-muted-foreground">{m.members_invitations_none()}</p>}
+      <ul class="grid gap-2">
+        {
+          invitations.map((invitation) => (
+            <li class="flex flex-wrap items-center justify-between gap-4 rounded-md border p-3" data-invitation={invitation.email}>
+              <span class="grid gap-1">
+                <span class="break-all">{invitation.email}</span>
+                <span class="text-muted-foreground text-sm">
+                  {invitation.expiresAt.getTime() > now
+                    ? m.members_invitation_expires({ role: roleName(invitation.role), when: day.format(invitation.expiresAt) })
+                    : m.members_invitation_expired({ role: roleName(invitation.role) })}
+                </span>
+              </span>
+              <form method="post" action="/api/account/members">
+                <input type="hidden" name="intent" value="cancel" />
+                <input type="hidden" name="invitation" value={invitation.id} />
+                <Button type="submit" variant="outline" size="sm" aria-label={m.members_invitation_cancel_label({ email: invitation.email })}>
+                  {m.members_invitation_cancel()}
+                </Button>
+              </form>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="invite-heading">
+      <h2 id="invite-heading" class="text-xl font-semibold">{m.members_invite_heading()}</h2>
+      <p>{m.members_invite_intro()}</p>
+      <InviteForm client:load accountId={scope.accountId} role={scope.role} />
+    </section>
+  </main>
+</Base>

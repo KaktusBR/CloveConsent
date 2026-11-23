@@ -1,4 +1,5 @@
-import { bigint, boolean, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { bigint, boolean, check, index, integer, pgTable, text, timestamp, unique, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 /**
  * Better Auth's identity tables (ruling R2): sign-in identities, not tenant data. They have no account_id
@@ -10,6 +11,10 @@ import { bigint, boolean, index, integer, pgTable, text, timestamp, uuid } from 
  * `auth_` prefix, so raw SQL never meets the reserved word `user`, and Better Auth's `account` (a
  * sign-in method of a user) is `auth_credential`: "account" is the product's tenant (Task 7). Ids are
  * uuids (generateId: 'uuid' in src/server/auth/auth.ts): the tenant tables reference them.
+ *
+ * The organization plugin's tables are the product's accounts (Task 7): `organization` is `auth_account`,
+ * `member` is `auth_account_member`, `invitation` is `auth_account_invitation`, and their
+ * `organizationId` (and the session's `activeOrganizationId`) are `account_id` (`active_account_id`).
  */
 const id = () => uuid('id').defaultRandom().primaryKey()
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
@@ -43,6 +48,11 @@ export const session = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     /** The session was created by a second-factor step (TOTP, backup code) or a passkey (src/server/auth/guard.ts). */
     secondFactor: boolean('second_factor').default(false).notNull(),
+    /**
+     * The account the person works in (the organization plugin's active organization). Only a hint: every
+     * request checks it against the memberships (src/server/data/accounts.ts, scopeFor).
+     */
+    activeAccountId: uuid('active_account_id').references((): AnyPgColumn => organization.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -132,5 +142,77 @@ export const rateLimit = pgTable('auth_rate_limit', {
   lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
 })
 
+/** The roles of a member (src/server/auth/permissions.ts says what each may do). */
+export const ROLES = ['owner', 'admin', 'editor', 'viewer'] as const
+const roleIsKnown = (column: AnyPgColumn) => sql`${column} in ('owner', 'admin', 'editor', 'viewer')`
+
+/**
+ * An account: the paying customer, which people belong to as members. Never deleted by the app (account
+ * deletion is not offered yet; audit_log rows refer to it). `slug` is required by Better Auth and unused:
+ * it is the id.
+ */
+export const organization = pgTable('auth_account', {
+  id: id(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  logo: text('logo'),
+  metadata: text('metadata'),
+  createdAt: createdAt(),
+})
+
+/**
+ * A person's membership of an account, with one role. A trigger (drizzle/0006_accounts.sql) refuses any
+ * change that would leave an account without an owner.
+ */
+export const member = pgTable(
+  'auth_account_member',
+  {
+    id: id(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('auth_account_member_account_user_unique').on(t.accountId, t.userId),
+    index('auth_account_member_user_id_idx').on(t.userId),
+    check('auth_account_member_role_check', roleIsKnown(t.role)),
+  ],
+)
+
+/**
+ * An invitation to an account, bound to one email address. The link carries a random token; only its
+ * SHA-256 (`token_hash`) is stored. Pending until accepted (once), canceled, or past `expires_at`.
+ */
+export const invitation = pgTable(
+  'auth_account_invitation',
+  {
+    id: id(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    /** Lower case. */
+    email: text('email').notNull(),
+    role: text('role').notNull(),
+    status: text('status').notNull().default('pending'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    inviterId: uuid('inviter_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('auth_account_invitation_account_id_idx').on(t.accountId),
+    index('auth_account_invitation_email_idx').on(t.email),
+    check('auth_account_invitation_role_check', roleIsKnown(t.role)),
+    check('auth_account_invitation_status_check', sql`${t.status} in ('pending', 'accepted', 'rejected', 'canceled')`),
+  ],
+)
+
 /** The adapter's schema: Better Auth model name → table. */
-export const authSchema = { user, session, account, verification, twoFactor, passkey, rateLimit }
+export const authSchema = { user, session, account, verification, twoFactor, passkey, rateLimit, organization, member, invitation }

@@ -5,16 +5,18 @@ import { authDatabase } from '../../src/server/data/auth-database'
 import { closeDatabases } from '../../src/server/data/client'
 import { auditLog } from '../../src/server/data/schema'
 import { asSystem, withAccount, type AccountScope, type SystemTx, type TenantTx } from '../../src/server/data/scope'
-import { newId } from './raw'
+import { addAccount, newId } from './raw'
 
 const scopeOf = (accountId: string): AccountScope => ({ accountId, userId: newId(), role: 'owner' })
+/** The scope of a new account. */
+const newScope = async (): Promise<AccountScope> => scopeOf(await addAccount())
 
 afterAll(closeDatabases)
 
 describe('withAccount', () => {
   test("a query through account A's scope never returns account B's rows", async () => {
-    const a = scopeOf(newId())
-    const b = scopeOf(newId())
+    const a = await newScope()
+    const b = await newScope()
     await withAccount(a, (tx) => audit(tx, { action: 'probe.a', actorUserId: a.userId, accountId: a.accountId }))
     await withAccount(b, (tx) => audit(tx, { action: 'probe.b', actorUserId: b.userId, accountId: b.accountId }))
 
@@ -26,8 +28,8 @@ describe('withAccount', () => {
   })
 
   test("writing a row for account B from account A's scope is refused and nothing is written", async () => {
-    const a = scopeOf(newId())
-    const b = scopeOf(newId())
+    const a = await newScope()
+    const b = await newScope()
     const refused = await withAccount(a, (tx) => audit(tx, { action: 'probe.cross', actorUserId: a.userId, accountId: b.accountId })).then(
       () => null,
       (err: { code?: string; cause?: { code?: string; message?: string } }) => ({ code: err.cause?.code ?? err.code, message: err.cause?.message }),
@@ -37,7 +39,7 @@ describe('withAccount', () => {
   })
 
   test('the account setting lives only for the transaction: the next query on the pool sees no tenant rows', async () => {
-    const a = scopeOf(newId())
+    const a = await newScope()
     await withAccount(a, (tx) => audit(tx, { action: 'probe.local', actorUserId: a.userId, accountId: a.accountId }))
     // authDatabase shares the app pool, so this reuses the connection withAccount just released
     const { rows: [row] } = await authDatabase.execute<{ setting: string | null; n: number }>(
@@ -48,7 +50,7 @@ describe('withAccount', () => {
   })
 
   test('everything in the callback is one transaction: a throw rolls back its writes', async () => {
-    const a = scopeOf(newId())
+    const a = await newScope()
     await expect(
       withAccount(a, async (tx) => {
         await audit(tx, { action: 'probe.rollback', actorUserId: a.userId, accountId: a.accountId })
@@ -69,7 +71,7 @@ describe('withAccount', () => {
 
 describe('a transaction handle used after its scope ended', () => {
   test('throws a clear error before touching the connection', async () => {
-    const a = scopeOf(newId())
+    const a = await newScope()
     let tenant: TenantTx | undefined
     let system: SystemTx | undefined
     await withAccount(a, async (tx) => { tenant = tx })
@@ -80,7 +82,7 @@ describe('a transaction handle used after its scope ended', () => {
   })
 
   test('works normally while the scope is open, also inside nested helpers', async () => {
-    const a = scopeOf(newId())
+    const a = await newScope()
     const rows = await withAccount(a, async (tx) => {
       await audit(tx, { action: 'probe.live', actorUserId: a.userId, accountId: a.accountId })
       return tx.select().from(auditLog)
@@ -112,8 +114,8 @@ const outcomeOf = (run: () => Promise<unknown>) =>
 
 describe('work created inside a callback and run after it', () => {
   test.each(leaks)('%s, run while its connection serves another account, throws and leaves that account untouched', async (_name, leak) => {
-    const a = scopeOf(newId())
-    const b = scopeOf(newId())
+    const a = await newScope()
+    const b = await newScope()
     await withAccount(b, (tx) => audit(tx, { action: 'probe.b', actorUserId: b.userId, accountId: b.accountId }))
 
     let pidA = 0
@@ -133,12 +135,12 @@ describe('work created inside a callback and run after it', () => {
 
   test.each(leaks)('%s, run on an idle pool, throws instead of running without an account', async (_name, leak) => {
     let leaked: (() => Promise<unknown>) | undefined
-    await withAccount(scopeOf(newId()), async (tx) => { leaked = await leak(tx) })
+    await withAccount(await newScope(), async (tx) => { leaked = await leak(tx) })
     expect(await outcomeOf(leaked!)).toEqual({ error: 'ReleasedClientError' })
   })
 
   test('the connection itself keeps working for the next checkout', async () => {
-    const a = scopeOf(newId())
+    const a = await newScope()
     await withAccount(a, async (tx) => { await tx.select().from(auditLog) })
     await expect(withAccount(a, (tx) => tx.select().from(auditLog))).resolves.toEqual([])
     await expect(asSystem('test: system pool after release', (tx) => tx.select().from(auditLog).limit(1))).resolves.toBeDefined()
@@ -147,8 +149,8 @@ describe('work created inside a callback and run after it', () => {
 
 describe('asSystem', () => {
   test('sees every account, and records the access with its reason in the audit log', async () => {
-    const a = scopeOf(newId())
-    const b = scopeOf(newId())
+    const a = await newScope()
+    const b = await newScope()
     await withAccount(a, (tx) => audit(tx, { action: 'probe.sys', actorUserId: a.userId, accountId: a.accountId }))
     await withAccount(b, (tx) => audit(tx, { action: 'probe.sys', actorUserId: b.userId, accountId: b.accountId }))
 

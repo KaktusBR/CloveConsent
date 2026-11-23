@@ -3,10 +3,11 @@ import { audit } from '../../src/server/data/audit'
 import { closeDatabases } from '../../src/server/data/client'
 import { auditLog } from '../../src/server/data/schema'
 import { withAccount, type AccountScope } from '../../src/server/data/scope'
-import { asRole, errorCode, newId } from './raw'
+import { addAccount, asRole, errorCode, newId } from './raw'
 
 const scope: AccountScope = { accountId: newId(), userId: newId(), role: 'admin' }
 
+beforeAll(() => addAccount(scope.accountId))
 afterAll(closeDatabases)
 
 describe('audit', () => {

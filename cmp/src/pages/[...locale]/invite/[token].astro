@@ -1,0 +1,67 @@
+---
+import AcceptInvitation from '../../../components/accounts/AcceptInvitation'
+import { roleName } from '../../../components/accounts/roles'
+import AuthPage from '../../../layouts/AuthPage.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { signInPath } from '../../../server/auth/guard'
+import { viewInvitation, type InvitationState } from '../../../server/data/accounts'
+
+// An invitation link. Its token is a secret: the page is never cached or indexed, and the request log
+// shows its path without it (src/server/log.ts). Only the person signed in with the invited email address
+// sees the account and can accept; anyone else is told why not, and nothing more.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+Astro.response.headers.set('Cache-Control', 'no-store')
+
+const token = Astro.params.token ?? ''
+const session = Astro.locals.session ?? null
+const view = session ? await viewInvitation(token, session.user.email) : null
+const REASONS: Record<Exclude<InvitationState, 'pending'>, () => string> = {
+  not_found: m.invite_state_not_found,
+  wrong_email: m.invite_state_wrong_email,
+  expired: m.invite_state_expired,
+  used: m.invite_state_used,
+  canceled: m.invite_state_canceled,
+}
+---
+
+<AuthPage title={m.invite_title()} heading={m.invite_heading()} indexable={false}>
+  {
+    !session && (
+      <>
+        <p>{m.invite_signed_out()}</p>
+        <p>
+          <a class="underline underline-offset-4" href={signInPath(Astro.url)}>
+            {m.invite_sign_in_link()}
+          </a>
+        </p>
+        <p class="text-sm">
+          <a class="underline underline-offset-4" href={localizedPath('/sign-up', locale)}>
+            {m.invite_sign_up_link()}
+          </a>
+        </p>
+      </>
+    )
+  }
+  {
+    view?.state === 'pending' && view.accountName && view.role && (
+      <>
+        <p>{m.invite_pending({ account: view.accountName, role: roleName(view.role) })}</p>
+        <AcceptInvitation client:load token={token} accountHref={localizedPath('/account', locale)} />
+      </>
+    )
+  }
+  {view && view.state !== 'pending' && <p data-reason={view.state}>{REASONS[view.state]()}</p>}
+  {
+    view?.state === 'used' && (
+      <p>
+        <a class="underline underline-offset-4" href={localizedPath('/account', locale)}>
+          {m.invite_open_account()}
+        </a>
+      </p>
+    )
+  }
+</AuthPage>

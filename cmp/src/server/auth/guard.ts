@@ -3,6 +3,9 @@
 import type { AstroGlobal } from 'astro'
 import { localizedPath, sameSitePath, splitLocalePrefix } from '../../i18n/locale'
 import { auth, type AuthSession } from './auth'
+import { isComplete } from './complete'
+import { scopeFor } from '../data/accounts'
+import type { AccountScope } from '../data/scope'
 
 /**
  * The request's session, only when it is complete: the email address is verified and, for a user with
@@ -15,11 +18,20 @@ import { auth, type AuthSession } from './auth'
  */
 export async function completeSession(headers: Headers, responseHeaders?: Headers): Promise<AuthSession | null> {
   const { headers: answer, response: found } = await auth.api.getSession({ headers, returnHeaders: true })
-  if (!found) return null
-  if (!found.user.emailVerified) return null
-  if (found.user.twoFactorEnabled && !found.session.secondFactor) return null
+  if (!found || !isComplete(found)) return null
   if (responseHeaders) for (const cookie of answer.getSetCookie()) responseHeaders.append('Set-Cookie', cookie)
   return found
+}
+
+/**
+ * Who a request comes from and the account it works in (what the middleware puts in `locals`): the
+ * complete session, and the scope of its active account (else the person's oldest), both read from the
+ * database now. A member removed from an account has lost it on their next request.
+ */
+export async function signedInScope(headers: Headers, responseHeaders?: Headers): Promise<{ session: AuthSession | null; scope: AccountScope | null }> {
+  const session = await completeSession(headers, responseHeaders)
+  const scope = session ? await scopeFor(session.user.id, session.session.activeOrganizationId) : null
+  return { session, scope }
 }
 
 /** The sign-in page, in the page's language, with where to come back to (a path on this site only). */
@@ -39,6 +51,23 @@ export function signInPath(url: URL): string {
  */
 export async function requireUser(astro: AstroGlobal): Promise<AuthSession | Response> {
   astro.response.headers.set('Cache-Control', 'no-store')
-  const found = await completeSession(astro.request.headers, astro.response.headers)
+  // the middleware has read it for this request (and forwards its renewed cookie)
+  const found = astro.locals.session !== undefined ? astro.locals.session : await completeSession(astro.request.headers, astro.response.headers)
   return found ?? astro.redirect(signInPath(astro.url), 303)
+}
+
+/**
+ * For a page of the account the person works in: their session and that account's scope (checked against
+ * the memberships on this request), a redirect to sign in, or one to create an account when they belong
+ * to none.
+ *
+ *   const here = await requireAccount(Astro)
+ *   if (here instanceof Response) return here
+ */
+export async function requireAccount(astro: AstroGlobal): Promise<{ signedIn: AuthSession; scope: AccountScope } | Response> {
+  const signedIn = await requireUser(astro)
+  if (signedIn instanceof Response) return signedIn
+  const scope = astro.locals.scope
+  if (!scope || scope.userId !== signedIn.user.id) return astro.redirect(localizedPath('/accounts/new', astro.locals.locale), 303)
+  return { signedIn, scope }
 }
