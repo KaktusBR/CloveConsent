@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, jsonb, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { index, jsonb, pgPolicy, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { organization } from './auth'
 import { appRole, isCurrentAccount, systemRole } from './tenancy'
 
@@ -30,6 +30,9 @@ export const auditLog = pgTable(
   },
   (t) => [
     index('audit_log_account_created_idx').on(t.accountId, t.createdAt.desc()),
+    // A super-admin's view (src/server/auth/super-admin.ts) ends once: one stop row per view, whoever
+    // tries to end it and however often (src/server/data/admin.ts relies on this to make ending single-use).
+    uniqueIndex('audit_log_impersonation_ends_once').on(sql`(${t.meta}->>'impersonation')`).where(sql`${t.action} = 'admin.impersonation_stop'`),
     pgPolicy('audit_log_app_select', { for: 'select', to: appRole, using: isCurrentAccount(t.accountId) }),
     pgPolicy('audit_log_app_insert', { for: 'insert', to: appRole, withCheck: isCurrentAccount(t.accountId) }),
     pgPolicy('audit_log_system_select', { for: 'select', to: systemRole, using: sql`true` }),

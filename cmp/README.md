@@ -335,10 +335,15 @@ super-admin marks accounts paid by hand.
   middleware for the app's routes, and by a Better Auth hook for its own endpoints; stopping it
   (`/api/impersonation/stop`) is the one exception. Past its time, no endpoint serves it (the hook
   deletes it, whatever its row's expiry says), and the next request (or the stop button) records its
-  end and gives the super-admin their own session back. Super-admins cannot be impersonated, and no view
-  is opened from inside one. Start (with the reason) and end (`stopped` or `expired`) are in the
-  account's audit log, each written before the session changes. The view's session is listed among the
-  member's sessions on their Security page while it lasts.
+  end and gives the super-admin their own session back; signing out instead ends it with nobody left
+  signed in (the super-admin's kept session is deleted too). Super-admins cannot be impersonated, and no
+  view is opened from inside one. Start (with the reason) and end (`stopped`, `expired`, or `revoked` by
+  the member) are in the account's audit log, each written before the session changes, both naming the
+  view. A view ends once: the database allows one end row per view, and only the request that wrote it
+  acts; the signed cookie that keeps the super-admin's session aside is bound to that one view, so a
+  parallel, replayed or stale copy does nothing. While a view lasts, the member's session list (Security
+  page, `/api/auth/list-sessions`) shows it as a support view, without the super-admin's id, browser or
+  address.
 - Rate limits (per super-admin and per client address, `ADMIN_LIMITS` in
   `src/server/auth/super-admin.ts`): 30 changes and 10 impersonations per 10 minutes.
 

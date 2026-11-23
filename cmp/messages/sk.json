@@ -271,5 +271,6 @@
   "admin_audit_global": "Žiadny",
   "impersonation_label": "Zobrazenie len na čítanie",
   "impersonation_banner": "Aplikáciu vidíte ako {name} ({email}), len na čítanie, do {time} UTC. Nič sa nedá zmeniť.",
-  "impersonation_stop": "Ukončiť zobrazenie"
+  "impersonation_stop": "Ukončiť zobrazenie",
+  "security_session_support_view": "Zobrazenie podpory (len na čítanie, otvorila ho naša podpora)"
 }

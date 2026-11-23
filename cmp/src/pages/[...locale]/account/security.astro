@@ -1,6 +1,7 @@
 ---
 import PasskeySettings, { type PasskeyItem } from '../../../components/auth/PasskeySettings'
 import SignOutButton from '../../../components/auth/SignOutButton'
+import { sessionItems } from '../../../components/auth/sessions'
 import TwoFactorSettings from '../../../components/auth/TwoFactorSettings'
 import { Button } from '../../../components/ui/button'
 import Base from '../../../layouts/Base.astro'
@@ -22,10 +23,8 @@ const headers = Astro.request.headers
 const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })
 const day = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
 
-// Only what the page shows: never a session token.
-const sessions = (await auth.api.listSessions({ headers }))
-  .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-  .map((s) => ({ id: s.id, current: s.id === signedIn.session.id, device: s.userAgent || null, address: s.ipAddress || null, lastActive: when.format(s.updatedAt) }))
+// Only what the page shows: never a session token; a support view as such (src/components/auth/sessions.ts).
+const sessions = sessionItems(await auth.api.listSessions({ headers }), signedIn.session.id, (d) => when.format(d))
 const passkeys: PasskeyItem[] = (await auth.api.listPasskeys({ headers })).map((p) => ({
   id: p.id,
   name: p.name || m.security_passkey_default_name(),

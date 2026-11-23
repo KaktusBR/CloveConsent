@@ -109,32 +109,55 @@ export async function accountMember(actorUserId: string, accountId: string, user
   )
 }
 
-/** What an impersonation record says: why it was started, or how it ended. */
-export type ImpersonationDetail = { reason: string } | { ended: 'stopped' | 'expired' }
+/** How a super-admin's view ended: stopped by them, past its time, or revoked by the member. */
+export type ImpersonationEnd = 'stopped' | 'expired' | 'revoked'
+
+const recordIn = async (tx: Parameters<Parameters<typeof asSystem>[1]>[0], accountId: string) =>
+  // the member may have left, or the account gone: the record then belongs to no account
+  (await tx.execute(sql`select id from auth_account where id = ${accountId}`)).rows.length > 0 ? accountId : null
 
 /**
- * Records a super-admin starting (with their reason) or ending (stopped, or past its time) a read-only
- * view of `accountId` as `userId`, in that account's audit log.
+ * Records a super-admin starting a read-only view of `accountId` as `userId`, with their reason, in that
+ * account's audit log. `impersonation` names the view (its end names it too).
  */
-export async function recordImpersonation(actorUserId: string, accountId: string, userId: string, event: 'start' | 'stop', detail: ImpersonationDetail): Promise<void> {
-  let meta: Record<string, string>
-  if (event === 'start') {
-    const why = 'reason' in detail ? adminReason(detail.reason) : null
-    if (why === null) throw new TypeError('an impersonation needs a reason')
-    meta = { reason: why }
-  } else {
-    if (!('ended' in detail)) throw new TypeError('an impersonation end says how it ended')
-    meta = { ended: detail.ended }
-  }
+export async function recordImpersonationStart(actorUserId: string, accountId: string, userId: string, impersonation: string, reason: string): Promise<void> {
+  const why = adminReason(reason)
+  if (why === null) throw new TypeError('an impersonation needs a reason')
+  if (!isUuid(impersonation)) throw new TypeError('an impersonation is named by a uuid')
   await asSystem(
-    `super-admin: impersonation ${event}`,
-    async (tx) => {
-      // the member may have left, or the account gone: the record then belongs to no account
-      const exists = (await tx.execute(sql`select id from auth_account where id = ${accountId}`)).rows.length > 0
-      await audit(tx, { action: `admin.impersonation_${event}`, target: `user:${userId}`, meta, actorUserId, accountId: exists ? accountId : null })
-    },
+    'super-admin: impersonation start',
+    async (tx) => audit(tx, { action: 'admin.impersonation_start', target: `user:${userId}`, meta: { reason: why, impersonation }, actorUserId, accountId: await recordIn(tx, accountId) }),
     actorUserId,
   )
+}
+
+/** A unique violation of `constraint`, wherever the driver error sits in the chain. */
+function violates(err: unknown, constraint: string): boolean {
+  for (let e: unknown = err; e && typeof e === 'object'; e = (e as { cause?: unknown }).cause) {
+    const { code, constraint: name } = e as { code?: unknown; constraint?: unknown }
+    if (code === '23505' && name === constraint) return true
+  }
+  return false
+}
+
+/**
+ * Records the end of the view `impersonation`, once: true when this call recorded it, false when it had
+ * already ended (a parallel or replayed attempt). The database allows one end per view
+ * (audit_log_impersonation_ends_once), so only the call that records the end may act on it.
+ */
+export async function recordImpersonationEnd(actorUserId: string, accountId: string, userId: string, impersonation: string, ended: ImpersonationEnd): Promise<boolean> {
+  if (!isUuid(impersonation)) return false
+  try {
+    await asSystem(
+      'super-admin: impersonation end',
+      async (tx) => audit(tx, { action: 'admin.impersonation_stop', target: `user:${userId}`, meta: { ended, impersonation }, actorUserId, accountId: await recordIn(tx, accountId) }),
+      actorUserId,
+    )
+    return true
+  } catch (err) {
+    if (violates(err, 'audit_log_impersonation_ends_once')) return false
+    throw err
+  }
 }
 
 export interface AuditEventRow {

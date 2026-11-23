@@ -1,10 +1,11 @@
 import type { APIRoute } from 'astro'
+import { randomUUID } from 'node:crypto'
 import { isAPIError } from 'better-auth/api'
 
 import { localizedPath } from '../../../i18n/locale'
 import { auth, localeOfRequest } from '../../../server/auth/auth'
 import { isListedSuperAdmin, superAdminStatus, withinAdminLimit } from '../../../server/auth/super-admin'
-import { accountMember, recordImpersonation } from '../../../server/data/admin'
+import { accountMember, recordImpersonationStart } from '../../../server/data/admin'
 import { adminReason } from '../../../server/data/entitlements'
 import { notFound, seeOther } from '../../../server/responses'
 
@@ -41,10 +42,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (reason === null) return seeOther(`${page}?error=reason`)
   if (!(await withinAdminLimit(request, 'impersonate', actor))) return seeOther(`${page}?error=limited`)
 
-  await recordImpersonation(actor, accountId, member.userId, 'start', { reason })
+  // the view's name: its start and end rows carry it, and the impersonator cookie is bound to it
+  const impersonation = randomUUID()
+  await recordImpersonationStart(actor, accountId, member.userId, impersonation, reason)
   let cookies: Headers
   try {
-    cookies = (await auth.api.startImpersonation({ body: { userId: member.userId, accountId }, headers: request.headers, returnHeaders: true })).headers
+    cookies = (await auth.api.startImpersonation({ body: { userId: member.userId, accountId, impersonation }, headers: request.headers, returnHeaders: true })).headers
   } catch (err) {
     if (isAPIError(err)) return seeOther(`${page}?error=impersonation`)
     throw err

@@ -27,6 +27,7 @@ import { log } from '../log'
 import { sendMail } from '../jobs/mail'
 import { accountEndpoints, ACCOUNT_PATHS } from './account-endpoints'
 import { organizationRoles } from './permissions'
+import { endView, redactViews } from './impersonation'
 import { COOKIE_PREFIX, impersonationOver, impersonatorOf } from './super-admin'
 import { localeOfRequest, nextOfRequest, pageLink } from './request-locale'
 
@@ -255,6 +256,18 @@ function authOptions(publicOrigin: string) {
         const returned = ctx.context.returned
         const failed = isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD'
         if (signIn && places && !failed) await Promise.all([releaseInWindow(signIn.pair, places.pair), releaseInWindow(signIn.account, places.account)])
+
+        // Signing out after a super-admin's view has ended (past its time, or revoked by the member: a
+        // live view cannot sign out) ends it here too: recorded, the impersonator cookie expired and the
+        // super-admin's own session deleted, so the next request does not bring it back.
+        if (ctx.path === '/sign-out' && !isAPIError(returned)) await endView(ctx, 'sign-out')
+
+        // A member's list of their sessions shows a view as a support view, without who or where.
+        if (ctx.path === '/list-sessions') {
+          const listed = returned instanceof Response ? (returned.status === 200 ? await returned.clone().json() : null) : isAPIError(returned) ? null : returned
+          if (Array.isArray(listed)) return ctx.json(redactViews(listed as Record<string, unknown>[]))
+        }
+        return undefined
       }),
     },
 

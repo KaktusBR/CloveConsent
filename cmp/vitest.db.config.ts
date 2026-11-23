@@ -12,7 +12,7 @@ const otherEnv = {
   // the address the db tests' "proxy" requests come from (test/db/auth.test.ts)
   TRUSTED_PROXIES: '192.0.2.10',
   // the super-admins of test/db/entitlements.test.ts (each signs up once per run)
-  SUPER_ADMIN_EMAILS: 'root-a@admin.test,root-b@admin.test,root-limit@admin.test,Root-No2fa@admin.test,root-unverified@admin.test',
+  SUPER_ADMIN_EMAILS: 'root-a@admin.test,root-b@admin.test,root-c@admin.test,root-d@admin.test,root-e@admin.test,root-limit@admin.test,Root-No2fa@admin.test,root-unverified@admin.test',
 }
 
 export default defineConfig({

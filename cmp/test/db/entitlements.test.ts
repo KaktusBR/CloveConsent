@@ -5,7 +5,7 @@
 // not paid gets only the paywall and account settings, and being marked paid takes effect on its next
 // request without signing in again.
 import type { APIRoute } from 'astro'
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { POST as createAccountRoute } from '../../src/pages/api/accounts/create'
 import { POST as entitlementRoute } from '../../src/pages/api/admin/entitlement'
 import { POST as impersonateRoute } from '../../src/pages/api/admin/impersonate'
@@ -24,6 +24,7 @@ import { Browser, ORIGIN, PASSWORD, pwnedStandIn, signedIn, signUp, verifiedUser
 import { addAccount, asRole, errorCode, newId } from './raw'
 
 const DAY = 24 * 60 * 60 * 1000
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 interface Person {
   email: string
@@ -113,9 +114,24 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // the mail this file queued (no worker sends it), as accounts.test.ts and auth.test.ts do
+  await asRole('migrate', (c) => c.query(`delete from pgboss.job where name = 'mail.send' and (data->>'to' like '%@example.test' or data->>'to' like '%@admin.test')`))
   await closeQueue()
   await closeDatabases()
 })
+
+/** Another browser with a copy of `who`'s cookies and address (a replayed or parallel copy). */
+function copyOf(who: Person): Person {
+  const browser = new Browser(who.browser.peer)
+  for (const [name, value] of who.browser.cookies) browser.cookies.set(name, value)
+  return { ...who, browser }
+}
+
+/** Whether a browser holds the impersonator cookie. */
+const holdsImpersonator = (who: Person) => [...who.browser.cookies.keys()].some((name) => name.endsWith('.impersonator'))
+
+/** The sessions of a user, read as the app role. */
+const sessionsOf = async (userId: string) => asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1', [userId])).rows[0]?.n)
 
 describe('plans', () => {
   test('are data, seeded by the migration, with a translatable name and every limit', async () => {
@@ -446,7 +462,7 @@ describe('read-only impersonation', () => {
     const target = await person('target')
     const accountId = await newAccount(target)
     const attempt = (who: Person) =>
-      auth.api.startImpersonation({ headers: who.browser.headers(), body: { userId: target.userId, accountId } }).then(
+      auth.api.startImpersonation({ headers: who.browser.headers(), body: { userId: target.userId, accountId, impersonation: newId() } }).then(
         () => 'started',
         (err: { status?: string }) => err.status ?? 'error',
       )
@@ -474,7 +490,7 @@ describe('read-only impersonation', () => {
     expect(superAdminStatus(now ?? null)).toBe('none')
     expect(await accessOf(rootA, '/admin/accounts')).toEqual({ kind: 'not-found' })
     expect(await impersonationRows(accountId)).toEqual([
-      { actor_user_id: rootA.userId, action: 'admin.impersonation_start', target: `user:${owner.userId}`, meta: { reason: 'support ticket 77' } },
+      { actor_user_id: rootA.userId, action: 'admin.impersonation_start', target: `user:${owner.userId}`, meta: { reason: 'support ticket 77', impersonation: expect.stringMatching(UUID) } },
     ])
     await post(stopRoute, rootA, '/api/impersonation/stop', {})
   })
@@ -512,7 +528,7 @@ describe('read-only impersonation', () => {
     expect((await post(impersonateRoute, rootA, '/api/admin/impersonate', { account: accountId, user: rootB.userId, reason: 'nested' })).status).toBe(404)
     const other = await person('other')
     const otherAccount = await newAccount(other)
-    await expect(auth.api.startImpersonation({ headers: rootA.browser.headers(), body: { userId: other.userId, accountId: otherAccount } })).rejects.toMatchObject({ status: 'NOT_FOUND' })
+    await expect(auth.api.startImpersonation({ headers: rootA.browser.headers(), body: { userId: other.userId, accountId: otherAccount, impersonation: newId() } })).rejects.toMatchObject({ status: 'NOT_FOUND' })
     expect(await asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [other.userId])).rows[0]?.n)).toBe(0)
     await post(stopRoute, rootA, '/api/impersonation/stop', {})
   })
@@ -522,6 +538,13 @@ describe('read-only impersonation', () => {
     asRole('app', (c) =>
       c.query(`update auth_session set created_at = now() - interval '31 minutes', expires_at = now() + interval '1 day' where user_id = $1 and impersonated_by is not null`, [owner.userId]),
     )
+  /** The app's clock 31 minutes ahead (the database's is not used for sessions): a view now past its time. */
+  const pastItsTime = () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 31 * 60 * 1000 })
+  }
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   const impersonationSessions = async (owner: Person) =>
     asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [owner.userId])).rows[0]?.n)
 
@@ -549,7 +572,7 @@ describe('read-only impersonation', () => {
 
   test('past its time, the next request records its end and gives the super-admin their own session back, on the account page', async () => {
     const { owner, accountId } = await impersonating(rootB)
-    await outlive(owner)
+    pastItsTime()
     const answer = await endedBy(rootB, '/sk/account')
     expect([answer.status, answer.headers.get('location')]).toEqual([303, `/sk/admin/accounts/${accountId}`])
     rootB.browser.keep(answer)
@@ -557,8 +580,8 @@ describe('read-only impersonation', () => {
     expect(superAdminStatus(now ?? null)).toBe('super-admin')
     expect(now?.user.id).toBe(rootB.userId)
     expect((await impersonationRows(accountId)).map((r) => [r.action, r.actor_user_id, r.meta])).toEqual([
-      ['admin.impersonation_start', rootB.userId, { reason: 'support ticket 77' }],
-      ['admin.impersonation_stop', rootB.userId, { ended: 'expired' }],
+      ['admin.impersonation_start', rootB.userId, { reason: 'support ticket 77', impersonation: expect.stringMatching(UUID) }],
+      ['admin.impersonation_stop', rootB.userId, { ended: 'expired', impersonation: expect.stringMatching(UUID) }],
     ])
     expect(await impersonationSessions(owner)).toBe(0)
     // nothing left to end
@@ -567,7 +590,7 @@ describe('read-only impersonation', () => {
 
   test('past its time, the stop button still works: the end is recorded and the super-admin is back', async () => {
     const { owner, accountId } = await impersonating(rootB)
-    await outlive(owner)
+    pastItsTime()
     const stopped = await post(stopRoute, rootB, '/api/impersonation/stop', {})
     expect(stopped).toEqual({ status: 303, location: `/admin/accounts/${accountId}`, body: '' })
     expect(superAdminStatus((await completeSession(rootB.browser.headers())) ?? null)).toBe('super-admin')
@@ -584,9 +607,11 @@ describe('read-only impersonation', () => {
     expect(superAdminStatus(now ?? null)).toBe('super-admin')
     const rows = await impersonationRows(accountId)
     expect(rows.map((r) => [r.action, r.actor_user_id, r.target, r.meta])).toEqual([
-      ['admin.impersonation_start', rootA.userId, `user:${owner.userId}`, { reason: 'support ticket 77' }],
-      ['admin.impersonation_stop', rootA.userId, `user:${owner.userId}`, { ended: 'stopped' }],
+      ['admin.impersonation_start', rootA.userId, `user:${owner.userId}`, { reason: 'support ticket 77', impersonation: expect.stringMatching(UUID) }],
+      ['admin.impersonation_stop', rootA.userId, `user:${owner.userId}`, { ended: 'stopped', impersonation: expect.stringMatching(UUID) }],
     ])
+    // the stop names the same view as the start
+    expect(rows[1]?.meta.impersonation).toBe(rows[0]?.meta.impersonation)
     // no impersonated session of the owner is left
     const left = await asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [owner.userId])).rows[0]?.n)
     expect(left).toBe(0)
@@ -608,6 +633,122 @@ describe('read-only impersonation', () => {
     expect((await post(impersonateRoute, rootA, '/api/admin/impersonate', { account: rootAccount, user: rootB.userId, reason: 'r' })).status).toBe(404)
     expect((await completeSession(rootA.browser.headers()))?.user.id).toBe(rootA.userId)
     expect(await adminRows(accountId)).toEqual([])
+  })
+
+  /** The member's own view of their sessions (Better Auth's endpoint), and the view session's token in it. */
+  async function viewSessionOf(owner: Person) {
+    const listed = (await owner.browser.call('/list-sessions')).json as unknown as Record<string, unknown>[]
+    return listed.find((s) => s.supportView === true)
+  }
+
+  test('signing out after a view has ended (past its time) leaves nobody signed in, and records the end once', async () => {
+    const root = await superAdmin('root-c@admin.test')
+    const { owner, accountId } = await impersonating(root)
+    pastItsTime()
+    expect((await root.browser.call('/sign-out', {})).status).toBe(200)
+    expect(holdsImpersonator(root)).toBe(false)
+    const next = await requestAccess(requestOf(root, '/account'))
+    expect([next.session, next.access]).toEqual([null, { kind: 'pass' }])
+    // neither the view's session nor the super-admin's own, kept aside, is left behind
+    expect(await impersonationSessions(owner)).toBe(0)
+    expect(await sessionsOf(root.userId)).toBe(0)
+    expect((await impersonationRows(accountId)).map((r) => [r.action, r.meta.ended ?? null])).toEqual([
+      ['admin.impersonation_start', null],
+      ['admin.impersonation_stop', 'expired'],
+    ])
+  })
+
+  test("a view the member revoked is recorded as revoked; the super-admin's next request has them back", async () => {
+    const root = await superAdmin('root-d@admin.test')
+    const { owner, accountId } = await impersonating(root)
+    const view = await viewSessionOf(owner)
+    expect((await owner.browser.call('/revoke-session', { token: view?.token })).status).toBe(200)
+    const answer = await endedBy(root, '/account')
+    expect([answer.status, answer.headers.get('location')]).toEqual([303, `/admin/accounts/${accountId}`])
+    root.browser.keep(answer)
+    expect(superAdminStatus((await completeSession(root.browser.headers())) ?? null)).toBe('super-admin')
+    expect((await impersonationRows(accountId)).at(-1)?.meta.ended).toBe('revoked')
+  })
+
+  test('signing out after the member revoked the view leaves nobody signed in, recorded as revoked', async () => {
+    const root = await superAdmin('root-e@admin.test')
+    const { owner, accountId } = await impersonating(root)
+    const view = await viewSessionOf(owner)
+    expect((await owner.browser.call('/revoke-session', { token: view?.token })).status).toBe(200)
+    expect((await root.browser.call('/sign-out', {})).status).toBe(200)
+    expect(holdsImpersonator(root)).toBe(false)
+    expect((await requestAccess(requestOf(root, '/admin/accounts'))).session).toBeNull()
+    expect(await sessionsOf(root.userId)).toBe(0)
+    expect((await impersonationRows(accountId)).filter((r) => r.action === 'admin.impersonation_stop').map((r) => r.meta.ended)).toEqual(['revoked'])
+  })
+
+  test('the member sees a view among their sessions as a support view, without the super-admin, their browser or address', async () => {
+    const { owner } = await impersonating(rootA)
+    const listed = (await owner.browser.call('/list-sessions')).json as unknown as Record<string, unknown>[]
+    const views = listed.filter((s) => s.supportView === true)
+    expect(views).toHaveLength(1)
+    expect(views[0]).not.toHaveProperty('impersonatedBy')
+    expect(views[0]?.userAgent ?? null).toBeNull()
+    expect(views[0]?.ipAddress ?? null).toBeNull()
+    expect(JSON.stringify(listed)).not.toContain(rootA.userId)
+    // the member's own sessions keep their details
+    expect(listed.filter((s) => s.supportView !== true).every((s) => s.userAgent === 'vitest')).toBe(true)
+    await post(stopRoute, rootA, '/api/impersonation/stop', {})
+  })
+
+  test('ending a view is single-use: parallel stops end it once, a replayed copy does nothing', async () => {
+    const { owner, accountId } = await impersonating(rootA)
+    const replay = copyOf(rootA)
+    const [a, b] = [copyOf(rootA), copyOf(rootA)]
+    const [one, two] = await Promise.all([post(stopRoute, a, '/api/impersonation/stop', {}), post(stopRoute, b, '/api/impersonation/stop', {})])
+    expect([one.status, two.status].sort()).toEqual([303, 404])
+    // the winner's browser is the super-admin again; rootA continues with it
+    const winner = one.status === 303 ? a : b
+    expect(superAdminStatus((await completeSession(winner.browser.headers())) ?? null)).toBe('super-admin')
+    rootA.browser.cookies.clear()
+    for (const [name, value] of winner.browser.cookies) rootA.browser.cookies.set(name, value)
+    const stops = () => impersonationRows(accountId).then((rows) => rows.filter((r) => r.action === 'admin.impersonation_stop'))
+    expect(await stops()).toHaveLength(1)
+    // a copy of the cookies taken during the view: nothing ended again, no session given back
+    expect((await post(stopRoute, replay, '/api/impersonation/stop', {})).status).toBe(404)
+    const replayed = await requestAccess(requestOf(replay, '/admin/accounts'))
+    expect(replayed.session).toBeNull()
+    expect(await stops()).toHaveLength(1)
+    expect(await impersonationSessions(owner)).toBe(0)
+  })
+
+  test('parallel requests after a view has expired end it once', async () => {
+    const { owner, accountId } = await impersonating(rootB)
+    await outlive(owner)
+    const [a, b] = [copyOf(rootB), copyOf(rootB)]
+    const answers = await Promise.all([endedBy(a, '/account'), endedBy(b, '/account')])
+    expect(answers.map((a) => a.status).sort()).toEqual([200, 303])
+    expect((await impersonationRows(accountId)).filter((r) => r.action === 'admin.impersonation_stop')).toHaveLength(1)
+    const winner = answers[0]?.status === 303 ? a : b
+    winner.browser.keep(answers[0]?.status === 303 ? answers[0] : answers[1]!)
+    rootB.browser.cookies.clear()
+    for (const [name, value] of winner.browser.cookies) rootB.browser.cookies.set(name, value)
+    expect(superAdminStatus((await completeSession(rootB.browser.headers())) ?? null)).toBe('super-admin')
+  })
+
+  test("an impersonator cookie of one view does nothing to another view, nor records against its account", async () => {
+    // two views open at once by one super-admin, in two browsers
+    const otherBrowser = copyOf(rootA)
+    const first = await impersonating(rootA)
+    const second = await impersonating(otherBrowser)
+    // the second view's session with the first view's (still valid) impersonator cookie
+    const mixed = copyOf(otherBrowser)
+    for (const [name, value] of rootA.browser.cookies) if (name.endsWith('.impersonator')) mixed.browser.cookies.set(name, value)
+    expect((await post(stopRoute, mixed, '/api/impersonation/stop', {})).status).toBe(404)
+    expect(await impersonationSessions(first.owner)).toBe(1)
+    expect(await impersonationSessions(second.owner)).toBe(1)
+    const stops = async (accountId: string) => (await impersonationRows(accountId)).filter((r) => r.action === 'admin.impersonation_stop')
+    expect(await stops(first.accountId)).toHaveLength(0)
+    expect(await stops(second.accountId)).toHaveLength(0)
+    // each browser ends its own view
+    expect((await post(stopRoute, otherBrowser, '/api/impersonation/stop', {})).location).toBe(`/admin/accounts/${second.accountId}`)
+    expect((await post(stopRoute, rootA, '/api/impersonation/stop', {})).location).toBe(`/admin/accounts/${first.accountId}`)
+    expect([(await stops(first.accountId)).length, (await stops(second.accountId)).length]).toEqual([1, 1])
   })
 
   test(`is rate limited: ${ADMIN_LIMITS.impersonate.max} starts per ${ADMIN_LIMITS.impersonate.window / 60} minutes`, async () => {

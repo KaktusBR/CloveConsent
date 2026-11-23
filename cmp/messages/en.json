@@ -271,5 +271,6 @@
   "admin_audit_global": "None",
   "impersonation_label": "Read-only view",
   "impersonation_banner": "You are viewing the app as {name} ({email}), read-only, until {time} UTC. Nothing can be changed.",
-  "impersonation_stop": "Stop viewing"
+  "impersonation_stop": "Stop viewing",
+  "security_session_support_view": "Support view (read-only, opened by our support)"
 }
