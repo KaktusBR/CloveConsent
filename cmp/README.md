@@ -323,14 +323,22 @@ super-admin marks accounts paid by hand.
   accounts (name, id, a member's address), sets an account's plan and the day it is paid through,
   suspends and unsuspends, shows the audit log, and opens a read-only view as a member. Every change
   needs a reason and is written with it and the super-admin's id to the account's audit log in the same
-  transaction; every console read is recorded as `system.access` with the super-admin's id. The console
+  transaction; every console read is recorded as `system.access` with the super-admin's id, and a look at one
+  account (its page, its audit log) also in that account's log (`admin.account_view`, `admin.audit_view`). The console
   reads through the system role, which sees only the account, member and person columns it shows.
-- Read-only impersonation (Better Auth's admin plugin; its HTTP endpoints are switched off, the console
-  calls it after its own checks): a session as the member, in that account, for 30 minutes, never
-  extended. Every page shows a banner with a button to stop. Any request other than GET or HEAD from
-  it is refused with 403 `IMPERSONATION_READ_ONLY`: by the middleware for the app's routes, and by a
-  Better Auth hook for its own endpoints; stopping it (`/api/impersonation/stop`) is the one exception.
-  Super-admins cannot be impersonated. Start and stop are in the account's audit log.
+- Read-only impersonation (two server-only Better Auth endpoints of ours, `startImpersonation` and
+  `endImpersonation` in `src/server/auth/account-endpoints.ts`: no URL reaches them; the console's form
+  endpoints call them after their checks, and they check again; Better Auth's admin plugin is not used):
+  a session as the member, in that account, for 30 minutes from its creation, never extended; the
+  super-admin's own session waits in a signed cookie. Every page shows a banner with a button to stop.
+  Any request other than GET or HEAD from it is refused with 403 `IMPERSONATION_READ_ONLY`: by the
+  middleware for the app's routes, and by a Better Auth hook for its own endpoints; stopping it
+  (`/api/impersonation/stop`) is the one exception. Past its time, no endpoint serves it (the hook
+  deletes it, whatever its row's expiry says), and the next request (or the stop button) records its
+  end and gives the super-admin their own session back. Super-admins cannot be impersonated, and no view
+  is opened from inside one. Start (with the reason) and end (`stopped` or `expired`) are in the
+  account's audit log, each written before the session changes. The view's session is listed among the
+  member's sessions on their Security page while it lasts.
 - Rate limits (per super-admin and per client address, `ADMIN_LIMITS` in
   `src/server/auth/super-admin.ts`): 30 changes and 10 impersonations per 10 minutes.
 

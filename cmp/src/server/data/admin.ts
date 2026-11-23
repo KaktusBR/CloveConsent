@@ -1,5 +1,7 @@
 // The super-admin console's reads and its impersonation records, on the system role through asSystem:
-// every call is itself recorded in the audit log (system.access) with the super-admin's id. The system
+// every call is itself recorded in the audit log (system.access) with the super-admin's id, and a look at
+// one account (its page, its audit log) also in that account's own log (admin.account_view,
+// admin.audit_view), so the account's history says which super-admin looked at it. The system
 // role sees only the columns of accounts, members and people that the console shows
 // (drizzle/0008_entitlements.sql). Who is a super-admin is decided before any of this is called
 // (src/server/auth/super-admin.ts).
@@ -81,6 +83,7 @@ export async function accountDetail(actorUserId: string, accountId: string, now:
       const { rows } = await tx.execute<{ user_id: string; name: string; email: string; role: Role }>(sql`
         select m.user_id, u.name, u.email, m.role from auth_account_member m join auth_user u on u.id = m.user_id
         where m.account_id = ${accountId}`)
+      await audit(tx, { action: 'admin.account_view', target: `account:${accountId}`, actorUserId, accountId })
       const rank = (role: Role) => ROLES.indexOf(role)
       const members = rows
         .map((r) => ({ userId: r.user_id, name: r.name, email: r.email, role: r.role }))
@@ -106,16 +109,30 @@ export async function accountMember(actorUserId: string, accountId: string, user
   )
 }
 
+/** What an impersonation record says: why it was started, or how it ended. */
+export type ImpersonationDetail = { reason: string } | { ended: 'stopped' | 'expired' }
+
 /**
- * Records a super-admin starting (with their reason) or stopping a read-only view of `accountId` as
- * `userId`, in that account's audit log (a view stopped after the member left the account: in none).
+ * Records a super-admin starting (with their reason) or ending (stopped, or past its time) a read-only
+ * view of `accountId` as `userId`, in that account's audit log.
  */
-export async function recordImpersonation(actorUserId: string, accountId: string | null, userId: string, event: 'start' | 'stop', reason?: string): Promise<void> {
-  const why = event === 'start' ? adminReason(reason) : null
-  if (event === 'start' && why === null) throw new TypeError('an impersonation needs a reason')
+export async function recordImpersonation(actorUserId: string, accountId: string, userId: string, event: 'start' | 'stop', detail: ImpersonationDetail): Promise<void> {
+  let meta: Record<string, string>
+  if (event === 'start') {
+    const why = 'reason' in detail ? adminReason(detail.reason) : null
+    if (why === null) throw new TypeError('an impersonation needs a reason')
+    meta = { reason: why }
+  } else {
+    if (!('ended' in detail)) throw new TypeError('an impersonation end says how it ended')
+    meta = { ended: detail.ended }
+  }
   await asSystem(
     `super-admin: impersonation ${event}`,
-    (tx) => audit(tx, { action: `admin.impersonation_${event}`, target: `user:${userId}`, meta: why === null ? {} : { reason: why }, actorUserId, accountId }),
+    async (tx) => {
+      // the member may have left, or the account gone: the record then belongs to no account
+      const exists = (await tx.execute(sql`select id from auth_account where id = ${accountId}`)).rows.length > 0
+      await audit(tx, { action: `admin.impersonation_${event}`, target: `user:${userId}`, meta, actorUserId, accountId: exists ? accountId : null })
+    },
     actorUserId,
   )
 }
@@ -155,6 +172,10 @@ export async function auditEvents(actorUserId: string, filter: { accountId?: str
         where ${accountId}::uuid is null or l.account_id = ${accountId}::uuid
         order by l.created_at desc, l.id desc
         limit ${CONSOLE_PAGE}`)
+      // a look at one account's log goes into that log, after the rows read (so not among them)
+      if (accountId !== null && (await tx.execute(sql`select id from auth_account where id = ${accountId}`)).rows.length > 0) {
+        await audit(tx, { action: 'admin.audit_view', target: `account:${accountId}`, actorUserId, accountId })
+      }
       return rows.map((r) => ({
         id: r.id,
         createdAt: dateOf(r.created_at),

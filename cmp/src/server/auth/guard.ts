@@ -1,11 +1,12 @@
 // Route guards. A page or API that needs a signed-in person calls these; there is no other way to the
 // session (Better Auth's own endpoints check it themselves).
 import type { AstroGlobal } from 'astro'
-import { localizedPath, sameSitePath, splitLocalePrefix } from '../../i18n/locale'
+import { isAPIError } from 'better-auth/api'
+import { localeOfPath, localizedPath, sameSitePath, splitLocalePrefix, type Locale } from '../../i18n/locale'
 import { auth, type AuthSession } from './auth'
 import { accessFor, type Access } from './access'
 import { isComplete } from './complete'
-import { IMPERSONATION_SECONDS, impersonatorOf, superAdminStatus, type SuperAdminStatus } from './super-admin'
+import { carriesImpersonatorCookie, impersonationOver, impersonatorOf, superAdminStatus, type SuperAdminStatus } from './super-admin'
 import { scopeFor } from '../data/accounts'
 import { entitlementOf, type Entitlement } from '../data/entitlements'
 import type { AccountScope } from '../data/scope'
@@ -23,7 +24,7 @@ export async function completeSession(headers: Headers, responseHeaders?: Header
   const { headers: answer, response: found } = await auth.api.getSession({ headers, returnHeaders: true })
   if (!found || !isComplete(found)) return null
   // a super-admin's view as a member ends after its time, whatever the session row says
-  if (impersonatorOf(found) !== null && Date.now() - found.session.createdAt.getTime() >= IMPERSONATION_SECONDS * 1000) return null
+  if (impersonatorOf(found) !== null && impersonationOver(found.session)) return null
   if (responseHeaders) for (const cookie of answer.getSetCookie()) responseHeaders.append('Set-Cookie', cookie)
   return found
 }
@@ -56,6 +57,16 @@ export interface RequestAccess {
  */
 export async function requestAccess(request: Request, responseHeaders?: Headers): Promise<RequestAccess> {
   const { session, scope } = await signedInScope(request.headers, responseHeaders)
+  // a super-admin's view that has ended by its time (its session is gone, the impersonator cookie is
+  // still here): record its end and give them their own session back, on the account's console page
+  if (!session && carriesImpersonatorCookie(request.headers)) {
+    const url = new URL(request.url)
+    const ended = await endImpersonation(request, url, localeOfPath(url.pathname))
+    if (ended) {
+      if (responseHeaders) for (const cookie of ended.cookies) responseHeaders.append('Set-Cookie', cookie)
+      return { session: null, scope: null, entitlement: null, superAdmin: 'none', access: { kind: 'see-other', location: ended.location } }
+    }
+  }
   const entitlement = scope ? await entitlementOf(scope.accountId) : null
   const superAdmin = superAdminStatus(session)
   const access = accessFor({
@@ -66,6 +77,22 @@ export async function requestAccess(request: Request, responseHeaders?: Headers)
     entitlement: entitlement?.state ?? null,
   })
   return { session, scope, entitlement, superAdmin, access }
+}
+
+/**
+ * Ends the super-admin's view a request carries (src/server/auth/account-endpoints.ts, endImpersonation):
+ * where to go next (the account's console page, or sign-in when their own session has ended too) and the
+ * cookies to set; null when there is nothing to end.
+ */
+export async function endImpersonation(request: Request, url: URL, locale: Locale): Promise<{ location: string; cookies: string[] } | null> {
+  try {
+    const { headers, response } = await auth.api.endImpersonation({ headers: request.headers, returnHeaders: true })
+    const console = localizedPath(`/admin/accounts/${response.accountId}`, locale)
+    return { location: response.restored ? console : signInPath(new URL(console, url)), cookies: headers.getSetCookie() }
+  } catch (err) {
+    if (isAPIError(err)) return null
+    throw err
+  }
 }
 
 /** The sign-in page, in the page's language, with where to come back to (a path on this site only). */

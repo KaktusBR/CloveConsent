@@ -3,7 +3,7 @@ import { isAPIError } from 'better-auth/api'
 
 import { localizedPath } from '../../../i18n/locale'
 import { auth, localeOfRequest } from '../../../server/auth/auth'
-import { isListedSuperAdmin, startingImpersonation, superAdminStatus, withinAdminLimit } from '../../../server/auth/super-admin'
+import { isListedSuperAdmin, superAdminStatus, withinAdminLimit } from '../../../server/auth/super-admin'
 import { accountMember, recordImpersonation } from '../../../server/data/admin'
 import { adminReason } from '../../../server/data/entitlements'
 import { notFound, seeOther } from '../../../server/responses'
@@ -15,9 +15,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /**
  * A super-admin starts a read-only view of `account` as its member `user`, with a required reason (a
  * plain form on the account's console page). The start is written to the account's audit log first, then
- * the admin plugin opens the member's session (src/server/auth/super-admin.ts) and this browser lands on
- * the account's page as them, with the banner. Anyone but a super-admin gets 404, as do an unknown
- * account, someone who is not its member, and another super-admin. Rate limited.
+ * the server-only `startImpersonation` (src/server/auth/account-endpoints.ts) opens the member's session,
+ * and this browser lands on the account's page as them, with the banner. Anyone but a super-admin gets
+ * 404 (so no view is opened from inside one), as do an unknown account, someone who is not its member,
+ * and another super-admin. Rate limited.
  */
 export const POST: APIRoute = async ({ request, locals }) => {
   const session = locals.session ?? null
@@ -40,13 +41,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (reason === null) return seeOther(`${page}?error=reason`)
   if (!(await withinAdminLimit(request, 'impersonate', actor))) return seeOther(`${page}?error=limited`)
 
-  await recordImpersonation(actor, accountId, member.userId, 'start', reason)
+  await recordImpersonation(actor, accountId, member.userId, 'start', { reason })
   let cookies: Headers
   try {
-    const started = await startingImpersonation({ superAdminId: actor, accountId }, () =>
-      auth.api.impersonateUser({ body: { userId: member.userId }, headers: request.headers, returnHeaders: true }),
-    )
-    cookies = started.headers
+    cookies = (await auth.api.startImpersonation({ body: { userId: member.userId, accountId }, headers: request.headers, returnHeaders: true })).headers
   } catch (err) {
     if (isAPIError(err)) return seeOther(`${page}?error=impersonation`)
     throw err

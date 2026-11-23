@@ -98,6 +98,12 @@ describe('enqueue', () => {
 })
 
 describe('the worker', () => {
+  // Every earlier test file in the run queues mail (sign-ups, two-factor notices, invitations) that no
+  // worker sent; these tests time their own jobs, so they start from an empty mail queue.
+  beforeAll(async () => {
+    await asRole('migrate', (c) => c.query(`delete from pgboss.job where name = 'mail.send' and state in ('created', 'retry')`))
+  })
+
   test('delivers a mail job over SMTP (Mailpit), in the requested language, with values escaped in the HTML', async () => {
     const to = address('mailpit')
     const worker = await startWorker({ log: captureLog().log, pollingIntervalSeconds: 0.5 })

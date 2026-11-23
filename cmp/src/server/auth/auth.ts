@@ -1,6 +1,6 @@
 // The Better Auth instance: email and password with verified addresses, TOTP second factor with backup
 // codes, passkeys, database sessions and a database rate limiter; accounts (the organization plugin) and
-// the super-admin's read-only impersonation (the admin plugin). Its endpoints answer at /api/auth/*
+// the super-admin's read-only impersonation (endpoints of our own, account-endpoints.ts). Its endpoints answer at /api/auth/*
 // (src/pages/api/auth/[...all].ts), behind the middleware's origin check like every other request.
 //
 // Tables: src/server/data/schema/auth.ts, created by the migrations (never by Better Auth at runtime);
@@ -13,7 +13,7 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, isAPIError } from 'better-auth/api'
-import { admin, haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins'
+import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins'
 import { passkey } from '@better-auth/passkey'
 import { localizedPath } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
@@ -27,7 +27,7 @@ import { log } from '../log'
 import { sendMail } from '../jobs/mail'
 import { accountEndpoints, ACCOUNT_PATHS } from './account-endpoints'
 import { organizationRoles } from './permissions'
-import { IMPERSONATION_SECONDS, impersonationBeingStarted, impersonatorOf, SuperAdminStartingImpersonation } from './super-admin'
+import { COOKIE_PREFIX, impersonationOver, impersonatorOf } from './super-admin'
 import { localeOfRequest, nextOfRequest, pageLink } from './request-locale'
 
 export { localeOfRequest }
@@ -93,21 +93,6 @@ const accounts = organization({
 /** Every path of the organization plugin: none is served over HTTP. */
 export const ORGANIZATION_PATHS: readonly string[] = Object.values(accounts.endpoints).map((e) => e.path)
 
-/**
- * Better Auth's admin plugin, for one thing only: the super-admin's read-only impersonation
- * (src/server/auth/super-admin.ts). None of its endpoints answers over HTTP (disabledPaths below); the
- * console's own endpoint calls `auth.api.impersonateUser` after its checks, and the plugin's permission
- * check then passes only for the super-admin of that call. An impersonation lasts IMPERSONATION_SECONDS,
- * is never extended (the plugin marks it "don't remember", so it is not refreshed), and its session can
- * write nothing (hooks.before below; src/server/auth/access.ts). Its user fields (`role`, bans) are unused.
- */
-const superAdminPlugin = admin({ adminUserIds: new SuperAdminStartingImpersonation(), impersonationSessionDuration: IMPERSONATION_SECONDS })
-/** Every path of the admin plugin: none is served over HTTP. */
-export const ADMIN_PLUGIN_PATHS: readonly string[] = Object.values(superAdminPlugin.endpoints).map((e) => e.path)
-
-/** The path of the admin plugin's impersonation (called from the server only). */
-const IMPERSONATE_PATH = '/admin/impersonate-user'
-
 /** Paths that create a session only after the second factor (or a passkey, which is both factors). */
 const SECOND_FACTOR_PATHS: ReadonlySet<string> = new Set(['/two-factor/verify-totp', '/two-factor/verify-backup-code', '/passkey/verify-authentication'])
 
@@ -126,7 +111,7 @@ function authOptions(publicOrigin: string) {
     secret: env.BETTER_AUTH_SECRET,
     trustedOrigins: [origin.origin],
     telemetry: { enabled: false },
-    disabledPaths: [...ORGANIZATION_PATHS, ...ADMIN_PLUGIN_PATHS],
+    disabledPaths: [...ORGANIZATION_PATHS],
     database: drizzleAdapter(authDatabase, { provider: 'pg', schema: authSchema, transaction: true }),
 
     emailAndPassword: {
@@ -169,6 +154,9 @@ function authOptions(publicOrigin: string) {
       cookieCache: { enabled: false },
       additionalFields: {
         secondFactor: { type: 'boolean', required: false, defaultValue: false, input: false },
+        // the super-admin viewing as this session's user (src/server/auth/super-admin.ts); set only by the
+        // server-only start of an impersonation (account-endpoints.ts)
+        impersonatedBy: { type: 'string', required: false, input: false },
       },
     },
     verification: { storeIdentifier: 'hashed' },
@@ -193,7 +181,7 @@ function authOptions(publicOrigin: string) {
     },
 
     advanced: {
-      cookiePrefix: 'cmp',
+      cookiePrefix: COOKIE_PREFIX,
       // __Secure- names and the Secure attribute whenever the site is served over https (always in production)
       useSecureCookies: secure,
       defaultCookieAttributes: { httpOnly: true, secure, sameSite: 'lax', path: '/' },
@@ -219,19 +207,24 @@ function authOptions(publicOrigin: string) {
       }),
       accounts,
       accountEndpoints(),
-      superAdminPlugin,
     ],
 
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        // A super-admin viewing as a member writes nothing: any request other than GET or HEAD from an
-        // impersonating session is refused (the session read from its cookie, no refresh). Server-side
-        // calls (no request) are the app's own, made after its checks.
-        if (ctx.request && !['GET', 'HEAD'].includes(ctx.request.method)) {
+        // A super-admin viewing as a member (super-admin.ts), whatever endpoint the session is presented
+        // to, read from its cookie without a refresh:
+        // - past its time it is deleted, so no endpoint serves it (whatever its row's expiry says: a
+        //   refresh could have extended that);
+        // - otherwise it writes nothing: any HTTP request other than GET or HEAD is refused. Server-side
+        //   calls (no request) are the app's own, made after its checks.
+        if (ctx.request || ctx.headers) {
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret)
           const found = token ? await ctx.context.internalAdapter.findSession(token) : null
-          if (found && impersonatorOf(found as AuthSession) !== null) {
-            throw new APIError('FORBIDDEN', { code: 'IMPERSONATION_READ_ONLY', message: 'a read-only view cannot change anything' })
+          if (token && found && impersonatorOf(found as AuthSession) !== null) {
+            if (impersonationOver(found.session)) await ctx.context.internalAdapter.deleteSession(token)
+            else if (ctx.request && !['GET', 'HEAD'].includes(ctx.request.method)) {
+              throw new APIError('FORBIDDEN', { code: 'IMPERSONATION_READ_ONLY', message: 'a read-only view cannot change anything' })
+            }
           }
         }
         // "Trust this device" would let a later sign-in skip the second factor: not offered, refused.
@@ -274,13 +267,6 @@ function authOptions(publicOrigin: string) {
           // revokeOtherSessions, the 2FA endpoints, any later endpoint that re-issues the session).
           // Anything else (a password sign-in, whatever its path) is unmarked.
           async before(session, ctx) {
-            // A super-admin's read-only view as a member (super-admin.ts): it is opened only after the
-            // super-admin's own complete session (second factor passed) has been checked, and works in the
-            // account it was opened from.
-            const starting = impersonationBeingStarted()
-            if (ctx?.path === IMPERSONATE_PATH && starting && (session as { impersonatedBy?: unknown }).impersonatedBy === starting.superAdminId) {
-              return { data: { ...session, secondFactor: true, activeOrganizationId: starting.accountId } }
-            }
             const current = ctx?.context.session
             const inherited = current?.user.id === session.userId && (current.session as { secondFactor?: unknown }).secondFactor === true
             return { data: { ...session, secondFactor: SECOND_FACTOR_PATHS.has(ctx?.path ?? '') || inherited } }

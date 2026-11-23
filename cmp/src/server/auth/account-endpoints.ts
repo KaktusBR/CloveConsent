@@ -5,15 +5,45 @@
 // transaction. The organization plugin's own endpoints are switched off (auth.ts, disabledPaths): they
 // would store the link token in clear, answer 400 or 403 for another account's ids, and write outside
 // one transaction.
+//
+// Also the super-admin's read-only impersonation (src/server/auth/super-admin.ts): two server-only
+// endpoints (no URL; `auth.api.startImpersonation` / `auth.api.endImpersonation`), called by the
+// console's form endpoints after their checks, and checking again themselves.
 import type { BetterAuthPlugin } from 'better-auth'
 import { APIError, createAuthEndpoint, sessionMiddleware } from 'better-auth/api'
+import { deleteSessionCookie, expireCookie, setSessionCookie } from 'better-auth/cookies'
 import * as z from 'zod'
 import { acceptInvitation, createInvitation, membershipOf, type InvitationAccepted } from '../data/accounts'
+import { recordImpersonation } from '../data/admin'
 import type { AccountScope } from '../data/scope'
 import { sendMail } from '../jobs/mail'
 import { isComplete } from './complete'
 import { can, isRole } from './permissions'
 import { localeOfRequest, pageLink } from './request-locale'
+import { IMPERSONATION_SECONDS, IMPERSONATOR_COOKIE, impersonationOver, impersonatorOf, isListedSuperAdmin, superAdminStatus } from './super-admin'
+import type { AuthSession } from './auth'
+
+/** What the impersonator cookie keeps (signed): the super-admin's own session and the view it opened. */
+const Impersonator = z.object({
+  /** The super-admin. */
+  by: z.string(),
+  /** Their own session's token, and whether it was "don't remember". */
+  token: z.string(),
+  dontRemember: z.boolean(),
+  /** The member viewed as, in which account. */
+  userId: z.string(),
+  accountId: z.string(),
+})
+type Impersonator = z.infer<typeof Impersonator>
+const encode = (value: Impersonator) => Buffer.from(JSON.stringify(value)).toString('base64url')
+function decode(raw: string): Impersonator | null {
+  try {
+    const parsed = Impersonator.safeParse(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
 
 export const ACCOUNT_PATHS = { invite: '/account/invite', accept: '/account/accept-invitation' } as const
 
@@ -93,5 +123,70 @@ export const accountEndpoints = () =>
           return ctx.json({ accountId: result.accountId })
         },
       ),
+
+      /**
+       * A super-admin opens a read-only view of `accountId` as its member `userId` (server only). The
+       * caller (src/pages/api/admin/impersonate.ts) has written the start to the audit log. Refused (404)
+       * unless the request's session is a super-admin's (so never from inside a view), and unless the
+       * person is a member of that account and not a super-admin. The new session works in that account,
+       * counts as having passed the second factor (the super-admin's own session did), lasts
+       * IMPERSONATION_SECONDS and is "don't remember" (never refreshed); the super-admin's session is kept
+       * aside in the signed impersonator cookie.
+       */
+      startImpersonation: createAuthEndpoint.serverOnly(
+        { method: 'POST', body: z.object({ userId: z.string(), accountId: z.string() }), use: [sessionMiddleware] },
+        async (ctx) => {
+          const own = ctx.context.session as unknown as AuthSession
+          if (superAdminStatus(own) !== 'super-admin') throw refuse('NOT_FOUND', 'NOT_FOUND')
+          const { userId, accountId } = ctx.body
+          const target = userId === own.user.id ? null : await ctx.context.internalAdapter.findUserById(userId)
+          if (!target || isListedSuperAdmin(target.email) || (await membershipOf(userId, accountId)) === null) throw refuse('NOT_FOUND', 'NOT_FOUND')
+
+          const created = await ctx.context.internalAdapter.createSession(
+            userId,
+            true,
+            { impersonatedBy: own.user.id, activeOrganizationId: accountId, expiresAt: new Date(Date.now() + IMPERSONATION_SECONDS * 1000) },
+            true,
+          )
+          // the create hook (auth.ts) marks only sessions of a second-factor step: this one inherits the super-admin's
+          const session = await ctx.context.internalAdapter.updateSession(created.token, { secondFactor: true })
+          if (!session) throw refuse('NOT_FOUND', 'NOT_FOUND')
+
+          const dontRemember = await ctx.getSignedCookie(ctx.context.authCookies.dontRememberToken.name, ctx.context.secret)
+          const cookie = ctx.context.createAuthCookie(IMPERSONATOR_COOKIE)
+          const kept = encode({ by: own.user.id, token: own.session.token, dontRemember: !!dontRemember, userId, accountId })
+          await ctx.setSignedCookie(cookie.name, kept, ctx.context.secret, { ...ctx.context.authCookies.sessionToken.attributes, maxAge: ctx.context.sessionConfig.expiresIn })
+          await setSessionCookie(ctx, { session, user: target }, true)
+          return ctx.json({ accountId })
+        },
+      ),
+
+      /**
+       * Ends a super-admin's view (server only): the one the impersonator cookie names, whether it is still
+       * running (stopped) or past its time (expired, its session perhaps already gone). The end is
+       * written to the account's audit log first; then the view's session is deleted and the
+       * super-admin's own comes back (`restored`), or, if that has ended too, the browser is signed out.
+       * 404 without a valid impersonator cookie, or when the request's session is someone's own (not a view).
+       */
+      endImpersonation: createAuthEndpoint.serverOnly({ method: 'POST' }, async (ctx) => {
+        const cookie = ctx.context.createAuthCookie(IMPERSONATOR_COOKIE)
+        const raw = await ctx.getSignedCookie(cookie.name, ctx.context.secret)
+        const kept = raw ? decode(raw) : null
+        if (!kept) throw refuse('NOT_FOUND', 'NOT_FOUND')
+        const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret)
+        const current = token ? await ctx.context.internalAdapter.findSession(token) : null
+        const viewing = current !== null && impersonatorOf(current as unknown as AuthSession) === kept.by
+        if (current && !viewing) throw refuse('NOT_FOUND', 'NOT_FOUND')
+        const ended = viewing && !impersonationOver(current.session) ? 'stopped' : 'expired'
+
+        await recordImpersonation(kept.by, kept.accountId, kept.userId, 'stop', { ended })
+        if (token && viewing) await ctx.context.internalAdapter.deleteSession(token)
+        expireCookie(ctx, cookie)
+        const own = await ctx.context.internalAdapter.findSession(kept.token)
+        const restored = own !== null && own.user.id === kept.by && new Date(own.session.expiresAt).getTime() > Date.now()
+        if (restored) await setSessionCookie(ctx, own, kept.dontRemember)
+        else deleteSessionCookie(ctx)
+        return ctx.json({ restored, accountId: kept.accountId })
+      }),
     },
   }) satisfies BetterAuthPlugin

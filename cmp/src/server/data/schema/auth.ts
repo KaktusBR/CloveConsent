@@ -33,12 +33,6 @@ export const user = pgTable('auth_user', {
   emailVerified: boolean('email_verified').default(false).notNull(),
   image: text('image'),
   twoFactorEnabled: boolean('two_factor_enabled').default(false).notNull(),
-  // The admin plugin's fields (Task 8), required by its schema. Unused by the app: a super-admin is an
-  // address in SUPER_ADMIN_EMAILS (src/server/auth/super-admin.ts), never this role, and no one is banned.
-  role: text('role'),
-  banned: boolean('banned').default(false),
-  banReason: text('ban_reason'),
-  banExpires: timestamp('ban_expires', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 })
@@ -62,7 +56,7 @@ export const session = pgTable(
      */
     activeAccountId: uuid('active_account_id').references((): AnyPgColumn => organization.id, { onDelete: 'set null' }),
     /**
-     * The super-admin viewing as this session's user (the admin plugin's read-only impersonation,
+     * The super-admin viewing as this session's user (read-only impersonation,
      * src/server/auth/super-admin.ts). Such a session can write nothing and ends after its time.
      */
     impersonatedBy: uuid('impersonated_by').references((): AnyPgColumn => user.id, { onDelete: 'cascade' }),

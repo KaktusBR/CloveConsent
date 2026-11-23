@@ -10,6 +10,7 @@ import { POST as createAccountRoute } from '../../src/pages/api/accounts/create'
 import { POST as entitlementRoute } from '../../src/pages/api/admin/entitlement'
 import { POST as impersonateRoute } from '../../src/pages/api/admin/impersonate'
 import { POST as stopRoute } from '../../src/pages/api/impersonation/stop'
+import { auth } from '../../src/server/auth/auth'
 import { completeSession, requestAccess, signedInScope } from '../../src/server/auth/guard'
 import { ADMIN_LIMITS, IMPERSONATION_MINUTES, superAdminStatus } from '../../src/server/auth/super-admin'
 import { accountDetail, auditEvents, searchAccounts } from '../../src/server/data/admin'
@@ -38,9 +39,6 @@ async function person(label: string, email?: string): Promise<Person> {
   return { email: verified, browser, userId: session.user.id }
 }
 
-/** The TOTP secrets of the super-admins, by user id. */
-const secrets = new Map<string, string>()
-
 /** A listed super-admin with two-factor authentication on, signed in with it (its session is replaced by one that passed the code). */
 async function superAdmin(email: string): Promise<Person> {
   const who = await person('root', email)
@@ -48,17 +46,7 @@ async function superAdmin(email: string): Promise<Person> {
   expect(enabled.status).toBe(200)
   const secret = secretOf(String(enabled.json?.totpURI))
   expect((await who.browser.call('/two-factor/verify-totp', { code: totp(secret) })).status).toBe(200)
-  secrets.set(who.userId, secret)
   return who
-}
-
-/** Signs `who` in again, with password and TOTP code, in a new browser. */
-async function signedInSuperAdmin(who: Person): Promise<Person> {
-  const browser = new Browser()
-  const first = await browser.call('/sign-in/email', { email: who.email, password: PASSWORD })
-  expect(first.json?.twoFactorRedirect).toBe(true)
-  expect((await browser.call('/two-factor/verify-totp', { code: totp(secrets.get(who.userId) ?? '', 1) })).status).toBe(200)
-  return { ...who, browser }
 }
 
 /** A request of `who`'s browser, from its socket address, with its cookies. */
@@ -370,6 +358,21 @@ describe('the console', () => {
     expect(events[0]).toMatchObject({ accountId, actorUserId: rootA.userId, actorEmail: rootA.email, meta: { reason: 'audit viewer test' } })
     expect((await auditEvents(rootA.userId, {})).length).toBeGreaterThan(0)
   })
+
+  test("a super-admin's look at one account (its page, its audit log) is recorded in that account's audit log", async () => {
+    const accountId = await addAccount()
+    await accountDetail(rootB.userId, accountId)
+    await auditEvents(rootB.userId, { accountId })
+    expect((await adminRows(accountId)).map((r) => [r.action, r.actor_user_id, r.target])).toEqual([
+      ['admin.account_view', rootB.userId, `account:${accountId}`],
+      ['admin.audit_view', rootB.userId, `account:${accountId}`],
+    ])
+    // the next look at the audit log shows the earlier ones
+    expect((await auditEvents(rootB.userId, { accountId })).map((e) => e.action)).toEqual(['admin.audit_view', 'admin.account_view'])
+    // an account that does not exist: nothing to record it in, and no error
+    expect(await accountDetail(rootB.userId, newId())).toBeNull()
+    expect(await auditEvents(rootB.userId, { accountId: newId() })).toEqual([])
+  })
 })
 
 describe('every super-admin action is audited with its actor and a required reason', () => {
@@ -388,7 +391,16 @@ describe('every super-admin action is audited with its actor and a required reas
       ['admin.account_suspend', rootA.userId, 'fraud check'],
       ['admin.account_unsuspend', rootA.userId, 'cleared'],
     ])
-    expect(rows[0]).toMatchObject({ target: `account:${accountId}`, meta: { planId: 'starter', paidUntil: '2030-07-01T00:00:00.000Z', before: { planId: null, paidUntil: null } } })
+    expect(rows[0]).toMatchObject({ target: `account:${accountId}`, meta: { planId: 'starter', paidUntil: '2030-07-01T00:00:00.000Z', before: { planId: null, paidUntil: null, suspendedAt: null } } })
+  })
+
+  test('setting the plan of a suspended account records the suspension in what it was before', async () => {
+    const accountId = await addAccount()
+    await suspendAccount(rootA.userId, accountId, 'abuse report')
+    const suspendedAt = (await entitlementRow(accountId))?.suspended_at
+    await setPaid(rootA, accountId, '2031-01-31', 'paid anyway')
+    const set = (await adminRows(accountId)).find((r) => r.action === 'admin.entitlement_set')
+    expect(set?.meta.before).toEqual({ planId: null, paidUntil: null, suspendedAt: suspendedAt?.toISOString() })
   })
 
   test('without a reason (or with a blank one) nothing changes and nothing is recorded', async () => {
@@ -417,6 +429,31 @@ describe('every super-admin action is audited with its actor and a required reas
 })
 
 describe('read-only impersonation', () => {
+  test('is opened by server-only endpoints of the app: Better Auth serves no impersonation path, and has no admin plugin', async () => {
+    for (const path of ['/admin/impersonate-user', '/admin/stop-impersonating', '/admin/set-role', '/admin/list-users', '/admin/ban-user']) {
+      expect([path, (await rootA.browser.call(path, {})).status]).toEqual([path, 404])
+    }
+    expect(Object.keys(auth.api).filter((k) => /imperson|admin/i.test(k)).sort()).toEqual(['endImpersonation', 'startImpersonation'])
+    const columns = await asRole('migrate', async (c) =>
+      (await c.query<{ column_name: string }>(`select column_name from information_schema.columns where table_name = 'auth_user' and column_name in ('role', 'banned', 'ban_reason', 'ban_expires')`)).rows,
+    )
+    expect(columns).toEqual([])
+  })
+
+  test('the server-only start refuses anyone but a super-admin, whatever code calls it', async () => {
+    const someone = await person('caller')
+    // a real member of a real account: only the caller's status can refuse it
+    const target = await person('target')
+    const accountId = await newAccount(target)
+    const attempt = (who: Person) =>
+      auth.api.startImpersonation({ headers: who.browser.headers(), body: { userId: target.userId, accountId } }).then(
+        () => 'started',
+        (err: { status?: string }) => err.status ?? 'error',
+      )
+    expect(await attempt(someone)).toBe('NOT_FOUND')
+    expect(await asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where impersonated_by is not null and user_id = $1', [target.userId])).rows[0]?.n)).toBe(0)
+  })
+
   async function impersonating(root: Person) {
     const owner = await person('impersonated')
     const accountId = await newAccount(owner)
@@ -471,17 +508,71 @@ describe('read-only impersonation', () => {
     expect(invitations).toBe(0)
     // reading still works
     expect((await rootA.browser.call('/get-session')).status).toBe(200)
+    // no impersonation from inside one
+    expect((await post(impersonateRoute, rootA, '/api/admin/impersonate', { account: accountId, user: rootB.userId, reason: 'nested' })).status).toBe(404)
+    const other = await person('other')
+    const otherAccount = await newAccount(other)
+    await expect(auth.api.startImpersonation({ headers: rootA.browser.headers(), body: { userId: other.userId, accountId: otherAccount } })).rejects.toMatchObject({ status: 'NOT_FOUND' })
+    expect(await asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [other.userId])).rows[0]?.n)).toBe(0)
     await post(stopRoute, rootA, '/api/impersonation/stop', {})
   })
 
-  test('ends after its time even if the session row says otherwise', async () => {
-    const { owner } = await impersonating(rootB)
-    await asRole('app', (c) =>
+  /** Moves an impersonation of `owner` past its time, with a row that says it is still valid for a day. */
+  const outlive = (owner: Person) =>
+    asRole('app', (c) =>
       c.query(`update auth_session set created_at = now() - interval '31 minutes', expires_at = now() + interval '1 day' where user_id = $1 and impersonated_by is not null`, [owner.userId]),
     )
+  const impersonationSessions = async (owner: Person) =>
+    asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [owner.userId])).rows[0]?.n)
+
+  test("ends after its time even if the session row says otherwise: no page, and none of Better Auth's endpoints (even without the cookie that stops a refresh)", async () => {
+    const { owner } = await impersonating(rootB)
+    await outlive(owner)
     expect(await completeSession(rootB.browser.headers())).toBeNull()
-    // back to the console by signing in again
-    rootB = await signedInSuperAdmin(rootB)
+    for (const name of [...rootB.browser.cookies.keys()]) if (name.includes('dont_remember')) rootB.browser.cookies.delete(name)
+    const served = await rootB.browser.call('/get-session')
+    expect(served.json).toBeNull()
+    expect((await rootB.browser.call('/list-sessions')).status).toBe(401)
+    expect(await impersonationSessions(owner)).toBe(0)
+    // the super-admin is back on the next request (the end is recorded: next test)
+    rootB.browser.keep(await endedBy(rootB, '/account'))
+    expect(superAdminStatus((await completeSession(rootB.browser.headers())) ?? null)).toBe('super-admin')
+  })
+
+  /** The middleware's answer headers for a request of `who` (what a browser would get). */
+  async function endedBy(who: Person, path: string): Promise<Response> {
+    const headers = new Headers()
+    const { access } = await requestAccess(requestOf(who, path), headers)
+    if (access.kind === 'see-other') headers.set('Location', access.location)
+    return new Response(null, { status: access.kind === 'see-other' ? 303 : 200, headers })
+  }
+
+  test('past its time, the next request records its end and gives the super-admin their own session back, on the account page', async () => {
+    const { owner, accountId } = await impersonating(rootB)
+    await outlive(owner)
+    const answer = await endedBy(rootB, '/sk/account')
+    expect([answer.status, answer.headers.get('location')]).toEqual([303, `/sk/admin/accounts/${accountId}`])
+    rootB.browser.keep(answer)
+    const now = await completeSession(rootB.browser.headers())
+    expect(superAdminStatus(now ?? null)).toBe('super-admin')
+    expect(now?.user.id).toBe(rootB.userId)
+    expect((await impersonationRows(accountId)).map((r) => [r.action, r.actor_user_id, r.meta])).toEqual([
+      ['admin.impersonation_start', rootB.userId, { reason: 'support ticket 77' }],
+      ['admin.impersonation_stop', rootB.userId, { ended: 'expired' }],
+    ])
+    expect(await impersonationSessions(owner)).toBe(0)
+    // nothing left to end
+    expect(await accessOf(rootB, '/admin/accounts')).toEqual({ kind: 'pass' })
+  })
+
+  test('past its time, the stop button still works: the end is recorded and the super-admin is back', async () => {
+    const { owner, accountId } = await impersonating(rootB)
+    await outlive(owner)
+    const stopped = await post(stopRoute, rootB, '/api/impersonation/stop', {})
+    expect(stopped).toEqual({ status: 303, location: `/admin/accounts/${accountId}`, body: '' })
+    expect(superAdminStatus((await completeSession(rootB.browser.headers())) ?? null)).toBe('super-admin')
+    expect((await impersonationRows(accountId)).at(-1)).toMatchObject({ action: 'admin.impersonation_stop', meta: { ended: 'expired' } })
+    expect(await impersonationSessions(owner)).toBe(0)
   })
 
   test('stopping it gives the super-admin their own session back, on the account page; audited', async () => {
@@ -492,9 +583,9 @@ describe('read-only impersonation', () => {
     expect(now?.user.id).toBe(rootA.userId)
     expect(superAdminStatus(now ?? null)).toBe('super-admin')
     const rows = await impersonationRows(accountId)
-    expect(rows.map((r) => [r.action, r.actor_user_id, r.target])).toEqual([
-      ['admin.impersonation_start', rootA.userId, `user:${owner.userId}`],
-      ['admin.impersonation_stop', rootA.userId, `user:${owner.userId}`],
+    expect(rows.map((r) => [r.action, r.actor_user_id, r.target, r.meta])).toEqual([
+      ['admin.impersonation_start', rootA.userId, `user:${owner.userId}`, { reason: 'support ticket 77' }],
+      ['admin.impersonation_stop', rootA.userId, `user:${owner.userId}`, { ended: 'stopped' }],
     ])
     // no impersonated session of the owner is left
     const left = await asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_session where user_id = $1 and impersonated_by is not null', [owner.userId])).rows[0]?.n)

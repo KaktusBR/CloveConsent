@@ -139,7 +139,12 @@ export async function setEntitlement(actorUserId: string, accountId: string, cha
       await audit(tx, {
         action: 'admin.entitlement_set',
         target: `account:${accountId}`,
-        meta: { reason: why, planId: change.planId, paidUntil: change.paidUntil.toISOString(), before: { planId: before?.plan_id ?? null, paidUntil: iso(before?.paid_until) } },
+        meta: {
+          reason: why,
+          planId: change.planId,
+          paidUntil: change.paidUntil.toISOString(),
+          before: { planId: before?.plan_id ?? null, paidUntil: iso(before?.paid_until), suspendedAt: iso(before?.suspended_at) },
+        },
         actorUserId,
         accountId,
       })

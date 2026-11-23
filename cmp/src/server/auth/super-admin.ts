@@ -2,16 +2,18 @@
 //
 // A super-admin is a person whose address is in SUPER_ADMIN_EMAILS, verified, with two-factor
 // authentication on, on a complete session (the second factor passed) that is not itself an
-// impersonation. Nothing else makes one: Better Auth's user `role` is not used. Everyone else gets a 404
+// impersonation. Nothing else makes one (there are no user roles). Everyone else gets a 404
 // from every console page and endpoint (src/server/auth/access.ts), so the console never shows that it
 // exists; a listed person without two-factor authentication is sent to set it up.
 //
-// Impersonation is the admin plugin's: a session of the member, marked with the super-admin
-// (`impersonatedBy`), lasting IMPERSONATION_MINUTES, with the super-admin's own session kept aside in a
-// signed cookie until they stop. It can write nothing (the middleware and a Better Auth hook refuse every
-// request other than GET and HEAD, except stopping it), every page shows a banner, and its start and
-// stop are in the account's audit log with the super-admin and their reason.
-import { AsyncLocalStorage } from 'node:async_hooks'
+// Impersonation (server-only endpoints of ours, src/server/auth/account-endpoints.ts): a session of the
+// member in one account, marked with the super-admin (`impersonatedBy`), lasting IMPERSONATION_MINUTES
+// from its creation and never extended, with the super-admin's own session kept aside in a signed cookie
+// (IMPERSONATOR_COOKIE) until it ends. It can write nothing (the middleware and a Better Auth hook refuse
+// every request other than GET and HEAD, except stopping it), every page shows a banner, and its start
+// and end are in the account's audit log with the super-admin (the start with their reason), each
+// written before the session changes. Past its time no endpoint serves it, and the next request ends it:
+// the end is recorded and the super-admin's own session comes back.
 import { clientAddress, trustedProxies } from '../client-address'
 import { releaseInWindow, reserveInWindow } from '../data/auth-limits'
 import { env } from '../env'
@@ -43,29 +45,19 @@ export function superAdminStatus(session: AuthSession | null): SuperAdminStatus 
 /** Is `email` a super-admin's address (they cannot be impersonated)? */
 export const isListedSuperAdmin = (email: string): boolean => listed(email)
 
-/** An impersonation being started by src/pages/api/admin/impersonate.ts, for the length of that call. */
-export interface StartingImpersonation {
-  superAdminId: string
-  accountId: string
-}
-const starting = new AsyncLocalStorage<StartingImpersonation>()
+/** The prefix of every cookie of the app (Better Auth's `advanced.cookiePrefix`). */
+export const COOKIE_PREFIX = 'cmp'
 
-/** Runs `fn` (the call to the admin plugin) as the start of `impersonation`, which the caller has checked. */
-export const startingImpersonation = <T>(impersonation: StartingImpersonation, fn: () => Promise<T>): Promise<T> => starting.run(impersonation, fn)
+/** The signed cookie that keeps the super-admin's own session aside while they view as a member. */
+export const IMPERSONATOR_COOKIE = 'impersonator'
+const IMPERSONATOR_COOKIE_NAME = new RegExp(`(?:^|;)\\s*(?:__Secure-)?${COOKIE_PREFIX}\\.${IMPERSONATOR_COOKIE}=`)
 
-/** The impersonation the current call is starting, if any (auth.ts gives the new session its account). */
-export const impersonationBeingStarted = (): StartingImpersonation | undefined => starting.getStore()
+/** Does a request carry the impersonator cookie (an impersonation to end, if its session is gone)? */
+export const carriesImpersonatorCookie = (headers: Headers): boolean => IMPERSONATOR_COOKIE_NAME.test(headers.get('cookie') ?? '')
 
-/**
- * The admin plugin's `adminUserIds`, which its impersonation endpoint checks the caller against: only the
- * super-admin whose impersonation this app is starting right now, inside startingImpersonation. The
- * plugin's own permission check therefore passes for no one else, whatever calls it.
- */
-export class SuperAdminStartingImpersonation extends Array<string> {
-  override includes(id: string): boolean {
-    return starting.getStore()?.superAdminId === id
-  }
-}
+/** Is an impersonation session past its time (counted from its creation, whatever its expiry says)? */
+export const impersonationOver = (session: { createdAt: Date | string }, now: number = Date.now()): boolean =>
+  now - new Date(session.createdAt).getTime() >= IMPERSONATION_SECONDS * 1000
 
 /** Rate limits of the console's endpoints, per super-admin and per client address. */
 export const ADMIN_LIMITS = {
