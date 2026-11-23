@@ -357,8 +357,10 @@ describe('invitations (Review Focus 4)', () => {
     expect(row).toMatchObject({ email, status: 'pending', token_hash: createHash('sha256').update(token).digest('base64url') })
     const stored = await asRole('migrate', async (c) => {
       const tables = ['auth_account_invitation', 'audit_log', 'auth_verification']
-      const hits = await Promise.all(tables.map((t) => c.query(`select 1 from ${t} where ${t}::text like $1`, [`%${token}%`])))
-      return hits.reduce((n, r) => n + (r.rowCount ?? 0), 0)
+      // one query at a time: a pg client runs one query at once
+      let n = 0
+      for (const t of tables) n += (await c.query(`select 1 from ${t} where ${t}::text like $1`, [`%${token}%`])).rowCount ?? 0
+      return n
     })
     expect(stored).toBe(0)
     expect((await auditOf(accountId)).at(-1)).toMatchObject({ action: 'member.invite', target: `invitation:${row!.id}`, meta: { email, role: 'viewer' } })
