@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  withNext,
   localeFromParam,
   localeOfPath,
   localeStaticPaths,
@@ -145,5 +146,15 @@ describe('the language switcher endpoint', () => {
   test('repeated leading slashes are collapsed before localizing', () => {
     expect(localeSwitchTarget('/sk///sign-in?x=1', 'en')).toBe('/sign-in?x=1')
     expect(localeSwitchTarget('/sign-in//x', 'sk')).toBe('/sk/sign-in//x')
+  })
+})
+
+describe('withNext', () => {
+  test('adds a next= that is a path on this site, and nothing else', () => {
+    expect(withNext('/sign-up', '/invite/abc_DEF-1')).toBe('/sign-up?next=%2Finvite%2Fabc_DEF-1')
+    expect(withNext('/sk/sign-in', '/sk/invite/x')).toBe('/sk/sign-in?next=%2Fsk%2Finvite%2Fx')
+    for (const next of ['//evil.example', 'https://evil.example', '/.//evil.example', '/\\evil.example', null, undefined, '']) {
+      expect(withNext('/sign-up', next)).toBe('/sign-up')
+    }
   })
 })

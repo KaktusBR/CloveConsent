@@ -5,7 +5,8 @@ import { sql } from 'drizzle-orm'
 import { appendAuditEvent } from './audit'
 import { appDatabase, systemDatabase, type Transaction } from './client'
 
-export type Role = 'owner' | 'admin' | 'editor' | 'viewer'
+export type { Role } from '../../lib/roles'
+import type { Role } from '../../lib/roles'
 
 export interface AccountScope {
   readonly accountId: string

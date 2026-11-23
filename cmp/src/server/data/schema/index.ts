@@ -12,5 +12,4 @@ export {
   user as authUser,
   verification as authVerification,
   authSchema,
-  ROLES,
 } from './auth'

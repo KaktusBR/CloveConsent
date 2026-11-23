@@ -11,6 +11,7 @@ export const prerender = false
 /**
  * The "Create an account" form (a plain form): a new account named `name`, with the signed-in person as
  * its owner (written with its audit rows in one transaction), which becomes the account they work in.
+ * Past the number of accounts a person may create (LIMITS), back to the form with the reason.
  */
 export const POST: APIRoute = async ({ request, locals, url }) => {
   const locale = localeOfRequest(request)
@@ -21,7 +22,8 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   const form = await request.formData().catch(() => null)
   const name = accountName(form?.get('name'))
   if (!name) return seeOther(`${page}?error=name`)
-  const accountId = await createAccount(session.user.id, name)
-  await auth.api.setActiveOrganization({ headers: request.headers, body: { organizationId: accountId } })
+  const created = await createAccount(session.user.id, name)
+  if ('refused' in created) return seeOther(`${page}?error=limit`)
+  await auth.api.setActiveOrganization({ headers: request.headers, body: { organizationId: created.accountId } })
   return seeOther(localizedPath('/account', locale))
 }

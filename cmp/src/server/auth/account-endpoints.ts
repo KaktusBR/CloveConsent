@@ -27,7 +27,8 @@ function signedIn(session: { user: { id: string; email: string; name: string; em
 
 const REFUSALS: Readonly<Record<Extract<InvitationAccepted, { refused: string }>['refused'], [Parameters<typeof refuse>[0], string]>> = {
   not_found: ['NOT_FOUND', 'INVITATION_NOT_FOUND'],
-  wrong_email: ['FORBIDDEN', 'INVITATION_WRONG_EMAIL'],
+  // like a link that does not exist (ruling R23), its reason in the code
+  wrong_email: ['NOT_FOUND', 'INVITATION_WRONG_EMAIL'],
   expired: ['BAD_REQUEST', 'INVITATION_EXPIRED'],
   used: ['BAD_REQUEST', 'INVITATION_USED'],
   canceled: ['BAD_REQUEST', 'INVITATION_CANCELED'],
@@ -69,6 +70,9 @@ export const accountEndpoints = () =>
           if (result === 'owner_only') throw refuse('FORBIDDEN', 'OWNER_ONLY')
           if (result === 'already_member') throw refuse('BAD_REQUEST', 'ALREADY_MEMBER')
           if (result === 'already_invited') throw refuse('BAD_REQUEST', 'ALREADY_INVITED')
+          if (result === 'pending_limit') throw refuse('BAD_REQUEST', 'INVITATION_LIMIT_PENDING')
+          if (result === 'account_day_limit') throw refuse('BAD_REQUEST', 'INVITATION_LIMIT_ACCOUNT_DAY')
+          if (result === 'user_day_limit') throw refuse('BAD_REQUEST', 'INVITATION_LIMIT_USER_DAY')
           throw refuse('NOT_FOUND', 'NOT_FOUND')
         },
       ),

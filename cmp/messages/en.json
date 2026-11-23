@@ -185,5 +185,9 @@
   "invite_state_expired": "This invitation has expired. Ask for a new one.",
   "invite_state_used": "This invitation has already been used.",
   "invite_state_canceled": "This invitation was canceled.",
-  "invite_state_already_member": "You are already a member of this account."
+  "invite_state_already_member": "You are already a member of this account.",
+  "accounts_new_error_limit": "You have created {max} accounts, the most one person can create. Contact us if you need more.",
+  "members_error_limit_pending": "This account has too many pending invitations. Cancel some, or wait until they are answered or expire.",
+  "members_error_limit_account_day": "This account has sent as many invitations as it can today. Try again tomorrow.",
+  "members_error_limit_user_day": "You have sent as many invitations as you can today. Try again tomorrow."
 }

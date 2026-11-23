@@ -185,5 +185,9 @@
   "invite_state_expired": "Platnosť tejto pozvánky vypršala. Požiadajte o novú.",
   "invite_state_used": "Táto pozvánka už bola použitá.",
   "invite_state_canceled": "Táto pozvánka bola zrušená.",
-  "invite_state_already_member": "Už ste členom tohto účtu."
+  "invite_state_already_member": "Už ste členom tohto účtu.",
+  "accounts_new_error_limit": "Vytvorili ste {max} účtov, čo je najviac, koľko môže jedna osoba vytvoriť. Ak potrebujete viac, kontaktujte nás.",
+  "members_error_limit_pending": "Tento účet má priveľa čakajúcich pozvánok. Niektoré zrušte alebo počkajte, kým na ne niekto odpovie alebo vypršia.",
+  "members_error_limit_account_day": "Tento účet dnes poslal najviac pozvánok, koľko môže. Skúste to znova zajtra.",
+  "members_error_limit_user_day": "Dnes ste poslali najviac pozvánok, koľko môžete. Skúste to znova zajtra."
 }

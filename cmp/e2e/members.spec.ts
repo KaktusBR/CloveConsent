@@ -79,6 +79,11 @@ test('an owner invites an editor, who accepts, sees the account and cannot open 
   expect(new URL(link).pathname).toMatch(/^\/invite\/[A-Za-z0-9_-]{43}$/)
   await editor.goto(link)
   await expect(editor.getByText(en('invite_signed_out'))).toBeVisible()
+  // a new person signs up from here and comes back: both links carry the invitation as next=
+  const invitePath = new URL(link).pathname
+  for (const name of ['invite_sign_in_link', 'invite_sign_up_link']) {
+    expect(new URL((await editor.getByRole('link', { name: en(name) }).getAttribute('href')) ?? '', origin).searchParams.get('next')).toBe(invitePath)
+  }
   await expectAccessible(editor)
   await editor.getByRole('link', { name: en('invite_sign_in_link') }).click()
   await signIn(editor, editorLogin.email, editorLogin.password)

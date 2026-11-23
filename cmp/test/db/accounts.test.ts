@@ -10,11 +10,12 @@ import { POST as membersRoute } from '../../src/pages/api/account/members'
 import { POST as switchRoute } from '../../src/pages/api/account/switch'
 import { ORGANIZATION_PATHS } from '../../src/server/auth/auth'
 import { signedInScope } from '../../src/server/auth/guard'
-import { viewInvitation } from '../../src/server/data/accounts'
+import { cancelInvitation, createAccount, createInvitation, LIMITS, viewInvitation } from '../../src/server/data/accounts'
 import { closeDatabases } from '../../src/server/data/client'
 import { closeQueue } from '../../src/server/data/queue'
 import type { Role } from '../../src/server/data/scope'
-import { address, Browser, mailsTo, ORIGIN, pwnedStandIn, signedIn, verifiedUser } from './browser'
+import { address, Browser, mailsTo, nextIp, ORIGIN, pwnedStandIn, signedIn, verifiedUser } from './browser'
+import { handleAuth } from '../../src/server/auth/handler'
 import { asRole, errorCode, newId } from './raw'
 
 interface Person {
@@ -386,7 +387,8 @@ describe('invitations (Review Focus 4)', () => {
     const intended = address('intended')
     const token = await invited(owner, accountId, intended)
     const stranger = await person('stranger')
-    expect(await accept(stranger, token)).toMatchObject({ status: 403, json: expect.objectContaining({ code: 'INVITATION_WRONG_EMAIL' }) })
+    // 404 like a link that does not exist, with its reason as the code (ruling R23)
+    expect(await accept(stranger, token)).toMatchObject({ status: 404, json: expect.objectContaining({ code: 'INVITATION_WRONG_EMAIL' }) })
     expect(await viewInvitation(token, stranger.email)).toEqual({ state: 'wrong_email' })
     expect(await membersOf(accountId)).toHaveLength(1)
     expect(await invitationsOf(accountId)).toEqual([expect.objectContaining({ status: 'pending' })])
@@ -475,5 +477,213 @@ describe('invitations (Review Focus 4)', () => {
     const statuses: number[] = []
     for (let i = 0; i < 21; i++) statuses.push((await invite(owner, accountId, address(`flood-${i}`))).status)
     expect(statuses).toEqual([...Array<number>(20).fill(200), 429])
+  })
+})
+
+/** Backends of this run's database now waiting for a lock (read as the admin, who sees every session). */
+const lockWaiters = () =>
+  asRole('admin', async (c) =>
+    Number((await c.query<{ n: string }>(`select count(*) as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`)).rows[0]?.n),
+  )
+async function untilWaiters(n: number) {
+  for (const deadline = Date.now() + 10_000; Date.now() < deadline; ) {
+    if ((await lockWaiters()) >= n) return
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  throw new Error(`fewer than ${n} lock waiters`)
+}
+
+describe('fix round 1: cancel and accept at the same moment (I1)', () => {
+  test('an accept that commits while a cancel is under way: exactly one wins, and the record and the audit log agree', async () => {
+    const owner = await person('race-owner')
+    const accountId = await newAccount(owner)
+    const guest = await person('race-guest')
+    const token = await invited(owner, accountId, guest.email)
+    const [row] = await invitationsOf(accountId)
+    const scope = (await scopeOf(owner))!
+    const outcome = await asRole('app', async (holder) => {
+      // hold the invitation row: the accept, then the cancel, queue behind it
+      await holder.query('begin')
+      await holder.query('select 1 from auth_account_invitation where id = $1 for update', [row!.id])
+      const accepting = accept(guest, token)
+      await untilWaiters(1)
+      const canceling = cancelInvitation(scope, row!.id)
+      await untilWaiters(2).catch(() => undefined)
+      await holder.query('commit')
+      return { accepted: await accepting, canceled: await canceling }
+    })
+    const [after] = await invitationsOf(accountId)
+    const joined = (await membersOf(accountId)).some((m) => m.user_id === guest.userId)
+    const actions = (await auditOf(accountId)).map((e) => e.action)
+    const acceptWon = outcome.accepted.status === 200
+    expect(acceptWon !== (outcome.canceled === 'ok')).toBe(true)
+    expect(after?.status).toBe(acceptWon ? 'accepted' : 'canceled')
+    expect(joined).toBe(acceptWon)
+    expect(actions.includes('member.join')).toBe(acceptWon)
+    expect(actions.includes('member.invite_cancel')).toBe(!acceptWon)
+  })
+})
+
+describe('fix round 1: the invitations of an inviter follow the inviter (I2)', () => {
+  test('removing a member cancels their pending invitations (audited); the link then says canceled', async () => {
+    const owner = await person('i2-owner')
+    const accountId = await newAccount(owner)
+    const admin = await memberOf(owner, accountId, 'admin', 'i2-admin')
+    // the admin, about to be removed, invites another address of theirs as admin
+    const second = await person('i2-second')
+    expect((await invite(admin, accountId, second.email, 'admin')).status).toBe(200)
+    const token = await invitationToken(second.email)
+    expect(await post(membersRoute, owner, '/api/account/members', { intent: 'remove', member: await memberId(accountId, admin.userId) })).toMatchObject({
+      location: '/account/members?done=remove',
+    })
+    expect((await invitationsOf(accountId)).find((i) => i.email === second.email)?.status).toBe('canceled')
+    expect(await auditOf(accountId)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ action: 'member.invite_cancel', meta: expect.objectContaining({ email: second.email, reason: 'inviter_removed' }) })]),
+    )
+    expect(await accept(second, token)).toMatchObject({ status: 400, json: expect.objectContaining({ code: 'INVITATION_CANCELED' }) })
+    expect((await membersOf(accountId)).some((m) => m.user_id === second.userId)).toBe(false)
+  })
+
+  test('the invitations a demoted member may no longer give are canceled (audited); the others stay', async () => {
+    const owner = await person('i2-first-owner')
+    const accountId = await newAccount(owner)
+    const other = await memberOf(owner, accountId, 'owner', 'i2-other-owner')
+    const asOwner = address('as-owner')
+    const asEditor = address('as-editor')
+    await invited(other, accountId, asOwner, 'owner')
+    await invited(other, accountId, asEditor, 'editor')
+    const otherMember = await memberId(accountId, other.userId)
+    const statuses = async () =>
+      Object.fromEntries((await invitationsOf(accountId)).filter((i) => i.email === asOwner || i.email === asEditor).map((i) => [i.email, i.status]))
+    // owner to admin: the owner invitation goes, the editor one stays
+    await post(membersRoute, owner, '/api/account/members', { intent: 'role', member: otherMember, role: 'admin' })
+    expect(await statuses()).toEqual({ [asOwner]: 'canceled', [asEditor]: 'pending' })
+    expect(await auditOf(accountId)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ action: 'member.invite_cancel', meta: expect.objectContaining({ email: asOwner, reason: 'inviter_role_changed' }) })]),
+    )
+    // admin to editor: no invitation of theirs stays
+    await post(membersRoute, owner, '/api/account/members', { intent: 'role', member: otherMember, role: 'editor' })
+    expect(await statuses()).toEqual({ [asOwner]: 'canceled', [asEditor]: 'canceled' })
+  })
+
+  test('accepting re-checks the inviter, whatever changed their role', async () => {
+    const owner = await person('i2-check-owner')
+    const accountId = await newAccount(owner)
+    const admin = await memberOf(owner, accountId, 'admin', 'i2-check-admin')
+    const guest = await person('i2-check-guest')
+    expect((await invite(admin, accountId, guest.email, 'admin')).status).toBe(200)
+    const token = await invitationToken(guest.email)
+    // demoted behind the app's back: the invitation row is still pending
+    await asRole('app', (c) => c.query(`update auth_account_member set role = 'viewer' where account_id = $1 and user_id = $2`, [accountId, admin.userId]))
+    expect((await viewInvitation(token, guest.email)).state).toBe('canceled')
+    expect(await accept(guest, token)).toMatchObject({ status: 400, json: expect.objectContaining({ code: 'INVITATION_CANCELED' }) })
+    expect((await membersOf(accountId)).some((m) => m.user_id === guest.userId)).toBe(false)
+  })
+})
+
+describe('fix round 1: limits (ruling R22)', () => {
+  const quiet = async () => undefined
+
+  test('at most 10 accounts created per person; the refusal is translated and audited', async () => {
+    expect(LIMITS.accountsPerUser).toBe(10)
+    const who = await person('many-accounts')
+    for (let i = 1; i < 10; i++) expect(await createAccount(who.userId, `Account ${i}`)).toHaveProperty('accountId')
+    expect(await post(createAccountRoute, who, '/api/accounts/create', { name: 'Tenth' })).toMatchObject({ location: '/account' })
+    expect(await post(createAccountRoute, who, '/api/accounts/create', { name: 'Eleventh' })).toMatchObject({ status: 303, location: '/accounts/new?error=limit' })
+    expect(await createAccount(who.userId, 'Twelfth')).toEqual({ refused: 'account_limit' })
+    const refused = await asRole('system', async (c) =>
+      (await c.query(`select meta from audit_log where action = 'account.create_refused' and actor_user_id = $1`, [who.userId])).rows,
+    )
+    expect(refused).toEqual([{ meta: { reason: 'account_limit' } }, { meta: { reason: 'account_limit' } }])
+  })
+
+  test('concurrent account creations never pass the limit', async () => {
+    const who = await person('accounts-race')
+    const results = await Promise.all(Array.from({ length: 14 }, (_, i) => createAccount(who.userId, `Race ${i}`)))
+    expect(results.filter((r) => 'accountId' in r)).toHaveLength(10)
+  })
+
+  test('at most 50 pending invitations per account', async () => {
+    expect(LIMITS.pendingInvitationsPerAccount).toBe(50)
+    const owner = await person('pending-cap')
+    const accountId = await newAccount(owner)
+    const scope = (await scopeOf(owner))!
+    for (let i = 0; i < 50; i++) expect(await createInvitation(scope, { email: address(`p${i}`), role: 'viewer' }, quiet)).toBe('ok')
+    // sent days ago (no longer in the day's counts), still pending
+    await asRole('migrate', (c) => c.query(`update auth_account_invitation set created_at = now() - interval '2 days' where account_id = $1`, [accountId]))
+    expect(await createInvitation(scope, { email: address('p50'), role: 'viewer' }, quiet)).toBe('pending_limit')
+    expect((await auditOf(accountId)).at(-1)).toMatchObject({ action: 'member.invite_refused', actor_user_id: owner.userId, meta: expect.objectContaining({ reason: 'pending_limit' }) })
+    // through the endpoint: its own code
+    expect(await invite(owner, accountId, address('p51'))).toMatchObject({ status: 400, json: expect.objectContaining({ code: 'INVITATION_LIMIT_PENDING' }) })
+  })
+
+  test('at most 50 invitations per account per day', async () => {
+    expect(LIMITS.invitationsPerAccountPerDay).toBe(50)
+    const owner = await person('account-day')
+    const accountId = await newAccount(owner)
+    const scope = (await scopeOf(owner))!
+    for (let i = 0; i < 50; i++) expect(await createInvitation(scope, { email: address(`d${i}`), role: 'viewer' }, quiet)).toBe('ok')
+    // canceling frees a pending place, not a place of the day
+    const [one] = await invitationsOf(accountId)
+    expect(await cancelInvitation(scope, one!.id)).toBe('ok')
+    expect(await createInvitation(scope, { email: address('d50'), role: 'viewer' }, quiet)).toBe('account_day_limit')
+    expect(await invite(owner, accountId, address('d51'))).toMatchObject({ status: 400, json: expect.objectContaining({ code: 'INVITATION_LIMIT_ACCOUNT_DAY' }) })
+    expect((await auditOf(accountId)).at(-1)).toMatchObject({ action: 'member.invite_refused', meta: expect.objectContaining({ reason: 'account_day_limit' }) })
+  })
+
+  test('at most 100 invitations per person per day, over all their accounts', async () => {
+    expect(LIMITS.invitationsPerUserPerDay).toBe(100)
+    const owner = await person('user-day')
+    const scopes: { accountId: string; userId: string; role: 'owner' }[] = []
+    for (const name of ['One', 'Two', 'Three']) {
+      const created = await createAccount(owner.userId, name)
+      if (!('accountId' in created)) throw new Error('refused')
+      scopes.push({ accountId: created.accountId, userId: owner.userId, role: 'owner' })
+    }
+    for (const scope of scopes.slice(0, 2)) for (let i = 0; i < 50; i++) expect(await createInvitation(scope, { email: address(`u${i}`), role: 'viewer' }, quiet)).toBe('ok')
+    expect(await createInvitation(scopes[2]!, { email: address('u100'), role: 'viewer' }, quiet)).toBe('user_day_limit')
+    expect((await auditOf(scopes[2]!.accountId)).at(-1)).toMatchObject({ action: 'member.invite_refused', meta: expect.objectContaining({ reason: 'user_day_limit' }) })
+  })
+
+  test('concurrent invitations never pass a limit', async () => {
+    const owner = await person('limit-race')
+    const accountId = await newAccount(owner)
+    const scope = (await scopeOf(owner))!
+    const results = await Promise.all(Array.from({ length: 60 }, (_, i) => createInvitation(scope, { email: address(`c${i}`), role: 'viewer' }, quiet)))
+    expect(results.filter((r) => r === 'ok')).toHaveLength(50)
+    expect(await invitationsOf(accountId)).toHaveLength(50)
+  })
+})
+
+describe('fix round 1: minors (ruling R23)', () => {
+  test('expiry is the clock of the database, not the app', async () => {
+    const owner = await person('clock-owner')
+    const accountId = await newAccount(owner)
+    const guest = await person('clock-guest')
+    const token = await invited(owner, accountId, guest.email)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // the app's clock says the 7 days are long over; the database says not
+      vi.setSystemTime(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      expect((await viewInvitation(token, guest.email)).state).toBe('pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('signing up from a page with a next= (the invitation link) brings the verified person back to it; anything off-site is dropped', async () => {
+    const signUpFrom = async (next: string) => {
+      const email = address('next')
+      const request = new Request(`${ORIGIN}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'content-type': 'application/json', referer: `${ORIGIN}/sign-up?${new URLSearchParams({ next })}` },
+        body: JSON.stringify({ name: 'Next Person', email, password: 'correct horse battery staple 42' }),
+      })
+      expect((await handleAuth(request, nextIp())).status).toBe(200)
+      const [mail] = await mailsTo(email)
+      return new URL(mail?.data.url ?? '').searchParams.get('callbackURL')
+    }
+    expect(await signUpFrom('/invite/abc_DEF-123')).toBe(`/verify-email?${new URLSearchParams({ status: 'verified', next: '/invite/abc_DEF-123' })}`)
+    expect(await signUpFrom('//evil.example/x')).toBe('/verify-email?status=verified')
   })
 })

@@ -6,6 +6,7 @@ import AuthPage from '../../../layouts/AuthPage.astro'
 import { localeFromParam } from '../../../i18n/locale'
 import { m } from '../../../paraglide/messages.js'
 import { requireUser } from '../../../server/auth/guard'
+import { LIMITS } from '../../../server/data/accounts'
 
 // Create an account (the signed-in person becomes its owner).
 export const prerender = false
@@ -16,10 +17,12 @@ if (!locale) return Astro.rewrite('/404')
 const signedIn = await requireUser(Astro)
 if (signedIn instanceof Response) return signedIn
 const invalid = Astro.url.searchParams.get('error') === 'name'
+const limited = Astro.url.searchParams.get('error') === 'limit'
 ---
 
 <AuthPage title={m.accounts_new_title()} heading={m.accounts_new_heading()}>
   <p>{m.accounts_new_intro()}</p>
+  {limited && <p role="alert" class="text-destructive text-sm font-medium">{m.accounts_new_error_limit({ max: String(LIMITS.accountsPerUser) })}</p>}
   <form method="post" action="/api/accounts/create" class="grid gap-4">
     <div class="grid gap-2">
       <Label htmlFor="account-name">{m.accounts_new_name_label()}</Label>

@@ -2,7 +2,7 @@
 import AcceptInvitation from '../../../components/accounts/AcceptInvitation'
 import { roleName } from '../../../components/accounts/roles'
 import AuthPage from '../../../layouts/AuthPage.astro'
-import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { localeFromParam, localizedPath, withNext } from '../../../i18n/locale'
 import { m } from '../../../paraglide/messages.js'
 import { signInPath } from '../../../server/auth/guard'
 import { viewInvitation, type InvitationState } from '../../../server/data/accounts'
@@ -39,7 +39,7 @@ const REASONS: Record<Exclude<InvitationState, 'pending'>, () => string> = {
           </a>
         </p>
         <p class="text-sm">
-          <a class="underline underline-offset-4" href={localizedPath('/sign-up', locale)}>
+          <a class="underline underline-offset-4" href={withNext(localizedPath('/sign-up', locale), Astro.url.pathname)}>
             {m.invite_sign_up_link()}
           </a>
         </p>

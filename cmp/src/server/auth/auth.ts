@@ -24,10 +24,9 @@ import { authSchema } from '../data/schema'
 import { env } from '../env'
 import { log } from '../log'
 import { sendMail } from '../jobs/mail'
-import { INVITATION_DAYS } from '../data/accounts'
 import { accountEndpoints, ACCOUNT_PATHS } from './account-endpoints'
 import { organizationRoles } from './permissions'
-import { localeOfRequest, pageLink } from './request-locale'
+import { localeOfRequest, nextOfRequest, pageLink } from './request-locale'
 
 export { localeOfRequest }
 
@@ -72,12 +71,13 @@ function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | un
  * (account-endpoints.ts), which answer 404 for another account's ids and write each change with its audit
  * row in one transaction. Server code may still call its API (`auth.api.setActiveOrganization`).
  */
+// Only what applies with its endpoints switched off: the roles (for its server-side permission checks)
+// and the schema. The real checks live elsewhere: invitations (7 days, bound to one address, used once,
+// the inviter re-checked, limits) and every member change in src/server/data/accounts.ts; who may do
+// what in permissions.ts; the account kept with an owner by the database (drizzle/0006_accounts.sql);
+// accounts are not deleted (no route does it).
 const accounts = organization({
   roles: organizationRoles,
-  creatorRole: 'owner',
-  invitationExpiresIn: INVITATION_DAYS * 24 * 60 * 60,
-  requireEmailVerificationOnInvitation: true,
-  disableOrganizationDeletion: true,
   schema: {
     member: { fields: { organizationId: 'accountId' } },
     invitation: {
@@ -138,7 +138,9 @@ function authOptions(publicOrigin: string) {
         // Better Auth checks the token, then redirects to our page (with `error=` when the link is bad).
         const url = new URL(`${AUTH_BASE_PATH}/verify-email`, env.PUBLIC_ORIGIN)
         url.searchParams.set('token', token)
-        url.searchParams.set('callbackURL', `${localizedPath('/verify-email', locale)}?status=verified`)
+        // back to where sign-up was asked from (an invitation's link), when that is a page of this site
+        const next = nextOfRequest(request)
+        url.searchParams.set('callbackURL', `${localizedPath('/verify-email', locale)}?${new URLSearchParams(next ? { status: 'verified', next } : { status: 'verified' })}`)
         await sendMail({ to: user.email, template: 'verify-email', locale, data: { url: url.href } })
       },
     },

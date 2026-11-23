@@ -1,7 +1,7 @@
 ---
 import ResendVerificationForm from '../../components/auth/ResendVerificationForm'
 import AuthPage from '../../layouts/AuthPage.astro'
-import { localeFromParam, localizedPath } from '../../i18n/locale'
+import { localeFromParam, localizedPath, withNext } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
 
 // After sign-up (`status=sent`), and where the emailed link lands once Better Auth has checked it
@@ -24,7 +24,7 @@ const state = params.has('error') ? 'failed' : params.get('status') === 'verifie
       <>
         <p role="status">{m.verify_email_done()}</p>
         <p>
-          <a class="font-medium underline underline-offset-4" href={localizedPath('/sign-in', locale)}>
+          <a class="font-medium underline underline-offset-4" href={withNext(localizedPath('/sign-in', locale), params.get('next'))}>
             {m.sign_in_heading()}
           </a>
         </p>

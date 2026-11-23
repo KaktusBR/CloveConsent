@@ -1,18 +1,21 @@
 ---
 import SignUpForm from '../../components/auth/SignUpForm'
 import AuthPage from '../../layouts/AuthPage.astro'
-import { localeFromParam, localizedPath } from '../../i18n/locale'
+import { localeFromParam, localizedPath, withNext } from '../../i18n/locale'
 import { m } from '../../paraglide/messages.js'
 
 export const prerender = false
 
 const locale = localeFromParam(Astro.params.locale)
 if (!locale) return Astro.rewrite('/404')
+// where to go once signed in (an invitation's link): carried to sign-in; the confirmation email reads it
+// from this page's address (src/server/auth/auth.ts)
+const next = Astro.url.searchParams.get('next')
 ---
 
 <AuthPage title={m.sign_up_title()} heading={m.sign_up_heading()}>
   <SignUpForm client:load sentHref={`${localizedPath('/verify-email', locale)}?status=sent`} />
   <p class="text-sm">
-    <a class="underline underline-offset-4" href={localizedPath('/sign-in', locale)}>{m.sign_up_sign_in_link()}</a>
+    <a class="underline underline-offset-4" href={withNext(localizedPath('/sign-in', locale), next)}>{m.sign_up_sign_in_link()}</a>
   </p>
 </AuthPage>

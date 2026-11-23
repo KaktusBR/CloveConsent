@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import { ROLES } from '../../../lib/roles'
 import { bigint, boolean, check, index, integer, pgTable, text, timestamp, unique, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 /**
@@ -142,9 +143,8 @@ export const rateLimit = pgTable('auth_rate_limit', {
   lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
 })
 
-/** The roles of a member (src/server/auth/permissions.ts says what each may do). */
-export const ROLES = ['owner', 'admin', 'editor', 'viewer'] as const
-const roleIsKnown = (column: AnyPgColumn) => sql`${column} in ('owner', 'admin', 'editor', 'viewer')`
+/** The roles of a member (src/lib/roles.ts; src/server/auth/permissions.ts says what each may do). */
+const roleIsKnown = (column: AnyPgColumn) => sql`${column} in (${sql.raw(ROLES.map((r) => `'${r}'`).join(', '))})`
 
 /**
  * An account: the paying customer, which people belong to as members. Never deleted by the app (account
@@ -157,6 +157,8 @@ export const organization = pgTable('auth_account', {
   slug: text('slug').notNull().unique(),
   logo: text('logo'),
   metadata: text('metadata'),
+  /** Who created it: at most LIMITS.accountsPerUser per person (src/server/data/accounts.ts). */
+  createdBy: uuid('created_by').references(() => user.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
 })
 
@@ -209,6 +211,8 @@ export const invitation = pgTable(
   (t) => [
     index('auth_account_invitation_account_id_idx').on(t.accountId),
     index('auth_account_invitation_email_idx').on(t.email),
+    // the day's counts per inviter (src/server/data/accounts.ts, LIMITS)
+    index('auth_account_invitation_inviter_created_idx').on(t.inviterId, t.createdAt),
     check('auth_account_invitation_role_check', roleIsKnown(t.role)),
     check('auth_account_invitation_status_check', sql`${t.status} in ('pending', 'accepted', 'rejected', 'canceled')`),
   ],

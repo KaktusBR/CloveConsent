@@ -20,6 +20,9 @@ const MESSAGES: Readonly<Record<string, () => string>> = {
   ALREADY_MEMBER: m.members_error_already_member,
   ALREADY_INVITED: m.members_error_already_invited,
   OWNER_ONLY: m.members_error_owner_only,
+  INVITATION_LIMIT_PENDING: m.members_error_limit_pending,
+  INVITATION_LIMIT_ACCOUNT_DAY: m.members_error_limit_account_day,
+  INVITATION_LIMIT_USER_DAY: m.members_error_limit_user_day,
 }
 
 /** Invites an email address to the account; the invitation's email is sent by the server. */

@@ -4,8 +4,8 @@
 // resources (organizationRoles), so its server-side checks agree with ours.
 import { createAccessControl } from 'better-auth/plugins/access'
 import { defaultStatements } from 'better-auth/plugins/organization/access'
-import { ROLES } from '../data/schema/auth'
-import type { AccountScope, Role } from '../data/scope'
+import { isRole, ROLES, type Role } from '../../lib/roles'
+import type { AccountScope } from '../data/scope'
 
 /** The product's resources and their actions. */
 export const statement = {
@@ -53,9 +53,7 @@ export function can<R extends Resource>(scope: AccountScope | null | undefined, 
   return roles[scope.role].authorize({ [resource]: [action] }).success
 }
 
-export function isRole(value: unknown): value is Role {
-  return typeof value === 'string' && (ROLES as readonly string[]).includes(value)
-}
+export { isRole }
 
 /** The same roles in the organization plugin's terms (its statement names other resources and actions). */
 const organizationAc = createAccessControl(defaultStatements)

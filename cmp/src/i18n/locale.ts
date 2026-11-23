@@ -105,6 +105,12 @@ export function sameSitePath(next: string | null | undefined): string | null {
   return isLocalTarget(target) && isLocalTarget(next) ? target : null
 }
 
+/** `path` with `next=` added when `next` is a path on this site ({@link sameSitePath}), else `path` alone. */
+export function withNext(path: string, next: string | null | undefined): string {
+  const safe = sameSitePath(next)
+  return safe ? `${path}?${new URLSearchParams({ next: safe })}` : path
+}
+
 /** The first shipped language in an Accept-Language header, by q-value; `de-AT` also tries `de`. */
 function fromAcceptLanguage(header: string): Locale | null {
   const ranges = header

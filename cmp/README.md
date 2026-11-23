@@ -283,6 +283,15 @@ active account is `auth_session.active_account_id`. Pages: `/accounts/new`, `/ac
   ours (`/api/auth/account/invite`, `/api/auth/account/accept-invitation`,
   `src/server/auth/account-endpoints.ts`), rate limited per client address: 20 invitations per 10 minutes,
   10 accept attempts per minute.
+- An invitation never outlives its inviter's right to give it: removing a member cancels their pending
+  invitations, demoting one cancels those of roles they may no longer give (each audited), and accepting
+  re-checks the inviter. Accepting, canceling and every member change take the account row's lock, so
+  they never interleave. Expiry is the database's clock.
+- Limits (ruling R22, `LIMITS` in `src/server/data/accounts.ts`, counted in the database under a lock):
+  10 accounts created per person; 50 pending invitations per account; 50 invitations per account and 100
+  per person in 24 hours. A refusal is shown translated and written to the audit log.
+- The invitation page's sign-in and sign-up links carry `next=` back to it (only a path on this site);
+  the confirmation email of a sign-up started there leads back to it too.
 - `audit_log.account_id` references `auth_account` (no action on delete): an account with audit rows
   cannot be deleted until account deletion decides what happens to them (it is not offered yet).
 

@@ -1,5 +1,5 @@
 // The language of a request's emails, and links into this site for them.
-import { localeOfPath, localizedPath, LOCALE_COOKIE, preferredLocale, type Locale } from '../../i18n/locale'
+import { localeOfPath, localizedPath, LOCALE_COOKIE, preferredLocale, sameSitePath, type Locale } from '../../i18n/locale'
 import { env } from '../env'
 
 /**
@@ -14,6 +14,17 @@ export function localeOfRequest(request: Request | undefined): Locale {
   }
   const cookie = request?.headers.get('cookie')?.match(new RegExp(`(?:^|;\\s*)${LOCALE_COOKIE}=([^;]*)`))?.[1] ?? null
   return preferredLocale(cookie, request?.headers.get('accept-language') ?? null)
+}
+
+/**
+ * The `next=` of the page a request came from (its Referer on this site): where to go once signed in,
+ * only when it is a path on this site (sameSitePath), else null.
+ */
+export function nextOfRequest(request: Request | undefined): string | null {
+  const referer = request?.headers.get('referer')
+  if (!referer || !URL.canParse(referer)) return null
+  const url = new URL(referer)
+  return url.origin === env.PUBLIC_ORIGIN ? sameSitePath(url.searchParams.get('next')) : null
 }
 
 /** An absolute link to a page of this site in `locale`. */
