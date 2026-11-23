@@ -1,0 +1,33 @@
+---
+import Base from '../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { requireAccount } from '../../../server/auth/guard'
+import { accountOf } from '../../../server/data/accounts'
+
+// The sites of the account the person works in: the product itself, so only for an account that has paid
+// or is in its grace period (anyone else is sent to the paywall by src/server/auth/access.ts). Empty until
+// a later plan brings sites.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const here = await requireAccount(Astro)
+if (here instanceof Response) return here
+const account = await accountOf(here.scope)
+if (!account) return Astro.rewrite('/404')
+const entitlement = Astro.locals.entitlement
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' })
+---
+
+<Base title={m.sites_title({ account: account.name })}>
+  <main class="mx-auto grid max-w-2xl gap-8 px-4 py-12">
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight">{m.sites_heading()}</h1>
+      <a class="text-sm underline underline-offset-4" href={localizedPath('/account', locale)}>{account.name}</a>
+    </div>
+    {entitlement?.state === 'grace' && entitlement.graceEndsAt && <p role="status">{m.sites_grace({ date: day.format(entitlement.graceEndsAt) })}</p>}
+    <p class="text-muted-foreground">{m.sites_none()}</p>
+  </main>
+</Base>

@@ -68,13 +68,16 @@ const MAX_NAME = 100
 const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
 const JOINERS = /[‌‍]/gu
 
-/** An account name as given (trimmed), or null when it is empty, too long or holds control characters. */
-export function accountName(value: unknown): string | null {
+/** A line of text as given (trimmed), or null when it is empty, longer than `max` or holds control characters. */
+export function plainText(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null
-  const name = value.trim()
-  if (name === '' || name.length > MAX_NAME || CONTROL.test(name.replace(JOINERS, ''))) return null
-  return name
+  const text = value.trim()
+  if (text === '' || text.length > max || CONTROL.test(text.replace(JOINERS, ''))) return null
+  return text
 }
+
+/** An account name as given (trimmed), or null when it is empty, too long or holds control characters. */
+export const accountName = (value: unknown): string | null => plainText(value, MAX_NAME)
 
 /**
  * Limits (ruling R22). Each is checked inside the transaction that would pass it, under a lock that makes

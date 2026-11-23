@@ -1,0 +1,54 @@
+---
+import AccountSwitcher from '../../components/AccountSwitcher'
+import Base from '../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+import { requireAccount } from '../../server/auth/guard'
+import { accountOf, accountsOf } from '../../server/data/accounts'
+import { entitlementOf } from '../../server/data/entitlements'
+
+// Where an account that has not paid lands for any product page (src/server/auth/access.ts): what its
+// plan's state is, and the way to its settings (or to another of the person's accounts). No site data.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const here = await requireAccount(Astro)
+if (here instanceof Response) return here
+const { scope } = here
+const account = await accountOf(scope)
+if (!account) return Astro.rewrite('/404')
+const entitlement = Astro.locals.entitlement ?? (await entitlementOf(scope.accountId))
+const accounts = await accountsOf(scope.userId)
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' })
+const paid = entitlement.state === 'active' || entitlement.state === 'grace'
+---
+
+<Base title={m.paywall_title({ account: account.name })}>
+  <main class="mx-auto grid max-w-2xl gap-8 px-4 py-12">
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight">{paid ? account.name : m.paywall_heading()}</h1>
+      {paid && <p>{m.paywall_active()}</p>}
+      {entitlement.state === 'none' && <p>{m.paywall_none()}</p>}
+      {entitlement.state === 'necessary-only' && entitlement.graceEndsAt && <p>{m.paywall_necessary_only({ date: day.format(entitlement.graceEndsAt) })}</p>}
+    </div>
+    {accounts.length > 1 && <AccountSwitcher accounts={accounts} activeId={account.id} />}
+    <ul class="grid gap-2">
+      {
+        paid && (
+          <li>
+            <a class="underline underline-offset-4" href={localizedPath('/sites', locale)}>
+              {m.paywall_sites_link()}
+            </a>
+          </li>
+        )
+      }
+      <li>
+        <a class="underline underline-offset-4" href={localizedPath('/account', locale)}>
+          {m.paywall_account_link()}
+        </a>
+      </li>
+    </ul>
+  </main>
+</Base>

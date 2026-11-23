@@ -1,0 +1,76 @@
+---
+import AdminNav from '../../../../components/admin/AdminNav.astro'
+import { planName, stateName } from '../../../../components/admin/names'
+import { Button } from '../../../../components/ui/button'
+import { Input } from '../../../../components/ui/input'
+import { Label } from '../../../../components/ui/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../../components/ui/table'
+import Base from '../../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../../i18n/locale'
+import { m } from '../../../../paraglide/messages.js'
+import { requireSuperAdmin } from '../../../../server/auth/guard'
+import { searchAccounts } from '../../../../server/data/admin'
+import { listPlans, paidThrough } from '../../../../server/data/entitlements'
+
+// The super-admin console: every account (the newest first), or those a search finds. A 404 for anyone
+// but a super-admin (src/server/auth/access.ts).
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const root = await requireSuperAdmin(Astro)
+if (root instanceof Response) return root
+const query = (Astro.url.searchParams.get('q') ?? '').slice(0, 200)
+const [accounts, plans] = await Promise.all([searchAccounts(root.user.id, query), listPlans()])
+const plansById = new Map(plans.map((p) => [p.id, p]))
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
+---
+
+<Base title={m.admin_accounts_title()} indexable={false}>
+  <main class="mx-auto grid max-w-5xl gap-8 px-4 py-12">
+    <AdminNav current="accounts" />
+    <h1 class="text-3xl font-semibold tracking-tight">{m.admin_accounts_heading()}</h1>
+    <form method="get" role="search" class="flex flex-wrap items-end gap-2">
+      <div class="grid gap-2">
+        <Label htmlFor="admin-accounts-q">{m.admin_accounts_search_label()}</Label>
+        <Input id="admin-accounts-q" name="q" type="search" defaultValue={query} className="w-80 max-w-full" />
+      </div>
+      <Button type="submit" variant="outline">{m.admin_accounts_search_submit()}</Button>
+    </form>
+    {accounts.length === 0 && <p class="text-muted-foreground">{m.admin_accounts_none()}</p>}
+    {
+      accounts.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{m.admin_accounts_col_name()}</TableHead>
+              <TableHead>{m.admin_accounts_col_state()}</TableHead>
+              <TableHead>{m.admin_accounts_col_plan()}</TableHead>
+              <TableHead>{m.admin_accounts_col_paid_until()}</TableHead>
+              <TableHead>{m.admin_accounts_col_created()}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {accounts.map((account) => {
+              const plan = account.entitlement.planId ? plansById.get(account.entitlement.planId) : undefined
+              return (
+                <TableRow>
+                  <TableCell>
+                    <a class="underline underline-offset-4" href={localizedPath(`/admin/accounts/${account.id}`, locale)}>
+                      {account.name}
+                    </a>
+                  </TableCell>
+                  <TableCell>{stateName(account.entitlement.state)}</TableCell>
+                  <TableCell>{plan ? planName(plan) : ''}</TableCell>
+                  <TableCell>{account.entitlement.paidUntil ? day.format(paidThrough(account.entitlement.paidUntil)) : ''}</TableCell>
+                  <TableCell>{day.format(account.createdAt)}</TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      )
+    }
+  </main>
+</Base>

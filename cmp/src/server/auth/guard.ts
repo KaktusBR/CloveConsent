@@ -3,8 +3,11 @@
 import type { AstroGlobal } from 'astro'
 import { localizedPath, sameSitePath, splitLocalePrefix } from '../../i18n/locale'
 import { auth, type AuthSession } from './auth'
+import { accessFor, type Access } from './access'
 import { isComplete } from './complete'
+import { IMPERSONATION_SECONDS, impersonatorOf, superAdminStatus, type SuperAdminStatus } from './super-admin'
 import { scopeFor } from '../data/accounts'
+import { entitlementOf, type Entitlement } from '../data/entitlements'
 import type { AccountScope } from '../data/scope'
 
 /**
@@ -19,6 +22,8 @@ import type { AccountScope } from '../data/scope'
 export async function completeSession(headers: Headers, responseHeaders?: Headers): Promise<AuthSession | null> {
   const { headers: answer, response: found } = await auth.api.getSession({ headers, returnHeaders: true })
   if (!found || !isComplete(found)) return null
+  // a super-admin's view as a member ends after its time, whatever the session row says
+  if (impersonatorOf(found) !== null && Date.now() - found.session.createdAt.getTime() >= IMPERSONATION_SECONDS * 1000) return null
   if (responseHeaders) for (const cookie of answer.getSetCookie()) responseHeaders.append('Set-Cookie', cookie)
   return found
 }
@@ -32,6 +37,35 @@ export async function signedInScope(headers: Headers, responseHeaders?: Headers)
   const session = await completeSession(headers, responseHeaders)
   const scope = session ? await scopeFor(session.user.id, session.session.activeOrganizationId) : null
   return { session, scope }
+}
+
+/** What the middleware knows about a request once it has read who it comes from, and what to do with it. */
+export interface RequestAccess {
+  session: AuthSession | null
+  scope: AccountScope | null
+  /** The entitlement of the scope's account (null without a scope). */
+  entitlement: Entitlement | null
+  superAdmin: SuperAdminStatus
+  access: Access
+}
+
+/**
+ * Reads who a request comes from (session, account scope, the account's entitlement), all from the
+ * database now, and applies the access rules (src/server/auth/access.ts): a super-admin marking an
+ * account paid, a suspension, a removed membership all count from the next request, with no new sign-in.
+ */
+export async function requestAccess(request: Request, responseHeaders?: Headers): Promise<RequestAccess> {
+  const { session, scope } = await signedInScope(request.headers, responseHeaders)
+  const entitlement = scope ? await entitlementOf(scope.accountId) : null
+  const superAdmin = superAdminStatus(session)
+  const access = accessFor({
+    method: request.method,
+    pathname: new URL(request.url).pathname,
+    impersonating: impersonatorOf(session) !== null,
+    superAdmin,
+    entitlement: entitlement?.state ?? null,
+  })
+  return { session, scope, entitlement, superAdmin, access }
 }
 
 /** The sign-in page, in the page's language, with where to come back to (a path on this site only). */
@@ -70,4 +104,17 @@ export async function requireAccount(astro: AstroGlobal): Promise<{ signedIn: Au
   const scope = astro.locals.scope
   if (!scope || scope.userId !== signedIn.user.id) return astro.redirect(localizedPath('/accounts/new', astro.locals.locale), 303)
   return { signedIn, scope }
+}
+
+/**
+ * For a page of the super-admin console: the super-admin's session, or the 404 page for anyone else (the
+ * middleware has already answered so; this checks again). Never cached.
+ *
+ *   const root = await requireSuperAdmin(Astro)
+ *   if (root instanceof Response) return root
+ */
+export async function requireSuperAdmin(astro: AstroGlobal): Promise<AuthSession | Response> {
+  astro.response.headers.set('Cache-Control', 'no-store')
+  const session = astro.locals.session ?? null
+  return session && superAdminStatus(session) === 'super-admin' ? session : astro.rewrite('/404')
 }

@@ -21,3 +21,9 @@ export function linkIn(text: string, origin: string): string {
   if (!link) throw new Error('no link in the mail')
   return link
 }
+
+/** Deletes every mail to `to` (for a fixed address that an earlier run also wrote to). */
+export async function deleteMailTo(to: string): Promise<void> {
+  const response = await fetch(`${MAILPIT}/api/v1/search?${new URLSearchParams({ query: `to:"${to}"` })}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(`Mailpit did not delete the mail to ${to}`)
+}

@@ -6,7 +6,8 @@ import { bigint, boolean, check, index, integer, pgTable, text, timestamp, uniqu
  * Better Auth's identity tables (ruling R2): sign-in identities, not tenant data. They have no account_id
  * and no row-level security; Better Auth guards them, through the adapter handle of auth-database.ts on
  * the app role. Grants (in the migration): to cmp_app only what Better Auth does with each table, never
- * TRUNCATE; nothing to cmp_system. test/db/rls.test.ts holds the list and checks those grants.
+ * TRUNCATE; to cmp_system only what the clean-up job deletes and the columns the super-admin console
+ * shows. test/db/rls.test.ts holds the list and checks those grants.
  *
  * The object keys are Better Auth's model names (the adapter finds tables by them); the SQL names carry an
  * `auth_` prefix, so raw SQL never meets the reserved word `user`, and Better Auth's `account` (a
@@ -32,6 +33,12 @@ export const user = pgTable('auth_user', {
   emailVerified: boolean('email_verified').default(false).notNull(),
   image: text('image'),
   twoFactorEnabled: boolean('two_factor_enabled').default(false).notNull(),
+  // The admin plugin's fields (Task 8), required by its schema. Unused by the app: a super-admin is an
+  // address in SUPER_ADMIN_EMAILS (src/server/auth/super-admin.ts), never this role, and no one is banned.
+  role: text('role'),
+  banned: boolean('banned').default(false),
+  banReason: text('ban_reason'),
+  banExpires: timestamp('ban_expires', { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 })
@@ -54,6 +61,11 @@ export const session = pgTable(
      * request checks it against the memberships (src/server/data/accounts.ts, scopeFor).
      */
     activeAccountId: uuid('active_account_id').references((): AnyPgColumn => organization.id, { onDelete: 'set null' }),
+    /**
+     * The super-admin viewing as this session's user (the admin plugin's read-only impersonation,
+     * src/server/auth/super-admin.ts). Such a session can write nothing and ends after its time.
+     */
+    impersonatedBy: uuid('impersonated_by').references((): AnyPgColumn => user.id, { onDelete: 'cascade' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

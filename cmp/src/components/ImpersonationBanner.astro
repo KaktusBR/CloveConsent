@@ -1,0 +1,23 @@
+---
+// Shown on every page while a super-admin views the app as a member (src/server/auth/super-admin.ts):
+// who, that it is read-only, until when, and the one button that works (stopping it).
+import { Button } from './ui/button'
+import { m } from '../paraglide/messages.js'
+
+interface Props {
+  /** The member viewed as. */
+  user: { name: string; email: string }
+  /** When the view ends. */
+  endsAt: Date
+}
+
+const { user, endsAt } = Astro.props
+const time = new Intl.DateTimeFormat(Astro.locals.locale, { timeStyle: 'short', timeZone: 'UTC' }).format(endsAt)
+---
+
+<section aria-label={m.impersonation_label()} class="border-destructive bg-secondary text-secondary-foreground flex flex-wrap items-center justify-between gap-4 border-b-4 px-4 py-3">
+  <p class="font-medium break-all">{m.impersonation_banner({ name: user.name, email: user.email, time })}</p>
+  <form method="post" action="/api/impersonation/stop">
+    <Button type="submit" size="sm">{m.impersonation_stop()}</Button>
+  </form>
+</section>

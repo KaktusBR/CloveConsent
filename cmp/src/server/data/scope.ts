@@ -51,7 +51,7 @@ async function runScoped<T, H>(tx: Transaction, label: string, fn: (handle: H) =
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Run `fn` in one transaction that sees and writes only `scope.accountId`'s tenant rows. */
-export async function withAccount<T>(scope: AccountScope, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
+export async function withAccount<T>(scope: Pick<AccountScope, 'accountId'>, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
   if (!UUID.test(scope.accountId)) throw new TypeError('withAccount: the account id must be a uuid')
   return appDatabase.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.account_id', ${scope.accountId}, true)`)
@@ -61,11 +61,11 @@ export async function withAccount<T>(scope: AccountScope, fn: (tx: TenantTx) => 
 
 /**
  * Run `fn` in one transaction on the system role. Super-admin and worker code only. The access is
- * written to the audit log with its reason before `fn` runs, in its own statement, so it stays recorded
- * even when `fn` fails.
+ * written to the audit log with its reason (and the super-admin it is for, if any) before `fn` runs, in
+ * its own statement, so it stays recorded even when `fn` fails.
  */
-export async function asSystem<T>(reason: string, fn: (tx: SystemTx) => Promise<T>): Promise<T> {
+export async function asSystem<T>(reason: string, fn: (tx: SystemTx) => Promise<T>, actorUserId: string | null = null): Promise<T> {
   if (reason.trim() === '') throw new TypeError('asSystem: a reason is required')
-  await appendAuditEvent(systemDatabase, { action: 'system.access', meta: { reason: reason.trim() }, actorUserId: null, accountId: null })
+  await appendAuditEvent(systemDatabase, { action: 'system.access', meta: { reason: reason.trim() }, actorUserId, accountId: null })
   return systemDatabase.transaction((tx) => runScoped(tx, 'asSystem', fn))
 }

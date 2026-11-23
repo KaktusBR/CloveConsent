@@ -1,0 +1,77 @@
+---
+import AdminNav from '../../../components/admin/AdminNav.astro'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table'
+import Base from '../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../i18n/locale'
+import { m } from '../../../paraglide/messages.js'
+import { requireSuperAdmin } from '../../../server/auth/guard'
+import { auditEvents, CONSOLE_PAGE } from '../../../server/data/admin'
+
+// The super-admin's audit log viewer: the newest events of every account (and the system's), or of one
+// account (`?account=<id>`). A 404 for anyone but a super-admin.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const root = await requireSuperAdmin(Astro)
+if (root instanceof Response) return root
+const accountId = Astro.url.searchParams.get('account') ?? undefined
+const events = await auditEvents(root.user.id, { accountId })
+const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' })
+const count = String(CONSOLE_PAGE)
+---
+
+<Base title={m.admin_audit_title()} indexable={false}>
+  <main class="mx-auto grid max-w-6xl gap-8 px-4 py-12">
+    <AdminNav current="audit" />
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight">{m.admin_audit_heading()}</h1>
+      <p class="text-muted-foreground">{accountId ? m.admin_audit_filtered({ count }) : m.admin_audit_intro({ count })}</p>
+      {accountId && <a class="text-sm underline underline-offset-4" href={localizedPath('/admin/audit', locale)}>{m.admin_audit_all()}</a>}
+    </div>
+    {events.length === 0 && <p class="text-muted-foreground">{m.admin_audit_none()}</p>}
+    {
+      events.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{m.admin_audit_col_time()}</TableHead>
+              <TableHead>{m.admin_audit_col_action()}</TableHead>
+              <TableHead>{m.admin_audit_col_actor()}</TableHead>
+              <TableHead>{m.admin_audit_col_account()}</TableHead>
+              <TableHead>{m.admin_audit_col_target()}</TableHead>
+              <TableHead>{m.admin_audit_col_details()}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {events.map((event) => (
+              <TableRow data-audit-action={event.action}>
+                <TableCell className="whitespace-nowrap">{when.format(event.createdAt)}</TableCell>
+                <TableCell>
+                  <code>{event.action}</code>
+                </TableCell>
+                <TableCell className="break-all whitespace-normal">{event.actorEmail ?? event.actorUserId ?? m.admin_audit_system()}</TableCell>
+                <TableCell className="break-all whitespace-normal">
+                  {event.accountId ? (
+                    <a class="underline underline-offset-4" href={localizedPath(`/admin/accounts/${event.accountId}`, locale)}>
+                      {event.accountName ?? event.accountId}
+                    </a>
+                  ) : (
+                    m.admin_audit_global()
+                  )}
+                </TableCell>
+                <TableCell className="break-all whitespace-normal">
+                  <code>{event.target ?? ''}</code>
+                </TableCell>
+                <TableCell className="break-all whitespace-normal">
+                  <code>{JSON.stringify(event.meta)}</code>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )
+    }
+  </main>
+</Base>

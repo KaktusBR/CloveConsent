@@ -17,5 +17,10 @@ declare namespace App {
      * out or a member of no account. Set with `session`.
      */
     scope?: import('./server/data/scope').AccountScope | null
+    /**
+     * What the scope's account has paid for (src/server/data/entitlements.ts), read from the database on
+     * every request; null without a scope. Set with `session`.
+     */
+    entitlement?: import('./server/data/entitlements').Entitlement | null
   }
 }

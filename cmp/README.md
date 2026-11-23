@@ -54,7 +54,7 @@ an error that names the variable and what it must be; values are never printed o
 | `PUBLIC_ORIGIN` | yes | the app's public origin, e.g. `https://consent.example`; `http` only for `localhost`, `127.0.0.1`, `[::1]` and never with `NODE_ENV=production`; no path. Links, cookies and emails derive from it: no domain is written in the code |
 | `SMTP_URL` | yes | `smtp://` or `smtps://` URL |
 | `MAIL_FROM` | yes | `address` or `Name <address>` |
-| `SUPER_ADMIN_EMAILS` | no | comma-separated email addresses |
+| `SUPER_ADMIN_EMAILS` | no | comma-separated email addresses of the super-admins (each must also be verified and have two-factor authentication on; see Paid access and the console) |
 | `NODE_ENV` | no | `development` (default), `test` or `production` |
 | `TRUSTED_PROXIES` | no | comma-separated IP addresses or CIDR ranges of the reverse proxies whose `X-Forwarded-For` names the client (not `/0`); empty (default): the connection's peer is the client. See Sign-in |
 
@@ -294,6 +294,45 @@ active account is `auth_session.active_account_id`. Pages: `/accounts/new`, `/ac
   the confirmation email of a sign-up started there leads back to it too.
 - `audit_log.account_id` references `auth_account` (no action on delete): an account with audit rows
   cannot be deleted until account deletion decides what happens to them (it is not offered yet).
+
+## Paid access and the super-admin console
+
+Customers get the product only once their account is paid. Until a payment provider is chosen, a
+super-admin marks accounts paid by hand.
+
+- Plans are data: the `plans` table (reference data, the same for every account, seeded by
+  `drizzle/0008_entitlements.sql`): id, catalog key of the name, limits `{ sites, languages,
+  scansPerMonth, recordsPerMonth, members }`. The limits are enforced by the parts of the product they
+  limit, in later plans (Task 7's account and invitation limits stay as they are).
+- `entitlements` (tenant data, forced row-level security; the app role may only read its current
+  account's row, the system role reads and writes): plan, `paid_until` (exclusive), `suspended_at`.
+  `entitlementOf(accountId)` (`src/server/data/entitlements.ts`) gives the state: `active` before
+  `paid_until`; `grace` for 30 days after it or after a suspension, whichever comes first; then
+  `necessary-only`; `none` when never paid.
+- The gate (`src/server/auth/access.ts`, applied by the middleware on every request with the session,
+  account and entitlement read from the database): an account in `necessary-only` or `none` gets the
+  paywall (`/paywall`) for every page and 402 `PAYMENT_REQUIRED` for every endpoint, except those listed
+  as open: account settings, signing in, invitations, public pages. Deny by default: a new route is
+  behind the paywall (`test/unit/access.test.ts` makes each new route be classified). Marking an
+  account paid counts from its next request, with no new sign-in.
+- The console (`/admin/accounts`, `/admin/accounts/<id>`, `/admin/audit`, each also under `/sk/`; form
+  endpoints `/api/admin/*`): for super-admins only, a person whose address is in `SUPER_ADMIN_EMAILS`,
+  verified, with two-factor authentication on, on a session that passed it. Anyone else gets the 404
+  page (or an empty 404) for every console path, so it never shows that it exists; a listed person
+  without two-factor authentication is sent to `/account/security` to turn it on. It lists and searches
+  accounts (name, id, a member's address), sets an account's plan and the day it is paid through,
+  suspends and unsuspends, shows the audit log, and opens a read-only view as a member. Every change
+  needs a reason and is written with it and the super-admin's id to the account's audit log in the same
+  transaction; every console read is recorded as `system.access` with the super-admin's id. The console
+  reads through the system role, which sees only the account, member and person columns it shows.
+- Read-only impersonation (Better Auth's admin plugin; its HTTP endpoints are switched off, the console
+  calls it after its own checks): a session as the member, in that account, for 30 minutes, never
+  extended. Every page shows a banner with a button to stop. Any request other than GET or HEAD from
+  it is refused with 403 `IMPERSONATION_READ_ONLY`: by the middleware for the app's routes, and by a
+  Better Auth hook for its own endpoints; stopping it (`/api/impersonation/stop`) is the one exception.
+  Super-admins cannot be impersonated. Start and stop are in the account's audit log.
+- Rate limits (per super-admin and per client address, `ADMIN_LIMITS` in
+  `src/server/auth/super-admin.ts`): 30 changes and 10 impersonations per 10 minutes.
 
 ## Health
 

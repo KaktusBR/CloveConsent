@@ -1,5 +1,6 @@
 export { appRole, systemRole, isCurrentAccount } from './tenancy'
 export { auditLog } from './audit'
+export { entitlements, plans, type PlanLimits } from './plans'
 export {
   account as authCredential,
   invitation as accountInvitation,

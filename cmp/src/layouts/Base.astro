@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css'
+import ImpersonationBanner from '../components/ImpersonationBanner.astro'
 import LocaleSwitcher from '../components/LocaleSwitcher.astro'
 import ThemeToggle from '../components/ThemeToggle'
 import { baseLocale, localizedPath, locales, splitLocalePrefix, type Locale } from '../i18n/locale'
@@ -21,6 +22,9 @@ const { path } = splitLocalePrefix(Astro.url.pathname)
 // A prerendered page is built without the server's environment: only PUBLIC_ORIGIN is needed then.
 const origin = Astro.isPrerendered ? buildOrigin() : (await import('../server/env')).env.PUBLIC_ORIGIN
 const href = (l: Locale) => new URL(localizedPath(path, l), origin).href
+// a super-admin's read-only view as a member (src/server/auth/super-admin.ts): bannered on every page
+const session = Astro.locals.session
+const viewing = session && (session.session as { impersonatedBy?: string | null }).impersonatedBy ? session : null
 ---
 
 <!doctype html>
@@ -45,6 +49,7 @@ const href = (l: Locale) => new URL(localizedPath(path, l), origin).href
     <script is:inline set:html={THEME_SCRIPT} />
   </head>
   <body class="min-h-dvh antialiased">
+    {viewing && <ImpersonationBanner user={viewing.user} endsAt={viewing.session.expiresAt} />}
     <header class="flex items-center justify-end gap-4 p-4">
       <ThemeToggle client:load label={m.theme_toggle_label()} />
       <LocaleSwitcher path={path + Astro.url.search} current={locale} />

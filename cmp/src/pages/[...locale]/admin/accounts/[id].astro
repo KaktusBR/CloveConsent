@@ -1,0 +1,144 @@
+---
+import AdminNav from '../../../../components/admin/AdminNav.astro'
+import { planName, stateName } from '../../../../components/admin/names'
+import { roleName } from '../../../../components/accounts/roles'
+import { Button } from '../../../../components/ui/button'
+import { Input } from '../../../../components/ui/input'
+import { Label } from '../../../../components/ui/label'
+import { NativeSelect } from '../../../../components/ui/native-select'
+import Base from '../../../../layouts/Base.astro'
+import { localeFromParam, localizedPath } from '../../../../i18n/locale'
+import { m } from '../../../../paraglide/messages.js'
+import { requireSuperAdmin } from '../../../../server/auth/guard'
+import { IMPERSONATION_MINUTES, isListedSuperAdmin } from '../../../../server/auth/super-admin'
+import { accountDetail } from '../../../../server/data/admin'
+import { GRACE_DAYS, listPlans, MAX_REASON, paidThrough, paidThroughDayOf } from '../../../../server/data/entitlements'
+
+// One account in the super-admin console: its entitlement, the plan and payment form, suspension, and its
+// members, each of whom the account can be viewed as (read-only). Every form needs a reason, which goes
+// into the audit log with the change. An unknown id is the 404 page, as is the page for anyone but a
+// super-admin.
+export const prerender = false
+
+const locale = localeFromParam(Astro.params.locale)
+if (!locale) return Astro.rewrite('/404')
+
+const root = await requireSuperAdmin(Astro)
+if (root instanceof Response) return root
+const account = await accountDetail(root.user.id, Astro.params.id ?? '')
+if (!account) return Astro.rewrite('/404')
+const plans = await listPlans()
+const { entitlement } = account
+const plan = plans.find((p) => p.id === entitlement.planId)
+const day = new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' })
+const when = new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' })
+
+const DONE: Record<string, () => string> = { set: m.admin_done_set, suspend: m.admin_done_suspend, unsuspend: m.admin_done_unsuspend }
+const ERRORS: Record<string, () => string> = {
+  reason: m.admin_error_reason,
+  plan: m.admin_error_plan,
+  date: m.admin_error_date,
+  limited: m.admin_error_limited,
+  already_suspended: m.admin_error_already_suspended,
+  not_suspended: m.admin_error_not_suspended,
+  impersonation: m.admin_error_impersonation,
+}
+const done = DONE[Astro.url.searchParams.get('done') ?? '']?.()
+const error = ERRORS[Astro.url.searchParams.get('error') ?? '']?.()
+---
+
+<Base title={m.admin_account_title({ account: account.name })} indexable={false}>
+  <main class="mx-auto grid max-w-3xl gap-10 px-4 py-12">
+    <AdminNav current="accounts" />
+    <div class="grid gap-2">
+      <h1 class="text-3xl font-semibold tracking-tight break-all">{account.name}</h1>
+      <a class="text-sm underline underline-offset-4" href={localizedPath('/admin/accounts', locale)}>{m.admin_account_back()}</a>
+    </div>
+    {error && <p role="alert" class="text-destructive text-sm font-medium">{error}</p>}
+    {done && <p role="status" class="text-sm">{done}</p>}
+
+    <ul class="grid gap-1 text-sm">
+      <li>{m.admin_account_state({ state: stateName(entitlement.state) })}</li>
+      {plan && <li>{m.admin_account_plan({ plan: planName(plan) })}</li>}
+      {entitlement.paidUntil && <li>{m.admin_account_paid_until({ date: day.format(paidThrough(entitlement.paidUntil)) })}</li>}
+      {entitlement.graceEndsAt && <li>{m.admin_account_grace_ends({ date: when.format(entitlement.graceEndsAt) })}</li>}
+      {account.suspendedAt && <li>{m.admin_account_suspended({ date: when.format(account.suspendedAt) })}</li>}
+      <li class="text-muted-foreground">{m.admin_account_created({ date: day.format(account.createdAt) })}</li>
+      <li class="text-muted-foreground break-all">{m.admin_account_id({ id: account.id })}</li>
+    </ul>
+    <a class="underline underline-offset-4" href={`${localizedPath('/admin/audit', locale)}?${new URLSearchParams({ account: account.id })}`}>{m.admin_account_audit_link()}</a>
+
+    <section class="grid gap-4" aria-labelledby="plan-heading">
+      <h2 id="plan-heading" class="text-xl font-semibold">{m.admin_account_plan_heading()}</h2>
+      <form method="post" action="/api/admin/entitlement" class="grid gap-4">
+        <input type="hidden" name="intent" value="set" />
+        <input type="hidden" name="account" value={account.id} />
+        <div class="grid gap-2">
+          <Label htmlFor="plan-plan">{m.admin_account_plan_label()}</Label>
+          <NativeSelect id="plan-plan" name="plan" defaultValue={entitlement.planId ?? plans[0]?.id} className="w-auto">
+            {plans.map((p) => <option value={p.id}>{planName(p)}</option>)}
+          </NativeSelect>
+        </div>
+        <div class="grid gap-2">
+          <Label htmlFor="plan-paid-until">{m.admin_account_paid_until_label()}</Label>
+          <Input id="plan-paid-until" name="paidUntil" type="date" required min="2000-01-01" max="2100-12-31" defaultValue={entitlement.paidUntil ? paidThroughDayOf(entitlement.paidUntil) : undefined} className="w-auto" />
+        </div>
+        <div class="grid gap-2">
+          <Label htmlFor="plan-reason">{m.admin_reason_label()}</Label>
+          <Input id="plan-reason" name="reason" required maxLength={MAX_REASON} />
+        </div>
+        <div><Button type="submit">{m.admin_account_plan_submit()}</Button></div>
+      </form>
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="suspension-heading">
+      <h2 id="suspension-heading" class="text-xl font-semibold">{m.admin_account_suspension_heading()}</h2>
+      <p>{m.admin_account_suspension_intro({ days: String(GRACE_DAYS) })}</p>
+      <form method="post" action="/api/admin/entitlement" class="grid gap-4">
+        <input type="hidden" name="intent" value={account.suspendedAt ? 'unsuspend' : 'suspend'} />
+        <input type="hidden" name="account" value={account.id} />
+        <div class="grid gap-2">
+          <Label htmlFor="suspension-reason">{m.admin_reason_label()}</Label>
+          <Input id="suspension-reason" name="reason" required maxLength={MAX_REASON} />
+        </div>
+        <div>
+          <Button type="submit" variant={account.suspendedAt ? 'outline' : 'destructive'}>
+            {account.suspendedAt ? m.admin_account_unsuspend_submit() : m.admin_account_suspend_submit()}
+          </Button>
+        </div>
+      </form>
+    </section>
+
+    <section class="grid gap-4" aria-labelledby="members-heading">
+      <h2 id="members-heading" class="text-xl font-semibold">{m.admin_account_members_heading()}</h2>
+      <p>{m.admin_impersonate_intro({ minutes: String(IMPERSONATION_MINUTES) })}</p>
+      {account.members.length === 0 && <p class="text-muted-foreground">{m.admin_account_members_none()}</p>}
+      <ul class="grid gap-2">
+        {
+          account.members.map((member, i) => (
+            <li class="grid gap-3 rounded-md border p-3" data-member={member.email}>
+              <span class="grid gap-1">
+                <span class="font-medium break-all">{member.name}</span>
+                <span class="text-muted-foreground text-sm break-all">{member.email}</span>
+                <span class="text-sm">{roleName(member.role)}</span>
+              </span>
+              {!isListedSuperAdmin(member.email) && (
+                <form method="post" action="/api/admin/impersonate" class="flex flex-wrap items-end gap-2">
+                  <input type="hidden" name="account" value={account.id} />
+                  <input type="hidden" name="user" value={member.userId} />
+                  <div class="grid gap-2">
+                    <Label htmlFor={`impersonate-reason-${i}`}>{m.admin_reason_label()}</Label>
+                    <Input id={`impersonate-reason-${i}`} name="reason" required maxLength={MAX_REASON} className="w-72 max-w-full" />
+                  </div>
+                  <Button type="submit" variant="outline">
+                    {m.admin_impersonate_submit()}
+                  </Button>
+                </form>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </main>
+</Base>

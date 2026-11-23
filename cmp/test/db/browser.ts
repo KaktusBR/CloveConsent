@@ -109,9 +109,8 @@ export async function signUp(email: string, password = PASSWORD) {
   return new Browser().call('/sign-up/email', { name: 'Test Person', email, password })
 }
 
-/** Signs up and opens the emailed link. */
-export async function verifiedUser(label: string): Promise<string> {
-  const email = address(label)
+/** Signs up (as `email`, else a fresh address) and opens the emailed link. */
+export async function verifiedUser(label: string, email: string = address(label)): Promise<string> {
   expect((await signUp(email)).status).toBe(200)
   const [mail] = await mailsTo(email)
   expect(mail?.template).toBe('verify-email')

@@ -31,6 +31,11 @@ const accounts = await accountsOf(scope.userId)
     {accounts.length > 1 && <AccountSwitcher accounts={accounts} activeId={account.id} />}
     <nav aria-label={m.account_nav_label()}>
       <ul class="grid gap-2">
+        <li>
+          <a class="underline underline-offset-4" href={localizedPath('/sites', locale)}>
+            {m.account_sites_link()}
+          </a>
+        </li>
         {
           can(scope, 'member', 'invite') && (
             <li>

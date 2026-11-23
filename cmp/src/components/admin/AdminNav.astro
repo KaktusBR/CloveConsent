@@ -1,0 +1,30 @@
+---
+import { localizedPath } from '../../i18n/locale'
+import { m } from '../../paraglide/messages.js'
+
+interface Props {
+  /** The console page this is on. */
+  current: 'accounts' | 'audit'
+}
+
+const { current } = Astro.props
+const locale = Astro.locals.locale
+const links = [
+  { id: 'accounts', href: localizedPath('/admin/accounts', locale), text: m.admin_nav_accounts() },
+  { id: 'audit', href: localizedPath('/admin/audit', locale), text: m.admin_nav_audit() },
+] as const
+---
+
+<nav aria-label={m.admin_nav_label()}>
+  <ul class="flex flex-wrap gap-4">
+    {
+      links.map((link) => (
+        <li>
+          <a class="underline underline-offset-4 aria-[current=page]:font-semibold" href={link.href} aria-current={link.id === current ? 'page' : undefined}>
+            {link.text}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</nav>
