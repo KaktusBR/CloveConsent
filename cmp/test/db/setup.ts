@@ -14,6 +14,7 @@ const LOCAL = {
   app: 'postgres://cmp_app:cmp_app@localhost:5432/cmp',
   migrate: 'postgres://cmp_owner:cmp_owner@localhost:5432/cmp',
   system: 'postgres://cmp_system:cmp_system@localhost:5432/cmp',
+  backup: 'postgres://cmp_backup:cmp_backup@localhost:5432/cmp',
 }
 
 declare module 'vitest' {
@@ -37,6 +38,7 @@ export default async function setup(project: TestProject) {
     app: onDatabase(process.env.DATABASE_URL || LOCAL.app, database),
     migrate: onDatabase(process.env.DATABASE_URL_MIGRATE || LOCAL.migrate, database),
     system: onDatabase(process.env.DATABASE_URL_SYSTEM || LOCAL.system, database),
+    backup: onDatabase(process.env.DATABASE_URL_BACKUP || LOCAL.backup, database),
   }
   await initDatabase(admin, urls)
   await migrateDatabase(urls.migrate)

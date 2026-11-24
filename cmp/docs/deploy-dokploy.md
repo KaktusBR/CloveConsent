@@ -8,15 +8,32 @@ certificate.
 Nothing in the repository names a domain. The origin is the `PUBLIC_ORIGIN` variable, and the domain is
 entered in Dokploy only.
 
+In this guide, **`<project>`** is the Dokploy application's name. Dokploy runs Compose with
+`-p <project>`, so:
+- containers are named `<project>-<service>-1` (for example `<project>-postgres-1`);
+- volumes are named `<project>_<volume>` (for example `<project>_backups`).
+
+Set `IMAGE_NAME` to the same name, so the images are `<project>:<tag>` and `<project>-backup:<tag>`. Two
+applications on one server then share no container, volume or image.
+
 ## What runs
 
 | Service | Image | Does |
 | --- | --- | --- |
 | `postgres` | `postgres:17.11-alpine` | The database. It is on an internal network only, with no published port. Data lives in the `postgres-data` volume. |
-| `migrate` | the app image | Runs once per deploy, then exits. First `db:init`: it creates or updates the roles `cmp_owner`, `cmp_app` and `cmp_system` and the `cmp` database, as the superuser. Then the migrations, as `cmp_owner`. The app and worker start only after it succeeds. |
-| `app` | the app image | The web app on port 4321, behind Traefik. |
-| `worker` | the app image | Background jobs: email, and cleanup of expired sessions. |
-| `backup` | `cmp/backup/` | A nightly `pg_dump`, encrypted with [age](https://age-encryption.org) to your public key. |
+| `migrate` | `<IMAGE_NAME>` | Runs once per deploy, then exits. First `db:init`, as the superuser: it creates or updates the roles and the `cmp` database. Then the migrations, as `cmp_owner`. The app, the worker and the backup start only after it succeeds. |
+| `app` | `<IMAGE_NAME>` | The web app on port 4321, behind Traefik. |
+| `worker` | `<IMAGE_NAME>` | Background jobs: email, and cleanup of expired sessions. |
+| `backup` | `<IMAGE_NAME>-backup` (`cmp/backup/`) | A nightly `pg_dump` as `cmp_backup`, encrypted with [age](https://age-encryption.org) to your public key. |
+
+The roles that `db:init` creates or updates (`scripts/db-init.ts`):
+
+| Role | Used by | Can do |
+| --- | --- | --- |
+| `cmp_owner` | `migrate` | Owns the tables; runs the migrations. |
+| `cmp_app` | `app`, `worker` | Runtime work, under row-level security. |
+| `cmp_system` | `app`, `worker` | Audited system work. |
+| `cmp_backup` | `backup` | Reads only: `SELECT` on every table and sequence, and read-only sessions. It bypasses row-level security, because the tenant tables force it and `pg_dump` must see every row. It is not a superuser. |
 
 The app, the worker and `migrate` share one image: `cmp/Dockerfile`, built with the repository root as
 context. `PUBLIC_ORIGIN` is a build argument as well as a variable. Prerendered pages contain absolute URLs
@@ -28,12 +45,13 @@ Every container:
 - drops all capabilities and cannot gain privileges;
 - has CPU, memory and process limits.
 
-The app, worker and `migrate` run as the non-root user `node`. `backup` runs as `postgres`. Postgres's
+The app, the worker and `migrate` run as the non-root user `node`. `backup` runs as `postgres`. Postgres's
 own entrypoint starts as root to drop to its user, so it keeps the few capabilities it needs for that.
 
 No service reads the `.env` file as a whole: there is no `env_file`. Each service receives only the
 variables listed under its `environment`. **The app and the worker never receive** the owner, superuser or
-backup credentials. Do not add `env_file: .env` to them: the owner role can turn row-level security off.
+backup credentials. The superuser's password reaches only `postgres` and the one-shot `migrate`. Do not add
+`env_file: .env` to a service: the owner role can turn row-level security off.
 `test/unit/deploy.test.ts` fails if any of this changes.
 
 ## Before you start
@@ -42,7 +60,7 @@ backup credentials. Do not add `env_file: .env` to them: the owner role can turn
    Dokploy server. Let's Encrypt needs it to resolve before the first deploy.
 2. **SMTP.** You need an account with a mail provider in the EU (data stays in the EU). Set up SPF, DKIM
    and DMARC for the sender's domain, as the provider describes.
-3. **A backup key pair, made on your own machine, not on the server:**
+3. **A backup key pair, made on your own machine, never on the server:**
 
    ```sh
    age-keygen -o cmp-backup-key.txt
@@ -50,14 +68,16 @@ backup credentials. Do not add `env_file: .env` to them: the owner role can turn
    ```
 
    Keep `cmp-backup-key.txt` (the private key) offline, in your password manager, and in a second place.
-   Without it no backup can be read. The server only ever holds the public key.
+   Without it no backup can be read. The server only ever holds the public key, and the restore test and
+   disaster recovery below never copy the private key to the server.
 
 ## Create the application
 
 In Dokploy:
 
 1. **Create Service → Compose.** Set the compose type to Docker Compose (not Stack). Source: this
-   repository, the branch you deploy. Compose path: `cmp/compose.prod.yaml`.
+   repository, the branch you deploy. Compose path: `cmp/compose.prod.yaml`. The application's name is
+   `<project>`.
 2. **Environment:** enter the variables below.
 3. **Domains:** add your hostname.
    - Service: `app`
@@ -78,8 +98,10 @@ go inside URLs.
 
 | Variable | Who gets it | Value |
 | --- | --- | --- |
+| `IMAGE_NAME` | Compose | `<project>`, the Dokploy application's name. The images are named after it. |
+| `IMAGE_TAG` | Compose | Optional (default `latest`). |
 | `PUBLIC_ORIGIN` | build, app, worker | `https://<your hostname>`. No path, no trailing slash. |
-| `BETTER_AUTH_SECRET` | app, worker | At least 32 random bytes. Changing it signs everyone out. |
+| `BETTER_AUTH_SECRET` | app, worker | At least 32 random bytes. Changing it signs everyone out (see Security notes). |
 | `SMTP_URL` | app, worker | `smtps://<user>:<password>@<smtp host>:465`, or `smtp://…:587` (STARTTLS). URL-encode the user and password. |
 | `MAIL_FROM` | app, worker | `Name <address>` on the domain your SPF/DKIM cover. |
 | `SUPER_ADMIN_EMAILS` | app, worker | Comma-separated addresses of the super-admins. They must verify their address and turn on two-factor authentication before the console opens. |
@@ -89,18 +111,20 @@ go inside URLs.
 | `DATABASE_URL_SYSTEM` | app, worker, migrate | `postgres://cmp_system:<system password>@postgres:5432/cmp` |
 | `DATABASE_URL_MIGRATE` | migrate only | `postgres://cmp_owner:<owner password>@postgres:5432/cmp` |
 | `DATABASE_URL_ADMIN` | migrate only | `postgres://postgres:<POSTGRES_PASSWORD>@postgres:5432/postgres` |
-| `BACKUP_DATABASE_URL` | backup only | `postgres://postgres:<POSTGRES_PASSWORD>@postgres:5432/cmp` |
-| `BACKUP_AGE_RECIPIENT` | backup only | The `age1…` public key from "Before you start". |
+| `DATABASE_URL_BACKUP` | migrate, backup | `postgres://cmp_backup:<backup password>@postgres:5432/cmp` |
+| `BACKUP_AGE_RECIPIENT` | backup | The `age1…` public key from "Before you start". |
 | `BACKUP_AT` | backup | When the nightly dump runs, `HH:MM` UTC (default `02:30`). |
 | `BACKUP_KEEP_DAYS` | backup | How many days of dumps stay on the server (default 14). |
-| `IMAGE_TAG` | Compose | Optional tag for the built images (default `latest`). |
 
-`db:init` sets the three roles' passwords from the URLs on every deploy. To rotate a role's password,
-change its URL and redeploy.
+`db:init` sets the roles' passwords from the URLs on every deploy. To rotate a role's password, change its
+URL and redeploy.
 
-To use a Postgres outside this stack (for example a managed one in the EU), delete the `postgres`
-service, point the URLs at that server, and remove `postgres` from the `depends_on` lists. The migrate
-service still needs a role there that may create roles and databases.
+To use a Postgres outside this stack (for example a managed one in the EU):
+1. Delete the `postgres` service.
+2. Point the URLs at that server.
+3. Remove `postgres` from the `depends_on` lists.
+
+`migrate` still needs a role on that server that may create roles and databases, and grant `BYPASSRLS`.
 
 ### `TRUSTED_PROXIES` and client addresses
 
@@ -125,6 +149,8 @@ Consequences:
 - **With a range that is too wide** (for example `0.0.0.0/1`), a client can pick its own address and
   escape the limits.
 
+Check 4 below proves which address the app records.
+
 ## After the first deploy
 
 Check each of these once:
@@ -135,105 +161,145 @@ Check each of these once:
 2. The response headers include `Strict-Transport-Security` and `Content-Security-Policy`. The certificate
    is Let's Encrypt's.
 3. Sign up with a real address. The verification mail arrives, and its link is on your origin.
-4. **Client addresses.** Sign in from a browser and open Account → Security: the session shows your own
-   public address. Then send a forged header, `curl -H 'X-Forwarded-For: 203.0.113.9' https://<hostname>/healthz`.
-   Requests like this must not change which address the app records. If Security shows Traefik's address,
-   `TRUSTED_PROXIES` is wrong.
-5. **No credentials in the runtime containers.** In Dokploy's terminal for `app`, `env | grep -E 'MIGRATE|DATABASE_URL_ADMIN|BACKUP'`
-   must print nothing; check `worker` the same way.
+4. **Client addresses: a forged `X-Forwarded-For` must not be believed.** From your own machine, sign in
+   through a request that carries a forged header, then list that session:
+
+   ```sh
+   curl -s -c jar.txt -H 'Origin: https://<hostname>' -H 'X-Forwarded-For: 203.0.113.9' \
+     -H 'Content-Type: application/json' -d '{"email":"<you>","password":"<password>"}' \
+     https://<hostname>/api/auth/sign-in/email > /dev/null
+   curl -s -b jar.txt https://<hostname>/api/auth/list-sessions
+   ```
+
+   The session's `ipAddress` must be your own public address. It must not be `203.0.113.9`, nor
+   Traefik's address. Account → Security shows the same address for that session. Sign it out there
+   afterwards.
+   - It shows `203.0.113.9`: Traefik trusts client headers. Fix its `forwardedHeaders`.
+   - It shows an address in `dokploy-network`: `TRUSTED_PROXIES` is wrong.
+5. **No credentials in the runtime containers.** On the server, run
+   `docker exec <project>-app-1 env | grep -E 'MIGRATE|DATABASE_URL_ADMIN|BACKUP|POSTGRES_PASSWORD'`. It
+   must print nothing. Check `<project>-worker-1` the same way.
 6. **Super-admin.** A listed super-admin signs up, verifies the address, turns on two-factor
    authentication, then opens `/admin/accounts`.
-7. **Backups.** In `backup`'s terminal, `backup.sh now` writes a first dump. Then run the restore test below.
+7. **Backups.** `docker exec <project>-backup-1 backup.sh now` writes a first dump (it logs
+   `backup written`). Then run the restore test below.
 
 ## Updates
 
-Redeploy in Dokploy. The image is rebuilt and `migrate` runs again: `db:init` is idempotent, and the
+Redeploy in Dokploy. The images are rebuilt and `migrate` runs again: `db:init` is idempotent, and the
 migrations apply only what is new, under an advisory lock. Then the app and the worker are replaced.
 
-Migrations only move forward. Before a deploy that contains a migration, take a dump (`backup.sh now`). To
-roll back across a migration, restore that dump (see Disaster recovery) and deploy the earlier commit.
+Migrations only move forward. Before a deploy that contains a migration, take a dump:
+`docker exec <project>-backup-1 backup.sh now`. To roll back across a migration, restore that dump (see
+Disaster recovery) and deploy the earlier commit.
 
 Logs are JSON on stdout (Dokploy's Logs tab), with passwords, tokens, cookies and secrets redacted.
 
 ## Backups
 
-The `backup` service writes `cmp-<UTC time>.dump.age` to the `backups` volume every night at `BACKUP_AT`:
-`pg_dump --format=custom`, piped through `age --encrypt --recipient <BACKUP_AGE_RECIPIENT>`. Each file is
-written under a temporary name and renamed only when complete. Dumps older than `BACKUP_KEEP_DAYS` are
-deleted. It logs `backup written` (file name and size) or `backup failed`.
+The `backup` service writes `cmp-<UTC time>.dump.age` to the `<project>_backups` volume every night at
+`BACKUP_AT`:
 
-The dump runs as the superuser. The tenant tables force row-level security, so any other role would get a
-filtered, incomplete dump.
+1. `pg_dump --format=custom`, as `cmp_backup`, is piped through `age --encrypt --recipient <BACKUP_AGE_RECIPIENT>`.
+2. The file is written under a temporary name.
+3. It is renamed only when both `pg_dump` and `age` succeeded.
+4. Only after that are dumps older than `BACKUP_KEEP_DAYS` deleted.
+
+A failed night therefore keeps no partial file, deletes no older dump, and logs `backup failed`
+(`backup.sh now` exits 1). A successful night logs `backup written`, with the file name and size. Watch
+for `backup failed` in the logs.
 
 **Copy the dumps off the server.** They are encrypted, so any storage will do: an S3 bucket in the EU, a
-storage box, another machine. For example, run a nightly `rsync` or `rclone` of the `backups` volume's
-directory (`docker volume inspect cloveconsent-cmp_backups` gives its path) after `BACKUP_AT`. A backup
-that exists only on the server it protects does not survive losing that server.
+storage box, another machine. For example, run a nightly `rsync` or `rclone` of the volume's directory
+(`docker volume inspect <project>_backups --format '{{.Mountpoint}}'`) after `BACKUP_AT`. A backup that
+exists only on the server it protects does not survive losing that server.
 
 ### Restore test (monthly, and after any change to the backup)
 
-A backup counts only once it has been restored. `restore-check.sh` restores one dump into a scratch
-database on the same server, prints the number of migrations and the rows per table (with each table's
-row-level security), then drops the scratch database.
+A backup counts only once it has been restored. The test runs **on your own machine**, against a throwaway
+Postgres, with the private key passed on stdin: neither the key nor any password goes to the server or onto
+a command line. You need Docker and a checkout of this repository.
 
-1. Copy the private key into the `backup` container's tmpfs, without writing it to disk. From your
-   machine, through Dokploy's server terminal:
+```sh
+# 1. a recent dump, copied from the server (encrypted: safe to move anywhere)
+ssh <server> "docker cp <project>-backup-1:/backups/<file>.dump.age /tmp/" && scp <server>:/tmp/<file>.dump.age .
 
-   ```sh
-   docker exec -i "$(docker ps -qf name=cloveconsent-cmp-backup)" sh -c 'umask 077; cat > /tmp/key.txt' < cmp-backup-key.txt
-   ```
+# 2. the backup image, and a throwaway Postgres on its own network (no published port, no password)
+docker build -t cmp-backup <checkout>/cmp/backup
+docker network create cmp-restore-test
+docker run -d --name cmp-restore-db --network cmp-restore-test -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17.11-alpine
 
-2. Restore the newest dump:
+# 3. restore and count, the key on stdin
+docker run --rm -i --network cmp-restore-test -e PGHOST=cmp-restore-db -e PGUSER=postgres -v "$PWD:/work:ro" \
+  --entrypoint restore-check.sh cmp-backup /work/<file>.dump.age - < cmp-backup-key.txt
 
-   ```sh
-   docker exec -e PGHOST=postgres -e PGUSER=postgres -e PGPASSWORD='<POSTGRES_PASSWORD>' \
-     "$(docker ps -qf name=cloveconsent-cmp-backup)" \
-     sh -c 'restore-check.sh "/backups/$(ls /backups | grep dump.age | tail -1)" /tmp/key.txt'
-   ```
+# 4. clean up
+docker rm -f cmp-restore-db && docker network rm cmp-restore-test
+```
 
-3. Compare the counts with the live database, for example `select count(*) from auth_user`. The live
-   one may have grown since the dump. `audit_log` and `entitlements` must say `rls forced`.
-4. Remove the key: restart the `backup` container (its tmpfs is emptied), or
-   `docker exec <container> sh -c ': > /tmp/key.txt'`.
+`restore-check.sh` (in `cmp/backup/`):
+- waits for the server;
+- creates the app's roles there if they are missing (as NOLOGIN), since they own and are granted the
+  restored objects;
+- restores into a scratch database;
+- prints the number of migrations, the rows per table with each table's row-level security, and the
+  queued jobs;
+- then drops the scratch database.
 
-Record the date and the counts. This procedure was rehearsed with the stack of `compose.prod.yaml` before
-the first release. A dump of the development database (227 users) restored with identical counts. A
-full disaster recovery (steps below) brought the app back to `ready`.
+A wrong key or a damaged file ends with `did not restore` and exit 1.
+
+Compare the counts with the live database:
+
+```sh
+ssh <server> "docker exec <project>-postgres-1 psql -U postgres -d cmp -Atc 'select count(*) from auth_user'"
+```
+
+The live database may have grown since the dump. `audit_log` and `entitlements` must say `rls forced`.
+Record the date and the counts.
+
+This procedure was rehearsed with the stack of `compose.prod.yaml`:
+- a dump taken by `cmp_backup` of a copy of the development database (227 users, 341 audit rows,
+  34 entitlements) restored off-server with identical counts;
+- a wrong key failed as described.
 
 ### Disaster recovery (a new server, or a lost database)
 
+The plaintext dump goes from your machine straight into the server's Postgres over SSH. The key stays on
+your machine, and no password is typed. You need `age` locally, or the backup image from the restore test.
+
 1. Deploy the application as above, with the same variables. Wait until `migrate` has run, then stop
-   `app` and `worker` in Dokploy.
-2. Replace the empty database with the dump. Copy the dump into the `backups` volume and the key into the
-   `backup` container's `/tmp`, as in the restore test. Then, in the `backup` container:
+   `app`, `worker` and `backup` in Dokploy.
+2. Replace the database with an empty one, owned by the owner role. This runs over Postgres's local
+   socket inside its container, which needs no password:
 
    ```sh
-   export PGHOST=postgres PGUSER=postgres PGPASSWORD='<POSTGRES_PASSWORD>'
-   psql -d postgres -c 'drop database cmp with (force)'
+   ssh <server> "docker exec <project>-postgres-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+     -c 'drop database cmp with (force)' -c 'create database cmp owner cmp_owner'"
    ```
 
-3. Recreate the empty database and the roles, with the deploy's own step. From the server, in the
-   project's directory:
+3. Decrypt on your machine and restore on the server:
 
    ```sh
-   docker compose -p <project> run --rm --no-deps migrate sh -c 'node scripts/db-init.ts'
+   age --decrypt --identity cmp-backup-key.txt <file>.dump.age | \
+     ssh <server> "docker exec -i <project>-postgres-1 pg_restore -U postgres --exit-on-error --single-transaction --dbname=cmp"
    ```
 
-4. Back in the `backup` container, restore into the new database:
+4. Redeploy in Dokploy. `db:init` re-applies the database's grants, including the backup role's read
+   access to the restored tables. `migrate` applies any migration newer than the dump. The app, the worker
+   and the backup start, and `/readyz` must answer `ready`. Then take a fresh dump
+   (`backup.sh now`): it proves the backup role reads the restored database.
 
-   ```sh
-   set -o pipefail
-   age -d -i /tmp/key.txt /backups/<file>.dump.age | pg_restore --exit-on-error --single-transaction --dbname=cmp
-   ```
-
-5. Redeploy. `migrate` applies any migration newer than the dump, and the app and the worker start.
-   `/readyz` must answer `ready`.
+This was rehearsed end to end with the stack of `compose.prod.yaml`, with the decryption done by the backup
+image on the "operator" side and the stream fed into `docker exec -i <project>-postgres-1 pg_restore`. The
+app came back `ready` with all 227 users, and the next `backup.sh now` succeeded as `cmp_backup`.
 
 ## Security notes
 
 - Postgres is reachable only from the services on the internal `db` network. Only `app` is on
   `dokploy-network`. The worker and the app reach the internet (SMTP, Have I Been Pwned's range API)
   over `egress`.
+- The backup connects as `cmp_backup`: it can read everything, which is the point of a backup, and write
+  nothing. The dumps are encrypted to a key the server does not have.
 - Sessions use `__Secure-` cookies, because `PUBLIC_ORIGIN` is https. Production refuses an http origin.
 - Rotating `BETTER_AUTH_SECRET` signs everyone out. It also makes the stored TOTP secrets and backup
   codes unreadable, because they are encrypted with it, so everyone's two-factor authentication would

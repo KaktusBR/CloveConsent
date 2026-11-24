@@ -9,7 +9,7 @@ import { catalog, clientAddress, database, newEmail, pathIn, signedIn, signedUp 
 import { SERVER_LOG } from './server-log'
 
 // The tenant-isolation sweep over HTTP against the built server (Review Focus 1): the owner of account A
-// requests every route of src/pages (pages in both languages) with account B's identifiers in the path,
+// requests every route of Astro's route manifest (src/pages and injected routes; pages in both languages) with account B's identifiers in the path,
 // query and body, with plain cookies, with forged cookies naming B, and with A's session naming B as its
 // account. A route that takes an identifier answers 404 (the 404 page for a page); no answer, no line the
 // server logged for the request, holds anything of B, and nothing of B changes in the database. The cases
@@ -122,7 +122,7 @@ async function send(who: APIRequestContext, probe: Probe, path: string): Promise
   return who.post(path, { headers: fromSite(), maxRedirects: 0, ...(probe.form ? { form: probe.form } : { data: probe.json }) })
 }
 
-test('the sweep covers every route of src/pages, and the server log is captured', () => {
+test('the sweep covers every route of the route manifest, and the server log is captured', () => {
   expect(Object.keys(ROUTE_PROBES).sort()).toEqual(appRoutes().map((r) => r.route).sort())
   expect(existsSync(SERVER_LOG), `${SERVER_LOG}: start the server through playwright.config.ts (not a reused one)`).toBe(true)
 })
@@ -171,3 +171,17 @@ for (const state of STATES) {
     }
   })
 }
+
+test("an invitation of someone else and an invitation that does not exist get the same 404 page", async () => {
+  const made = randomUUID().replaceAll('-', '').padEnd(43, 'x')
+  for (const prefix of ['', '/sk']) {
+    const pages = await Promise.all(
+      [b.invitation.token, made].map(async (token) => {
+        const response = await owner.get(`${prefix}/invite/${token}`, { maxRedirects: 0 })
+        return { status: response.status(), body: (await response.text()).replaceAll(token, ':token') }
+      }),
+    )
+    expect(pages.map((p) => p.status)).toEqual([404, 404])
+    expect(pages[0]!.body).toBe(pages[1]!.body)
+  }
+})

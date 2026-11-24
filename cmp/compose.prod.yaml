@@ -11,8 +11,11 @@
 #   migrate   one-shot, before app and worker: db:init (roles, database; superuser) then the migrations (cmp_owner)
 #   app       the web app (node dist/server/entry.mjs), behind Dokploy's Traefik
 #   worker    the job worker (node dist/worker.js), same image
-#   backup    a nightly pg_dump encrypted with age to BACKUP_AGE_RECIPIENT (cmp/backup/)
-name: cloveconsent-cmp
+#   backup    a nightly pg_dump encrypted with age to BACKUP_AGE_RECIPIENT (cmp/backup/), as cmp_backup
+#
+# No `name:` here: the Compose project name is Dokploy's (its application name, `-p <project>`), and the
+# images are named after IMAGE_NAME (set it to that application name), so two applications on one server
+# never share a container, volume or image.
 
 x-hardened: &hardened
   read_only: true
@@ -36,7 +39,7 @@ x-runtime-env: &runtime-env
   TRUSTED_PROXIES: ${TRUSTED_PROXIES:?the range Traefik connects from}
 
 x-image: &image
-  image: cloveconsent-cmp:${IMAGE_TAG:-latest}
+  image: ${IMAGE_NAME:?the Dokploy application name}:${IMAGE_TAG:-latest}
   user: "node"
   tmpfs: ["/tmp:size=64m,mode=1777"]
 
@@ -73,9 +76,10 @@ services:
     environment:
       DATABASE_URL_ADMIN: ${DATABASE_URL_ADMIN:?superuser URL (database postgres)}
       DATABASE_URL_MIGRATE: ${DATABASE_URL_MIGRATE:?cmp_owner URL}
-      # db:init sets the runtime roles' passwords from these
+      # db:init sets the other roles' passwords from these (and the backup role's grants)
       DATABASE_URL: ${DATABASE_URL:?cmp_app URL}
       DATABASE_URL_SYSTEM: ${DATABASE_URL_SYSTEM:?cmp_system URL}
+      DATABASE_URL_BACKUP: ${DATABASE_URL_BACKUP:?cmp_backup URL}
     healthcheck:
       disable: true
     networks: [db]
@@ -130,11 +134,11 @@ services:
   backup:
     <<: *hardened
     build: ./backup
-    image: cloveconsent-cmp-backup:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:?the Dokploy application name}-backup:${IMAGE_TAG:-latest}
     tmpfs: ["/tmp:size=64m"]
     environment:
-      # a role that bypasses row-level security (the superuser), on the app's database
-      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?superuser URL (database cmp)}
+      # cmp_backup (scripts/db-init.ts): read-only, bypasses row-level security as pg_dump needs; never the superuser
+      BACKUP_DATABASE_URL: ${DATABASE_URL_BACKUP:?cmp_backup URL}
       # the public key only; the private key stays off the server
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?age public key}
       BACKUP_AT: ${BACKUP_AT:-02:30}
@@ -145,7 +149,8 @@ services:
       disable: true
     networks: [db]
     depends_on:
-      postgres: { condition: service_healthy }
+      # db:init creates its role
+      migrate: { condition: service_completed_successfully }
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256m, pids: 50 }

@@ -140,7 +140,7 @@ test('an invitation opened by someone signed in with another address is refused 
   // the owner opens the link meant for someone else: told it is not theirs, nothing about the account
   const link = linkIn(await mail(page.request, invitee, en('email_invitation_subject', { inviter: 'Owen Owner', account: accountName })), origin)
   await page.goto(link)
-  await expect(page.getByText(en('invite_state_wrong_email'))).toBeVisible()
+  await expect(page.getByText(en('invite_state_unavailable'))).toBeVisible()
   await expect(page.getByRole('button', { name: en('invite_accept') })).toHaveCount(0)
   await expectAccessible(page)
   await context.close()

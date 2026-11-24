@@ -145,12 +145,12 @@ describe('the database catalog', () => {
       )
       const { rows: grants } = await c.query<{ table: string; grantee: string; privilege: string }>(
         `select table_name as table, grantee, privilege_type as privilege from information_schema.role_table_grants
-         where table_schema = 'public' and table_name like 'auth\\_%' and grantee <> 'cmp_owner' order by 1, 2, 3`,
+         where table_schema = 'public' and table_name like 'auth\\_%' and grantee not in ('cmp_owner', 'cmp_backup') order by 1, 2, 3`,
       )
       // column privileges of the roles without table-level SELECT (cmp_app's table grants list every column)
       const { rows: columns } = await c.query<{ table: string; grantee: string; column: string; privilege: string }>(
         `select table_name as table, grantee, column_name as column, privilege_type as privilege from information_schema.column_privileges
-         where table_schema = 'public' and table_name like 'auth\\_%' and grantee not in ('cmp_owner', 'cmp_app') order by 1, 2, 3, 4`,
+         where table_schema = 'public' and table_name like 'auth\\_%' and grantee not in ('cmp_owner', 'cmp_app', 'cmp_backup') order by 1, 2, 3, 4`,
       )
       return { tables, grants, columns }
     })
@@ -179,7 +179,7 @@ describe('the database catalog', () => {
       )
       const { rows: grants } = await c.query<{ table: string; grantee: string; privilege: string }>(
         `select table_name as table, grantee, privilege_type as privilege from information_schema.role_table_grants
-         where table_schema = 'public' and table_name = any($1) and grantee <> 'cmp_owner' order by 1, 2, 3`,
+         where table_schema = 'public' and table_name = any($1) and grantee not in ('cmp_owner', 'cmp_backup') order by 1, 2, 3`,
         [names],
       )
       return { tables, grants }
@@ -245,5 +245,54 @@ describe('the database catalog', () => {
       )).rows.map((r) => r.owner),
     )
     expect(owners).toEqual(['cmp_owner'])
+  })
+})
+
+// The role the nightly backup connects as (backup/backup.sh; created by scripts/db-init.ts): pg_dump must
+// see every row, so it bypasses row-level security, and it can do nothing else: it only reads, every table.
+// The grant lists above leave it out; this says what it has.
+describe('the backup role', () => {
+  test('bypasses row-level security and is nothing else: no superuser, no role or database creation, member of no role, read-only by default', async () => {
+    const role = await asRole('migrate', async (c) =>
+      (await c.query(
+        `select rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolconfig,
+                (select count(*)::int from pg_auth_members where member = r.oid or roleid = r.oid) as memberships
+         from pg_roles r where rolname = 'cmp_backup'`,
+      )).rows[0],
+    )
+    expect(role).toEqual({ rolcanlogin: true, rolsuper: false, rolbypassrls: true, rolcreaterole: false, rolcreatedb: false, rolinherit: false, rolconfig: ['default_transaction_read_only=on'], memberships: 0 })
+  })
+
+  test('has SELECT on every table and sequence of every schema, and no other privilege', async () => {
+    const found = await asRole('migrate', async (c) => {
+      const relations = (await c.query<{ name: string; select: boolean }>(
+        `select n.nspname || '.' || c.relname as name,
+                case when c.relkind = 'S' then has_sequence_privilege('cmp_backup', c.oid, 'SELECT') else has_table_privilege('cmp_backup', c.oid, 'SELECT') end as select
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where c.relkind in ('r', 'p', 'S') and n.nspname in ('public', 'pgboss', 'drizzle') order by 1`,
+      )).rows
+      const other = (await c.query<{ grant: string }>(
+        `select table_schema || '.' || table_name || ' ' || privilege_type as grant from information_schema.role_table_grants
+         where grantee = 'cmp_backup' and privilege_type <> 'SELECT' order by 1`,
+      )).rows.map((r) => r.grant)
+      return { relations, other }
+    })
+    expect(found.relations.length).toBeGreaterThan(20)
+    expect(found.relations.filter((r) => !r.select).map((r) => r.name)).toEqual([])
+    expect(found.other).toEqual([])
+  })
+
+  test('reads every row of a table that forces row-level security (as pg_dump does), and writes nothing', async () => {
+    const a = await addAccount()
+    const b = await addAccount()
+    await asRole('system', (c) => c.query(`insert into entitlements (account_id, plan_id, paid_until) values ($1, 'starter', '2100-01-01'), ($2, 'starter', '2100-01-01')`, [a, b]))
+    const seen = await asRole('backup', async (c) => {
+      await c.query('set row_security = off')
+      return (await c.query<{ account_id: string }>(`select account_id from entitlements where account_id = any($1) order by account_id`, [[a, b]])).rows.map((r) => r.account_id)
+    })
+    expect(seen).toEqual([a, b].sort())
+    for (const write of [`update entitlements set paid_until = now() where account_id = '${a}'`, `delete from audit_log`, `insert into plans (id, name_key, limits) values ('x', 'plan_x', '{}')`, `create table backup_was_here (id int)`]) {
+      expect(await asRole('backup', (c) => errorCode(c.query(write))), write).toMatch(/^(25006|42501)$/)
+    }
   })
 })

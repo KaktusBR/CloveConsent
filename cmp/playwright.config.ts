@@ -36,9 +36,10 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      // Have I Been Pwned answered by a local stand-in: no live network call in a test. The server's log goes
-      // to SERVER_LOG, where e2e/isolation.spec.ts reads the lines of its requests.
-      command: `npm run build && node --import ./e2e/pwned-stand-in.mjs dist/server/entry.mjs > ${SERVER_LOG} 2>&1`,
+      // Have I Been Pwned answered by a local stand-in: no live network call in a test. The server's output
+      // is teed (e2e/serve.mjs) into SERVER_LOG, where e2e/isolation.spec.ts reads the lines of its requests,
+      // and on to Playwright, which shows stderr (a server that fails to boot says why).
+      command: `npm run build && node e2e/serve.mjs ${SERVER_LOG}`,
       url: `${origin}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

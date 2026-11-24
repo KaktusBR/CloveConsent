@@ -182,6 +182,7 @@
   "invite_open_account": "Prejsť na účet",
   "invite_state_not_found": "Tento odkaz na pozvánku nie je platný. Skontrolujte, či ste otvorili celý odkaz z e-mailu.",
   "invite_state_wrong_email": "Táto pozvánka bola poslaná na inú e-mailovú adresu. Odhláste sa a prihláste sa adresou, na ktorú prišla.",
+  "invite_state_unavailable": "Tento odkaz na pozvánku pre vás nefunguje. Skontrolujte, či ste otvorili celý odkaz z e-mailu a či ste prihlásení e-mailovou adresou, na ktorú pozvánka prišla.",
   "invite_state_expired": "Platnosť tejto pozvánky vypršala. Požiadajte o novú.",
   "invite_state_used": "Táto pozvánka už bola použitá.",
   "invite_state_canceled": "Táto pozvánka bola zrušená.",

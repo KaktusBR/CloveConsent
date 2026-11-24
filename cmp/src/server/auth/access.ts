@@ -61,7 +61,9 @@ const OPEN_PAGE_PREFIXES = ['/invite/']
 const OPEN_ENDPOINTS = new Set(['/api/locale', '/api/accounts/create', '/api/account/members', '/api/account/switch', '/api/account/revoke-session', IMPERSONATION_STOP_PATH, '/healthz', '/readyz'])
 const OPEN_ENDPOINT_PREFIXES = ['/api/auth/']
 
-const isEndpoint = (pathname: string) => pathname === '/api' || pathname.startsWith('/api/') || pathname === '/healthz' || pathname === '/readyz'
+/** Astro's image endpoint (an injected route, not in src/pages). */
+const ASTRO_ENDPOINTS = new Set(['/_image'])
+const isEndpoint = (pathname: string) => pathname === '/api' || pathname.startsWith('/api/') || pathname === '/healthz' || pathname === '/readyz' || ASTRO_ENDPOINTS.has(pathname)
 const under = (path: string, base: string) => path === base || path.startsWith(`${base}/`)
 
 /** The console: its pages in any language, and its endpoints. */

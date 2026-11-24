@@ -19,11 +19,13 @@ Astro.response.headers.set('Cache-Control', 'no-store')
 const token = Astro.params.token ?? ''
 const session = Astro.locals.session ?? null
 const view = session ? await viewInvitation(token, session.user.email) : null
-// a link that is no invitation, or someone else's: 404 (Review Focus 1), still saying why
-if (view?.state === 'not_found' || view?.state === 'wrong_email') Astro.response.status = 404
+// A link that is no invitation, or someone else's: the same 404 page for both (Review Focus 1: whether an
+// invitation exists for another address is not told), which says what to check.
+const unavailable = view?.state === 'not_found' || view?.state === 'wrong_email'
+if (unavailable) Astro.response.status = 404
 const REASONS: Record<Exclude<InvitationState, 'pending'>, () => string> = {
-  not_found: m.invite_state_not_found,
-  wrong_email: m.invite_state_wrong_email,
+  not_found: m.invite_state_unavailable,
+  wrong_email: m.invite_state_unavailable,
   expired: m.invite_state_expired,
   used: m.invite_state_used,
   canceled: m.invite_state_canceled,
@@ -56,7 +58,7 @@ const REASONS: Record<Exclude<InvitationState, 'pending'>, () => string> = {
       </>
     )
   }
-  {view && view.state !== 'pending' && <p data-reason={view.state}>{REASONS[view.state]()}</p>}
+  {view && view.state !== 'pending' && <p data-reason={unavailable ? 'unavailable' : view.state}>{REASONS[view.state]()}</p>}
   {
     view?.state === 'used' && (
       <p>

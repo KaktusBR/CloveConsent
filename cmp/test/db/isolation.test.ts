@@ -187,7 +187,7 @@ afterAll(async () => {
 })
 
 describe('the sweep covers everything that answers', () => {
-  test('every route of src/pages has its cases', () => {
+  test('every route of the route manifest (src/pages and the routes Astro injects) has its cases', () => {
     expect(Object.keys(ROUTE_PROBES).sort()).toEqual(appRoutes().map((r) => r.route).sort())
   })
 
@@ -218,7 +218,8 @@ describe.each(STATES)("A's owner presents B's identifiers to every endpoint (%s)
     await asRole('migrate', (c) => c.query(`update auth_session set active_account_id = $2 where user_id = $1`, [owner.userId, accountA]))
   })
 
-  for (const route of appRoutes().filter((r) => r.endpoint)) {
+  // the endpoints of src/pages; Astro's injected routes have no module here (e2e/isolation.spec.ts sweeps them over HTTP)
+  for (const route of appRoutes().filter((r) => r.endpoint && r.origin === 'project')) {
     test(route.route, async () => {
       const cookies = state === 'forged cookies' ? forgedCookies(b) : {}
       for (const probe of ROUTE_PROBES[route.route]!(b)) {
@@ -268,4 +269,33 @@ describe("Better Auth's endpoints that take no identifier ignore B's", () => {
       }
     })
   }
+})
+
+describe("the person's own ids still work through the ownership check (src/server/auth/ownership.ts)", () => {
+  test("their own passkey is renamed and deleted; their own other session is revoked; an id of nothing is 404 like another person's", async () => {
+    const own = await person('isolation-own')
+    const passkey = await asRole('migrate', async (c) =>
+      (await c.query<{ id: string }>(
+        `insert into auth_passkey (name, public_key, user_id, credential_id, counter, device_type, backed_up, created_at)
+         values ('Laptop', 'own-public-key', $1, $2, 0, 'singleDevice', false, now()) returning id`,
+        [own.userId, `credential-${newId()}`],
+      )).rows[0]!.id,
+    )
+    const nameOf = async () => asRole('migrate', async (c) => (await c.query<{ name: string }>(`select name from auth_passkey where id = $1`, [passkey])).rows[0]?.name ?? null)
+
+    expect((await own.browser.call('/passkey/update-passkey', { id: passkey, name: 'Work laptop' })).status).toBe(200)
+    expect(await nameOf()).toBe('Work laptop')
+    expect((await own.browser.call('/passkey/delete-passkey', { id: passkey })).status).toBe(200)
+    expect(await nameOf()).toBeNull()
+    expect((await own.browser.call('/passkey/delete-passkey', { id: passkey })).status).toBe(404)
+    expect((await own.browser.call('/passkey/delete-passkey', { id: 'not-a-uuid' })).status).toBe(404)
+
+    const elsewhere = await signedIn(own.email)
+    const other = (await signedInScope(elsewhere.headers())).session?.session.token
+    expect((await own.browser.call('/revoke-session', { token: other })).status).toBe(200)
+    expect((await signedInScope(elsewhere.headers())).session).toBeNull()
+    expect((await own.browser.call('/revoke-session', { token: 'no-such-session-token' })).status).toBe(404)
+    // and the caller is still signed in
+    expect((await signedInScope(own.browser.headers())).session?.user.id).toBe(own.userId)
+  })
 })

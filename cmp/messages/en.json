@@ -182,6 +182,7 @@
   "invite_open_account": "Go to your account",
   "invite_state_not_found": "This invitation link is not valid. Check that you opened the whole link from the email.",
   "invite_state_wrong_email": "This invitation was sent to another email address. Sign out and sign in with the address it was sent to.",
+  "invite_state_unavailable": "This invitation link does not work for you. Check that you opened the whole link from the email, and that you are signed in with the email address it was sent to.",
   "invite_state_expired": "This invitation has expired. Ask for a new one.",
   "invite_state_used": "This invitation has already been used.",
   "invite_state_canceled": "This invitation was canceled.",

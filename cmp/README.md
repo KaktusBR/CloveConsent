@@ -65,6 +65,7 @@ Not in the app's environment, on purpose (the owner role can turn row-level secu
 |---|---|---|
 | `DATABASE_URL_MIGRATE` | `db:migrate`, `db:init`, `test:db` | `postgres://` URL as `cmp_owner`; migrations only |
 | `DATABASE_URL_ADMIN` | `db:init`, `test:db` | a role that may create roles and databases (locally the compose superuser) |
+| `DATABASE_URL_BACKUP` | `db:init`, `test:db` | optional: `postgres://` URL as `cmp_backup`, the backup role (read-only, bypasses row-level security for `pg_dump`); `db:init` manages the role only when it is set |
 
 The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 
@@ -81,10 +82,10 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm run check:words` | fails on user-visible text written in `.astro`/`.tsx` sources and on incomplete catalogs (see Languages) |
 | `npm test` | unit tests (Vitest) |
 | `npm run test:db` | database tests against the compose Postgres: creates the roles and a fresh database, migrates it from scratch, drops it at the end (needs `DATABASE_URL_ADMIN`, defaults to the compose superuser) |
-| `npm run db:init` | creates or updates the three roles and the database (reads `.env` and `.env.db`; idempotent) |
+| `npm run db:init` | creates or updates the roles (the backup role too when `DATABASE_URL_BACKUP` is set) and the database (reads `.env` and `.env.db`; idempotent) |
 | `npm run db:generate` | writes a migration to `drizzle/` from `src/server/data/schema/` (then add FORCE RLS and grants by hand, see Database) |
 | `npm run db:migrate` | applies the migrations as `cmp_owner` (reads `.env.db` only; refuses any other role) |
-| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); the server's log goes to `e2e-server.log` (read by the isolation sweep); needs `docker compose up -d` |
+| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); the server's output is teed (`e2e/serve.mjs`) to `e2e-server.log` (read by the isolation sweep) and to Playwright; needs `docker compose up -d` |
 
 ## Languages
 
@@ -370,9 +371,13 @@ of B's rows may change: the sweep compares a snapshot of every row about B befor
 - `e2e/isolation.spec.ts` (`npm run test:e2e`) runs over HTTP against the built server: every route, pages
   included, in English and Slovak. It reads the server's log lines by `X-Request-Id`.
 
-Both enumerate the routes from `src/pages` (`test/routes.ts`) and fail on a route that has no case. The
-in-process sweep also enumerates Better Auth's endpoints, so a new route or plugin endpoint is swept on
-purpose.
+Both take the routes from Astro's route manifest and fail on a route that has no case. That manifest
+(`test/routes.ts`, through `scripts/route-manifest.ts`: `astro sync` with an `astro:routes:resolved` hook)
+holds the pages and endpoints of `src/pages` and the routes Astro and the integrations inject: `/_image`
+and `/_server-islands/[name]`, and any added later, such as `/_actions/*`. The in-process sweep also
+enumerates Better Auth's endpoints, so a new route or plugin endpoint is swept on purpose.
+
+On the invitation page, someone else's invitation and a link that is no invitation give the same 404 page.
 
 Where Better Auth's own answers told an existing id of someone else from a made-up one,
 `src/server/auth/ownership.ts` makes both a 404:
@@ -396,6 +401,10 @@ variables and secrets, DNS and TLS, `TRUSTED_PROXIES` behind Traefik, the checks
 and backups with their restore test and disaster recovery. `test/unit/deploy.test.ts` guards the compose
 file's security properties:
 - the app and the worker never get the owner, admin or backup credentials;
+- the backup connects as `cmp_backup`, never the superuser. `db:init` creates it with `DATABASE_URL_BACKUP`:
+  read-only, with `SELECT` everywhere, bypassing row-level security as `pg_dump` needs
+  (`test/db/rls.test.ts`);
+- images are named per application (`IMAGE_NAME`);
 - every container has a read-only root filesystem, a tmpfs at `/tmp`, no capabilities and resource limits;
 - the database is on an internal network;
 - no domain is written in the file.

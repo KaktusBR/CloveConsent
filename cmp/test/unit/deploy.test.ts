@@ -26,16 +26,19 @@ interface Service {
   depends_on?: Record<string, { condition: string }>
   deploy?: { resources?: { limits?: { cpus?: string; memory?: string } } }
 }
-const compose = parse(text, { merge: true }) as { services: Record<string, Service>; networks: Record<string, { internal?: boolean; external?: boolean }> }
+const compose = parse(text, { merge: true }) as { name?: string; services: Record<string, Service>; networks: Record<string, { internal?: boolean; external?: boolean }> }
 const { services } = compose
 
 /** What src/server/env.ts reads, plus the server's address. */
 const RUNTIME = ['BETTER_AUTH_SECRET', 'DATABASE_URL', 'DATABASE_URL_SYSTEM', 'MAIL_FROM', 'NODE_ENV', 'PUBLIC_ORIGIN', 'SMTP_URL', 'SUPER_ADMIN_EMAILS', 'TRUSTED_PROXIES']
 
 describe('compose.prod.yaml', () => {
-  test('the app, the worker and the migration run one image, built for PUBLIC_ORIGIN', () => {
+  test('the app, the worker and the migration run one image, built for PUBLIC_ORIGIN, named per application', () => {
     const image = services.app?.image
-    expect(image).toMatch(/^cloveconsent-cmp:/)
+    // Dokploy's project name, never a name two applications on one server would share
+    expect(compose.name).toBeUndefined()
+    expect(image).toBe('${IMAGE_NAME:?the Dokploy application name}:${IMAGE_TAG:-latest}')
+    expect(services.backup?.image).toBe('${IMAGE_NAME:?the Dokploy application name}-backup:${IMAGE_TAG:-latest}')
     expect(services.worker?.image).toBe(image)
     expect(services.migrate?.image).toBe(image)
     expect(services.app?.build).toEqual({ context: '..', dockerfile: 'cmp/Dockerfile', args: { PUBLIC_ORIGIN: '${PUBLIC_ORIGIN:?https origin}' } })
@@ -52,7 +55,7 @@ describe('compose.prod.yaml', () => {
   test('the migration runs once before them: db:init with the superuser, then the migrations as the owner', () => {
     expect(services.migrate?.command).toEqual(['sh', '-c', 'node scripts/db-init.ts && node scripts/migrate.ts'])
     expect(services.migrate?.restart).toBe('no')
-    expect(Object.keys(services.migrate?.environment ?? {}).sort()).toEqual(['DATABASE_URL', 'DATABASE_URL_ADMIN', 'DATABASE_URL_MIGRATE', 'DATABASE_URL_SYSTEM'])
+    expect(Object.keys(services.migrate?.environment ?? {}).sort()).toEqual(['DATABASE_URL', 'DATABASE_URL_ADMIN', 'DATABASE_URL_BACKUP', 'DATABASE_URL_MIGRATE', 'DATABASE_URL_SYSTEM'])
     for (const name of ['app', 'worker']) expect(services[name]?.depends_on?.migrate, name).toEqual({ condition: 'service_completed_successfully' })
   })
 
@@ -83,8 +86,15 @@ describe('compose.prod.yaml', () => {
     expect(services.postgres?.networks).toEqual(['db'])
   })
 
-  test('backups: encrypted to a public key, with a role that sees every row', () => {
+  test('backups: encrypted to a public key, as the read-only backup role (never the superuser)', () => {
     expect(Object.keys(services.backup?.environment ?? {}).sort()).toEqual(['BACKUP_AGE_RECIPIENT', 'BACKUP_AT', 'BACKUP_DATABASE_URL', 'BACKUP_KEEP_DAYS'])
+    expect(services.backup?.environment?.BACKUP_DATABASE_URL).toBe('${DATABASE_URL_BACKUP:?cmp_backup URL}')
+    // the superuser's credentials reach Postgres itself and the one-shot db:init, nothing else
+    for (const [name, service] of Object.entries(services)) {
+      const values = JSON.stringify(service.environment ?? {})
+      if (name !== 'postgres') expect(values.includes('POSTGRES_PASSWORD'), name).toBe(false)
+      if (name !== 'migrate') expect(values.includes('DATABASE_URL_ADMIN'), name).toBe(false)
+    }
     expect(readFileSync(join(ROOT, 'backup', 'backup.sh'), 'utf8')).toMatch(/pg_dump[^\n]*\| age --encrypt --recipient/)
   })
 

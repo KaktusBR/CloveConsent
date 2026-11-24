@@ -4,7 +4,7 @@
 // and the body: a route that takes an identifier answers 404, every other route ignores them, and the
 // answer, the logs and the database hold nothing of B.
 //
-// The cases are keyed by the routes of src/pages (test/routes.ts) and by Better Auth's served paths: both
+// The cases are keyed by the routes of Astro's route manifest (test/routes.ts) and by Better Auth's served paths: both
 // sweeps fail on a route or path that has no case here, so a new one is swept on purpose.
 import type pg from 'pg'
 
@@ -121,13 +121,17 @@ export const AUTH_NO_IDS: readonly string[] = [
 ]
 
 /**
- * Every route of src/pages (test/routes.ts) and what A sends it. A route that takes an identifier gets B's
+ * Every route of the route manifest (test/routes.ts: src/pages and the routes Astro injects) and what A sends it. A route that takes an identifier gets B's
  * and answers 404; any other gets B's identifiers in its query (and form) and answers as it does for A.
  */
 export const ROUTE_PROBES: Record<string, (b: OtherAccount) => Probe[]> = {
   // pages
   '/': (b) => [get(withIds('/', b), 200)],
   '/404': (b) => [get(withIds('/404', b), 404)],
+  // Astro's injected routes: the image endpoint refuses a request without an image (400); there is no
+  // server island, so a request for one is refused (400 without its parameters, 404 with them)
+  '/_image': (b) => [get(withIds('/_image', b), 400)],
+  '/_server-islands/[name]': (b) => [get(withIds('/_server-islands/sample', b), 400), get(withIds('/_server-islands/sample?e=x&p=y&s=z', b), 404)],
   '/account': (b) => [get(withIds('/account', b), 200)],
   '/account/members': (b) => [get(withIds('/account/members', b), 200)],
   '/account/security': (b) => [get(withIds('/account/security', b), 200)],
