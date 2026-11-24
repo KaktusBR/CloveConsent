@@ -1,0 +1,165 @@
+# Production on Dokploy (docs/deploy-dokploy.md): a Docker Compose application whose compose path is
+# cmp/compose.prod.yaml. No domain lives here: the public origin is the PUBLIC_ORIGIN variable (also a
+# build argument: prerendered pages carry absolute URLs, so the image is built for one origin), and the
+# domain and its certificate are set in Dokploy's Domains tab (service `app`, port 4321).
+#
+# Every variable comes from Dokploy's Environment tab, which writes the .env file Compose interpolates from.
+# No service reads that file whole (no env_file): each gets only the variables listed under its
+# `environment`, so the app and worker never receive the owner, admin or backup credentials.
+#
+#   postgres  the database (internal network only, no published port)
+#   migrate   one-shot, before app and worker: db:init (roles, database; superuser) then the migrations (cmp_owner)
+#   app       the web app (node dist/server/entry.mjs), behind Dokploy's Traefik
+#   worker    the job worker (node dist/worker.js), same image
+#   backup    a nightly pg_dump encrypted with age to BACKUP_AGE_RECIPIENT (cmp/backup/)
+name: cloveconsent-cmp
+
+x-hardened: &hardened
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+# what the app and the worker read (src/server/env.ts); nothing else
+x-runtime-env: &runtime-env
+  NODE_ENV: production
+  DATABASE_URL: ${DATABASE_URL:?cmp_app URL}
+  DATABASE_URL_SYSTEM: ${DATABASE_URL_SYSTEM:?cmp_system URL}
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?at least 32 bytes}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?https origin}
+  SMTP_URL: ${SMTP_URL:?smtp:// or smtps:// URL}
+  MAIL_FROM: ${MAIL_FROM:?sender address}
+  SUPER_ADMIN_EMAILS: ${SUPER_ADMIN_EMAILS:-}
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:?the range Traefik connects from}
+
+x-image: &image
+  image: cloveconsent-cmp:${IMAGE_TAG:-latest}
+  user: "node"
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+
+services:
+  postgres:
+    <<: *hardened
+    image: postgres:17.11-alpine
+    # the entrypoint starts as root to drop to the postgres user; it needs these capabilities for that
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?superuser password}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    tmpfs: ["/tmp:size=64m", "/var/run/postgresql:size=1m"]
+    shm_size: 128m
+    networks: [db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g, pids: 200 }
+
+  migrate:
+    <<: [*hardened, *image]
+    # roles and database (idempotent), then the migrations as the owner; runs on every deploy, then exits
+    command: ["sh", "-c", "node scripts/db-init.ts && node scripts/migrate.ts"]
+    restart: "no"
+    pull_policy: never
+    environment:
+      DATABASE_URL_ADMIN: ${DATABASE_URL_ADMIN:?superuser URL (database postgres)}
+      DATABASE_URL_MIGRATE: ${DATABASE_URL_MIGRATE:?cmp_owner URL}
+      # db:init sets the runtime roles' passwords from these
+      DATABASE_URL: ${DATABASE_URL:?cmp_app URL}
+      DATABASE_URL_SYSTEM: ${DATABASE_URL_SYSTEM:?cmp_system URL}
+    healthcheck:
+      disable: true
+    networks: [db]
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 100 }
+
+  app:
+    <<: [*hardened, *image]
+    build:
+      context: ..
+      dockerfile: cmp/Dockerfile
+      args:
+        PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?https origin}
+    environment:
+      <<: *runtime-env
+      HOST: 0.0.0.0
+      PORT: "4321"
+    expose: ["4321"]
+    # ready: the database answers (/readyz); /healthz is the liveness probe for an outside monitor
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4321/readyz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    networks: [db, egress, dokploy-network]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m, pids: 200 }
+
+  worker:
+    <<: [*hardened, *image]
+    command: ["node", "dist/worker.js"]
+    pull_policy: never
+    environment: *runtime-env
+    # no HTTP server: the image's /healthz check does not apply; its log says "worker started"
+    healthcheck:
+      disable: true
+    stop_grace_period: 40s
+    networks: [db, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384m, pids: 100 }
+
+  backup:
+    <<: *hardened
+    build: ./backup
+    image: cloveconsent-cmp-backup:${IMAGE_TAG:-latest}
+    tmpfs: ["/tmp:size=64m"]
+    environment:
+      # a role that bypasses row-level security (the superuser), on the app's database
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?superuser URL (database cmp)}
+      # the public key only; the private key stays off the server
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?age public key}
+      BACKUP_AT: ${BACKUP_AT:-02:30}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - backups:/backups
+    healthcheck:
+      disable: true
+    networks: [db]
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 50 }
+
+networks:
+  # Postgres is reachable from these services only, and has no way out
+  db:
+    internal: true
+  # outgoing connections: SMTP, Have I Been Pwned's range API
+  egress: {}
+  # Dokploy's Traefik routes to `app` over this network (its address range is TRUSTED_PROXIES)
+  dokploy-network:
+    external: true
+
+volumes:
+  postgres-data:
+  backups:

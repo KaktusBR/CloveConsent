@@ -13,5 +13,6 @@ cmp/.astro
 cmp/.env*
 !cmp/.env.example
 cmp/test-results
+cmp/e2e-server.log
 cmp/playwright-report
 cmp/src/paraglide

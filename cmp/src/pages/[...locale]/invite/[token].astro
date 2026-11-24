@@ -19,6 +19,8 @@ Astro.response.headers.set('Cache-Control', 'no-store')
 const token = Astro.params.token ?? ''
 const session = Astro.locals.session ?? null
 const view = session ? await viewInvitation(token, session.user.email) : null
+// a link that is no invitation, or someone else's: 404 (Review Focus 1), still saying why
+if (view?.state === 'not_found' || view?.state === 'wrong_email') Astro.response.status = 404
 const REASONS: Record<Exclude<InvitationState, 'pending'>, () => string> = {
   not_found: m.invite_state_not_found,
   wrong_email: m.invite_state_wrong_email,

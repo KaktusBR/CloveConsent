@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
-import { SUPER_ADMIN_EMAIL } from './e2e/super-admin'
+import { SERVER_LOG } from './e2e/server-log'
+import { JOURNEY_SUPER_ADMIN_EMAIL, SUPER_ADMIN_EMAIL } from './e2e/super-admin'
 
 const PORT = 4329
 const origin = `http://localhost:${PORT}`
@@ -20,8 +21,8 @@ const serverEnv = {
   // the tests act as the reverse proxy: their X-Forwarded-For names a client per test (fresh rate-limit
   // windows), as Traefik does in production; the server trusts it only from this machine
   TRUSTED_PROXIES: '127.0.0.1,::1',
-  // e2e/super-admin.spec.ts signs up as this address (freed from an earlier run first)
-  SUPER_ADMIN_EMAILS: SUPER_ADMIN_EMAIL,
+  // e2e/super-admin.spec.ts and e2e/journey.spec.ts sign up as these addresses (freed from an earlier run first)
+  SUPER_ADMIN_EMAILS: `${SUPER_ADMIN_EMAIL},${JOURNEY_SUPER_ADMIN_EMAIL}`,
 }
 
 // The built server and worker, as in production.
@@ -35,8 +36,9 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
-      // Have I Been Pwned answered by a local stand-in: no live network call in a test
-      command: 'npm run build && node --import ./e2e/pwned-stand-in.mjs dist/server/entry.mjs',
+      // Have I Been Pwned answered by a local stand-in: no live network call in a test. The server's log goes
+      // to SERVER_LOG, where e2e/isolation.spec.ts reads the lines of its requests.
+      command: `npm run build && node --import ./e2e/pwned-stand-in.mjs dist/server/entry.mjs > ${SERVER_LOG} 2>&1`,
       url: `${origin}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

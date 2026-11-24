@@ -28,6 +28,7 @@ import { sendMail } from '../jobs/mail'
 import { accountEndpoints, ACCOUNT_PATHS } from './account-endpoints'
 import { organizationRoles } from './permissions'
 import { endView, redactViews } from './impersonation'
+import { refuseOthersIds } from './ownership'
 import { COOKIE_PREFIX, impersonationOver, impersonatorOf } from './super-admin'
 import { localeOfRequest, nextOfRequest, pageLink } from './request-locale'
 
@@ -94,6 +95,14 @@ const accounts = organization({
 /** Every path of the organization plugin: none is served over HTTP. */
 export const ORGANIZATION_PATHS: readonly string[] = Object.values(accounts.endpoints).map((e) => e.path)
 
+/**
+ * Better Auth's endpoints for third-party sign-in (social and OAuth providers): the product has none (no
+ * third-party identity provider), and these take the id of a provider account, answering 400 rather than
+ * 404 for another person's. Not served. (Its OAuth callback, `/callback/:id`, cannot be listed by pattern;
+ * with no provider it only redirects to the error page.)
+ */
+export const THIRD_PARTY_PATHS: readonly string[] = ['/sign-in/social', '/link-social', '/unlink-account', '/get-access-token', '/refresh-token', '/account-info']
+
 /** Paths that create a session only after the second factor (or a passkey, which is both factors). */
 const SECOND_FACTOR_PATHS: ReadonlySet<string> = new Set(['/two-factor/verify-totp', '/two-factor/verify-backup-code', '/passkey/verify-authentication'])
 
@@ -112,7 +121,7 @@ function authOptions(publicOrigin: string) {
     secret: env.BETTER_AUTH_SECRET,
     trustedOrigins: [origin.origin],
     telemetry: { enabled: false },
-    disabledPaths: [...ORGANIZATION_PATHS],
+    disabledPaths: [...ORGANIZATION_PATHS, ...THIRD_PARTY_PATHS],
     database: drizzleAdapter(authDatabase, { provider: 'pg', schema: authSchema, transaction: true }),
 
     emailAndPassword: {
@@ -220,13 +229,17 @@ function authOptions(publicOrigin: string) {
         //   calls (no request) are the app's own, made after its checks.
         if (ctx.request || ctx.headers) {
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret)
-          const found = token ? await ctx.context.internalAdapter.findSession(token) : null
+          let found = token ? await ctx.context.internalAdapter.findSession(token) : null
           if (token && found && impersonatorOf(found as AuthSession) !== null) {
-            if (impersonationOver(found.session)) await ctx.context.internalAdapter.deleteSession(token)
-            else if (ctx.request && !['GET', 'HEAD'].includes(ctx.request.method)) {
+            if (impersonationOver(found.session)) {
+              await ctx.context.internalAdapter.deleteSession(token)
+              found = null
+            } else if (ctx.request && !['GET', 'HEAD'].includes(ctx.request.method)) {
               throw new APIError('FORBIDDEN', { code: 'IMPERSONATION_READ_ONLY', message: 'a read-only view cannot change anything' })
             }
           }
+          // a session or passkey id that is not the person's own: 404, as for one that does not exist
+          if (found) await refuseOthersIds(ctx, found.session.userId)
         }
         // "Trust this device" would let a later sign-in skip the second factor: not offered, refused.
         if (ctx.path.startsWith('/two-factor/verify-') && (ctx.body as { trustDevice?: unknown } | undefined)?.trustDevice) {

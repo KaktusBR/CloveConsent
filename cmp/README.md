@@ -84,7 +84,7 @@ The container also reads `HOST` and `PORT` (defaults `0.0.0.0` and `4321`).
 | `npm run db:init` | creates or updates the three roles and the database (reads `.env` and `.env.db`; idempotent) |
 | `npm run db:generate` | writes a migration to `drizzle/` from `src/server/data/schema/` (then add FORCE RLS and grants by hand, see Database) |
 | `npm run db:migrate` | applies the migrations as `cmp_owner` (reads `.env.db` only; refuses any other role) |
-| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); needs `docker compose up -d` |
+| `npm run test:e2e` | builds, starts the built server and runs Playwright (Chromium); every visited page is checked with axe (WCAG 2.2 AA, light and dark: `e2e/axe.ts`); the server's log goes to `e2e-server.log` (read by the isolation sweep); needs `docker compose up -d` |
 
 ## Languages
 
@@ -346,6 +346,59 @@ super-admin marks accounts paid by hand.
   address.
 - Rate limits (per super-admin and per client address, `ADMIN_LIMITS` in
   `src/server/auth/super-admin.ts`): 30 changes and 10 impersonations per 10 minutes.
+
+## Tenant isolation
+
+Cross-tenant access through any path is what must never happen. Two sweeps check it: they present account
+B's identifiers to everything account A's owner can reach. Their cases are in `test/isolation.ts`.
+
+What A sends:
+- B's ids in the path, the query and the body: account, members, users, invitation and its link token,
+  session id and token, passkey, sign-in method;
+- with plain cookies;
+- with forged cookies that name B;
+- with A's own session row naming B as its account.
+
+A route that takes an identifier must answer **404** (the 404 page for a page). Every other route ignores
+the identifiers. Either way, nothing of B may appear in the answer or in the request's log lines, and none
+of B's rows may change: the sweep compares a snapshot of every row about B before and after each request.
+
+- `test/db/isolation.test.ts` (`npm run test:db`) runs in-process:
+  - every endpoint of `src/pages`, as the middleware serves it;
+  - every path Better Auth serves. Each one that takes no identifier is called by a fresh member of A,
+    with B's identifiers added.
+- `e2e/isolation.spec.ts` (`npm run test:e2e`) runs over HTTP against the built server: every route, pages
+  included, in English and Slovak. It reads the server's log lines by `X-Request-Id`.
+
+Both enumerate the routes from `src/pages` (`test/routes.ts`) and fail on a route that has no case. The
+in-process sweep also enumerates Better Auth's endpoints, so a new route or plugin endpoint is swept on
+purpose.
+
+Where Better Auth's own answers told an existing id of someone else from a made-up one,
+`src/server/auth/ownership.ts` makes both a 404:
+- `/revoke-session` said "done" for any token;
+- the passkey endpoints answered 401 for someone else's passkey and 404 for an unknown one.
+
+Better Auth's third-party sign-in endpoints are not served, as the product has no third-party identity
+provider (`THIRD_PARTY_PATHS` in `src/server/auth/auth.ts`).
+
+`e2e/journey.spec.ts` walks the whole way in, once in English and once in Slovak, with axe on every page:
+1. A customer signs up, verifies the address and creates an account.
+2. The super-admin marks the account paid.
+3. The customer invites a member, who signs up from the link and accepts.
+4. Both see the sites area.
+
+## Deployment
+
+Production runs on Dokploy from `compose.prod.yaml`: the app, the worker and a one-shot migration from
+one image, Postgres, and a nightly backup encrypted with age. `docs/deploy-dokploy.md` covers the
+variables and secrets, DNS and TLS, `TRUSTED_PROXIES` behind Traefik, the checks after the first deploy,
+and backups with their restore test and disaster recovery. `test/unit/deploy.test.ts` guards the compose
+file's security properties:
+- the app and the worker never get the owner, admin or backup credentials;
+- every container has a read-only root filesystem, a tmpfs at `/tmp`, no capabilities and resource limits;
+- the database is on an internal network;
+- no domain is written in the file.
 
 ## Health
 

@@ -202,7 +202,7 @@ describe('sessions', () => {
     expect(await completeSession(here.headers())).not.toBeNull()
   })
 
-  test("a session id of another user's session revokes nothing", async () => {
+  test("a session id of another user's session revokes nothing, and is not found", async () => {
     const mine = await signedIn(await verifiedUser('mine'))
     const theirs = await signedIn(await verifiedUser('theirs'))
     const target = await completeSession(theirs.headers())
@@ -211,7 +211,8 @@ describe('sessions', () => {
       headers: mine.headers({ 'content-type': 'application/x-www-form-urlencoded' }),
       body: new URLSearchParams({ session: target?.session.id ?? '' }),
     })
-    await revokeSession({ request, url: new URL(request.url) } as Parameters<typeof revokeSession>[0])
+    const response = await revokeSession({ request, url: new URL(request.url) } as Parameters<typeof revokeSession>[0])
+    expect(response.status).toBe(404)
     expect(await completeSession(theirs.headers())).not.toBeNull()
   })
 
