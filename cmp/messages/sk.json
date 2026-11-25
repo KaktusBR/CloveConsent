@@ -46,6 +46,7 @@
   "auth_error_invalid_credentials": "E-mailová adresa alebo heslo nie je správne.",
   "auth_error_wrong_password": "Heslo nie je správne.",
   "auth_error_invalid_email": "Zadajte platnú e-mailovú adresu.",
+  "auth_error_invalid_name": "Zadajte svoje meno: jeden riadok s najviac 100 znakmi, bez neviditeľných znakov.",
   "auth_error_email_not_verified": "Najprv potvrďte e-mailovú adresu: otvorte odkaz, ktorý sme vám poslali, alebo si vyžiadajte nový.",
   "auth_error_password_length": "Heslo musí mať 12 až 128 znakov.",
   "auth_error_password_compromised": "Toto heslo sa objavilo v známych únikoch údajov. Zvoľte iné.",

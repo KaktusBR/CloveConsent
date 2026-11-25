@@ -9,6 +9,7 @@ const BY_CODE: Readonly<Record<string, Message>> = {
   INVALID_EMAIL_OR_PASSWORD: m.auth_error_invalid_credentials,
   INVALID_PASSWORD: m.auth_error_wrong_password,
   INVALID_EMAIL: m.auth_error_invalid_email,
+  INVALID_NAME: m.auth_error_invalid_name,
   EMAIL_NOT_VERIFIED: m.auth_error_email_not_verified,
   PASSWORD_TOO_SHORT: m.auth_error_password_length,
   PASSWORD_TOO_LONG: m.auth_error_password_length,

@@ -6,7 +6,7 @@
 // each in one transaction with its audit row (actor and reason). Until a payment provider is chosen
 // (a later plan), that is how an account gets paid.
 import { sql } from 'drizzle-orm'
-import { plainText } from './accounts'
+import { plainText } from '../../lib/plain-text'
 import { audit } from './audit'
 import { appDatabase } from './client'
 import type { PlanLimits } from './schema'

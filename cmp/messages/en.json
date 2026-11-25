@@ -46,6 +46,7 @@
   "auth_error_invalid_credentials": "The email address or password is wrong.",
   "auth_error_wrong_password": "The password is wrong.",
   "auth_error_invalid_email": "Enter a valid email address.",
+  "auth_error_invalid_name": "Enter your name: one line of up to 100 characters, without invisible characters.",
   "auth_error_email_not_verified": "Confirm your email address first: open the link we emailed you, or ask for a new one.",
   "auth_error_password_length": "The password must have 12 to 128 characters.",
   "auth_error_password_compromised": "This password appears in known data breaches. Choose a different one.",

@@ -7,6 +7,7 @@ import { POST as revokeSession } from '../../src/pages/api/account/revoke-sessio
 import { createAuth } from '../../src/server/auth/auth'
 import { handleAuth } from '../../src/server/auth/handler'
 import { completeSession, requireUser } from '../../src/server/auth/guard'
+import { checkMail } from '../../src/server/jobs/mail'
 import { enqueue } from '../../src/server/jobs/queue'
 import { startWorker } from '../../src/worker'
 import { closeDatabases } from '../../src/server/data/client'
@@ -80,6 +81,62 @@ describe('sign-up and email verification', () => {
   test('a password shorter than 12 or longer than 128 characters is refused', async () => {
     expect((await signUp(address('short'), 'a'.repeat(11))).json?.code).toBe('PASSWORD_TOO_SHORT')
     expect((await signUp(address('long'), 'a'.repeat(129))).json?.code).toBe('PASSWORD_TOO_LONG')
+  })
+})
+
+describe('the name a person gives (finding I2: it goes into invitation emails)', () => {
+  /** Names refused by the plain-text rule of mail (src/lib/plain-text.ts), one of each kind. */
+  const BAD_NAMES = {
+    blank: '   ',
+    'too long': 'a'.repeat(101),
+    'soft hyphen': `Ana${String.fromCodePoint(0xad)}Maria`,
+    'flag tag characters': `Ana ${String.fromCodePoint(0x1f3f4, 0xe0067, 0xe0062, 0xe0065, 0xe006e, 0xe0067, 0xe007f)}`,
+    'bidi override': `Ana${String.fromCodePoint(0x202e)}gpj.exe`,
+    'line break': 'Ana\nBcc: x@evil.test',
+    'line separator': `Ana${String.fromCodePoint(0x2028)}B`,
+    'joiners only': String.fromCodePoint(0x200c, 0x200d),
+    'not text': 42,
+  }
+  const nameOf = (email: string) => asRole('app', async (c) => (await c.query<{ name: string }>('select name from auth_user where email = $1', [email])).rows[0]?.name)
+  const usersWith = (email: string) => asRole('app', async (c) => (await c.query('select count(*)::int as n from auth_user where email = $1', [email])).rows[0]?.n)
+  const invitationFrom = (inviter: string) => checkMail({ to: 'x@example.test', template: 'invitation', locale: 'en', data: { url: `${ORIGIN}/invite/x`, inviter, account: 'Acme' } })
+
+  test('sign-up refuses a name that is not plain text: a translated code, no user, no mail', async () => {
+    for (const [what, name] of Object.entries(BAD_NAMES)) {
+      const email = address('bad-name')
+      const result = await new Browser().call('/sign-up/email', { name, email, password: PASSWORD })
+      expect([result.status, result.json?.code], what).toEqual([400, 'INVALID_NAME'])
+      expect(await usersWith(email), what).toBe(0)
+      expect(await mailsTo(email), what).toEqual([])
+    }
+    expect(authErrorMessage({ code: 'INVALID_NAME', status: 400 })).toBe(en.auth_error_invalid_name)
+  })
+
+  test('sign-up stores the name trimmed, and refuses a picture', async () => {
+    const email = address('trimmed-name')
+    expect((await new Browser().call('/sign-up/email', { name: '  Ana Nováková  ', email, password: PASSWORD })).status).toBe(200)
+    expect(await nameOf(email)).toBe('Ana Nováková')
+    const pictured = address('pictured')
+    const result = await new Browser().call('/sign-up/email', { name: 'Ana', email: pictured, password: PASSWORD, image: 'https://evil.test/x.png' })
+    expect([result.status, result.json?.code]).toEqual([400, 'IMAGE_NOT_ALLOWED'])
+    expect(await usersWith(pictured)).toBe(0)
+  })
+
+  test('changing the name (update-user) follows the same rule; a picture cannot be set; an accepted name always passes the mail check', async () => {
+    const email = await verifiedUser('rename')
+    const browser = await signedIn(email)
+    for (const [what, name] of Object.entries(BAD_NAMES)) {
+      const result = await browser.call('/update-user', { name })
+      expect([result.status, result.json?.code], what).toEqual([400, 'INVALID_NAME'])
+    }
+    expect(await nameOf(email)).toBe('Test Person')
+    const pictured = await browser.call('/update-user', { image: 'https://evil.test/x.png' })
+    expect([pictured.status, pictured.json?.code]).toEqual([400, 'IMAGE_NOT_ALLOWED'])
+    const persian = `  محمد${String.fromCodePoint(0x200c)}رضا `
+    expect((await browser.call('/update-user', { name: persian })).status).toBe(200)
+    const stored = await nameOf(email)
+    expect(stored).toBe(persian.trim())
+    expect(() => invitationFrom(stored ?? '')).not.toThrow()
   })
 })
 

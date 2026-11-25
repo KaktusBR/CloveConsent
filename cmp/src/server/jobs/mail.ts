@@ -16,6 +16,7 @@ import type { EmailTemplate, FieldKind } from '../../emails/template'
 import twoFactorChanged from '../../emails/two-factor-changed'
 import verifyEmail from '../../emails/verify-email'
 import { locales, type Locale } from '../../i18n/locale'
+import { plainText } from '../../lib/plain-text'
 import type { QueueJob } from '../data/queue'
 import type { SystemTx, TenantTx } from '../data/scope'
 import { env } from '../env'
@@ -57,15 +58,6 @@ export class MailError extends Error {
 
 const MAX_TEXT = 200
 const MAX_LINK = 2048
-/** Control and invisible format characters (bidi controls, zero-width space, BOM, tags), line and paragraph separators. */
-const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
-/** Except the zero-width non-joiner and joiner: Persian, Devanagari, Bengali, Sinhala … and emoji sequences need them. */
-const JOINERS: ReadonlySet<number> = new Set([0x200c, 0x200d])
-
-function hasControl(value: string): boolean {
-  for (const [char] of value.matchAll(CONTROL)) if (!JOINERS.has(char.codePointAt(0) ?? 0)) return true
-  return false
-}
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
 
 function checkValue(field: string, kind: FieldKind, value: unknown): void {
@@ -75,7 +67,8 @@ function checkValue(field: string, kind: FieldKind, value: unknown): void {
     return
   }
   if (kind === 'text') {
-    if (value.trim() === '' || value.length > MAX_TEXT || hasControl(value)) {
+    // the plain-text rule of names and reasons (src/lib/plain-text.ts), on the value as given
+    if (value.length > MAX_TEXT || plainText(value, MAX_TEXT) === null) {
       throw new MailError(field, `must be one line of 1 to ${MAX_TEXT} characters`)
     }
   } else if (kind === 'link') {

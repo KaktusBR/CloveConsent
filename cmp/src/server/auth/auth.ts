@@ -16,6 +16,7 @@ import { APIError, createAuthMiddleware, isAPIError } from 'better-auth/api'
 import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins'
 import { passkey } from '@better-auth/passkey'
 import { localizedPath } from '../../i18n/locale'
+import { personName } from '../../lib/plain-text'
 import { m } from '../../paraglide/messages.js'
 import { createHash } from 'node:crypto'
 import { authDatabase } from '../data/auth-database'
@@ -245,6 +246,19 @@ function authOptions(publicOrigin: string) {
         if (ctx.path.startsWith('/two-factor/verify-') && (ctx.body as { trustDevice?: unknown } | undefined)?.trustDevice) {
           throw new APIError('BAD_REQUEST', { code: 'TRUST_DEVICE_NOT_ALLOWED', message: 'trusting a device is not allowed' })
         }
+        // A person's name goes into the invitations they send: it must pass the mail's plain-text rule
+        // where it comes in (src/lib/plain-text.ts), stored trimmed, so a stored name never makes an
+        // invitation fail. No picture: nothing shows one, and its URL would be a request to anywhere.
+        let profile: Record<string, unknown> | undefined
+        if (ctx.path === '/sign-up/email' || ctx.path === '/update-user') {
+          const body = (ctx.body ?? {}) as Record<string, unknown>
+          if (body.image !== undefined) throw new APIError('BAD_REQUEST', { code: 'IMAGE_NOT_ALLOWED', message: 'a picture cannot be set' })
+          if (ctx.path === '/sign-up/email' || body.name !== undefined) {
+            const name = personName(body.name)
+            if (name === null) throw new APIError('BAD_REQUEST', { code: 'INVALID_NAME', message: 'the name must be one line of plain text' })
+            profile = { ...body, name }
+          }
+        }
         // Failed passwords (ruling R19): a place in the pair's window, then in the account's; refused
         // when either is full (the pair is checked first, so a refused address never uses up the account's).
         const signIn = failureKeys(ctx)
@@ -260,6 +274,7 @@ function authOptions(publicOrigin: string) {
           const request = ctx.request ?? ctx.headers
           if (request) signInPlaces.set(request, { pair, account })
         }
+        return profile ? { context: { body: profile } } : undefined
       }),
       after: createAuthMiddleware(async (ctx) => {
         // only a wrong email or password keeps its places (not a right one, nor an unverified address)

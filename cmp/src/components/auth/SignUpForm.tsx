@@ -30,7 +30,7 @@ export default function SignUpForm({ sentHref }: Props) {
 
   return (
     <form className="grid gap-4" onSubmit={onSubmit}>
-      <Field label={m.auth_name_label()} name="name" autoComplete="name" required maxLength={200} />
+      <Field label={m.auth_name_label()} name="name" autoComplete="name" required maxLength={100} />
       <Field label={m.auth_email_label()} name="email" type="email" autoComplete="email" required />
       <Field
         label={m.auth_password_label()}
