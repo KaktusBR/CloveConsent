@@ -54,8 +54,10 @@ export interface RequestAccess {
  * Reads who a request comes from (session, account scope, the account's entitlement), all from the
  * database now, and applies the access rules (src/server/auth/access.ts): a super-admin marking an
  * account paid, a suspension, a removed membership all count from the next request, with no new sign-in.
+ * `route` is the pattern of the route Astro serves the request with (`context.routePattern`): the rules
+ * decide by it, not by the address.
  */
-export async function requestAccess(request: Request, responseHeaders?: Headers): Promise<RequestAccess> {
+export async function requestAccess(request: Request, route: string, responseHeaders?: Headers): Promise<RequestAccess> {
   const { session, scope } = await signedInScope(request.headers, responseHeaders)
   // a super-admin's view that has ended by its time (its session is gone, the impersonator cookie is
   // still here): record its end and give them their own session back, on the account's console page
@@ -73,6 +75,7 @@ export async function requestAccess(request: Request, responseHeaders?: Headers)
   const access = accessFor({
     method: request.method,
     pathname: new URL(request.url).pathname,
+    route,
     impersonating: impersonatorOf(session) !== null,
     superAdmin,
     entitlement: entitlement?.state ?? null,

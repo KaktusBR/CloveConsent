@@ -19,7 +19,7 @@ import { entitlementOf, GRACE_DAYS, listPlans, setEntitlement, suspendAccount, u
 import { closeQueue } from '../../src/server/data/queue'
 import { SOCKET_PEER_HEADER } from '../../src/server/socket-peer'
 import { secretOf, totp } from '../totp'
-import { appRoutes, CONSOLE, OPEN, pathsOf } from '../routes'
+import { appRoutes, CONSOLE, OPEN, pathsOf, routePatternOf } from '../routes'
 import { Browser, ORIGIN, PASSWORD, pwnedStandIn, signedIn, signUp, verifiedUser } from './browser'
 import { addAccount, asRole, errorCode, newId } from './raw'
 
@@ -62,7 +62,7 @@ function requestOf(who: Person | Browser, path: string, method = 'GET', fields?:
 
 /** What the middleware decides for this request. */
 async function accessOf(who: Person | Browser, path: string, method = 'GET') {
-  return (await requestAccess(requestOf(who, path, method))).access
+  return (await requestAccess(requestOf(who, path, method), routePatternOf(path))).access
 }
 
 /** A plain form POST to one of the app's routes, with the locals the middleware would set; keeps the cookies it sets. */
@@ -258,16 +258,18 @@ describe('paid access (Review Focus 3)', () => {
   test('an unpaid account gets only the paywall and account settings for every route; marked paid, its next request gets in without signing in again', async () => {
     const owner = await person('unpaid')
     const accountId = await newAccount(owner)
-    expect((await requestAccess(requestOf(owner, '/sites'))).entitlement?.state).toBe('none')
+    expect((await requestAccess(requestOf(owner, '/sites'), routePatternOf('/sites'))).entitlement?.state).toBe('none')
     await sweep(owner, false)
-    // also an endpoint of the product no file serves yet
-    expect(await accessOf(owner, '/api/sites/x', 'POST')).toEqual({ kind: 'refuse', status: 402, code: 'PAYMENT_REQUIRED' })
+    // also an endpoint of the product no file serves yet, by the route it will have (deny by default); its
+    // address alone reaches no route today, so the server answers it with the 404 page
+    expect((await requestAccess(requestOf(owner, '/api/sites/x', 'POST'), '/api/sites/[id]')).access).toEqual({ kind: 'refuse', status: 402, code: 'PAYMENT_REQUIRED' })
+    expect(await accessOf(owner, '/api/sites/x', 'POST')).toEqual({ kind: 'pass' })
 
     // the super-admin marks it paid through tomorrow; the same browser, the same session
     const session = (await completeSession(owner.browser.headers()))?.session.id
     expect(await setPaid(rootA, accountId, isoDay(Date.now() + DAY))).toEqual({ status: 303, location: `/admin/accounts/${accountId}?done=set`, body: '' })
     expect((await completeSession(owner.browser.headers()))?.session.id).toBe(session)
-    expect((await requestAccess(requestOf(owner, '/sites'))).entitlement?.state).toBe('active')
+    expect((await requestAccess(requestOf(owner, '/sites'), routePatternOf('/sites'))).entitlement?.state).toBe('active')
     await sweep(owner, true)
 
     // ended 29 days ago: still in grace; 31 days ago: necessary-only, the paywall again
@@ -626,7 +628,7 @@ describe('read-only impersonation', () => {
   /** The middleware's answer headers for a request of `who` (what a browser would get). */
   async function endedBy(who: Person, path: string): Promise<Response> {
     const headers = new Headers()
-    const { access } = await requestAccess(requestOf(who, path), headers)
+    const { access } = await requestAccess(requestOf(who, path), routePatternOf(path), headers)
     if (access.kind === 'see-other') headers.set('Location', access.location)
     return new Response(null, { status: access.kind === 'see-other' ? 303 : 200, headers })
   }
@@ -708,7 +710,7 @@ describe('read-only impersonation', () => {
     pastItsTime()
     expect((await root.browser.call('/sign-out', {})).status).toBe(200)
     expect(holdsImpersonator(root)).toBe(false)
-    const next = await requestAccess(requestOf(root, '/account'))
+    const next = await requestAccess(requestOf(root, '/account'), routePatternOf('/account'))
     expect([next.session, next.access]).toEqual([null, { kind: 'pass' }])
     // neither the view's session nor the super-admin's own, kept aside, is left behind
     expect(await impersonationSessions(owner)).toBe(0)
@@ -738,7 +740,7 @@ describe('read-only impersonation', () => {
     expect((await owner.browser.call('/revoke-session', { token: view?.token })).status).toBe(200)
     expect((await root.browser.call('/sign-out', {})).status).toBe(200)
     expect(holdsImpersonator(root)).toBe(false)
-    expect((await requestAccess(requestOf(root, '/admin/accounts'))).session).toBeNull()
+    expect((await requestAccess(requestOf(root, '/admin/accounts'), routePatternOf('/admin/accounts'))).session).toBeNull()
     expect(await sessionsOf(root.userId)).toBe(0)
     expect((await impersonationRows(accountId)).filter((r) => r.action === 'admin.impersonation_stop').map((r) => r.meta.ended)).toEqual(['revoked'])
   })
@@ -772,7 +774,7 @@ describe('read-only impersonation', () => {
     expect(await stops()).toHaveLength(1)
     // a copy of the cookies taken during the view: nothing ended again, no session given back
     expect((await post(stopRoute, replay, '/api/impersonation/stop', {})).status).toBe(404)
-    const replayed = await requestAccess(requestOf(replay, '/admin/accounts'))
+    const replayed = await requestAccess(requestOf(replay, '/admin/accounts'), routePatternOf('/admin/accounts'))
     expect(replayed.session).toBeNull()
     expect(await stops()).toHaveLength(1)
     expect(await impersonationSessions(owner)).toBe(0)

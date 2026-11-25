@@ -10,6 +10,8 @@ const ROOT = join(import.meta.dirname, '..')
 export interface Route {
   /** The route's pattern without its `/[...locale]` prefix: `/account/members`, `/invite/[token]`, `/_image`. */
   route: string
+  /** The pattern as Astro gives it to the middleware (`context.routePattern`): `/[...locale]/account/members`. */
+  pattern: string
   /** A request path for it: the parameters filled with samples. */
   path: string
   /** An endpoint rather than a page. */
@@ -86,10 +88,27 @@ export function appRoutes(): Route[] {
       const route = localized ? r.pattern.slice('/[...locale]'.length) || '/' : r.pattern
       const segments = route.split('/').filter(Boolean)
       const path = `/${segments.map((s) => (s === '[id]' ? SAMPLE_ID : s.startsWith('[') ? 'sample' : s)).join('/')}`
-      return { route, path, endpoint: r.type === 'endpoint', localized, origin: r.origin }
+      return { route, pattern: r.pattern, path, endpoint: r.type === 'endpoint', localized, origin: r.origin }
     })
     .sort((a, b) => a.route.localeCompare(b.route))
 }
 
 /** The request paths of a route: `/x`, and `/sk/x` for a localized page. */
 export const pathsOf = (r: Route): string[] => (r.localized ? [r.path, r.path === '/' ? '/sk/' : `/sk${r.path}`] : [r.path])
+
+/**
+ * The pattern of the route Astro serves `path` with (what the middleware reads as `context.routePattern`),
+ * for tests that build a request by its path: `/sk/sites` → `/[...locale]/sites`; `/404` when no route
+ * matches. Static routes win over dynamic ones, as in Astro.
+ */
+export function routePatternOf(path: string): string {
+  const pathname = new URL(path, 'http://x').pathname
+  const unprefixed = pathname === '/sk' || pathname === '/sk/' ? '/' : pathname.startsWith('/sk/') ? pathname.slice(3) : pathname
+  const ordered = [...appRoutes()].sort((a, b) => Number(a.route.includes('[')) - Number(b.route.includes('[')))
+  for (const r of ordered) {
+    const candidate = r.localized ? unprefixed : pathname
+    const source = r.route.split('/').map((s) => (s.startsWith('[...') ? '.*' : s.startsWith('[') ? '[^/]+' : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/')
+    if (new RegExp(`^${source}$`).test(candidate)) return r.pattern
+  }
+  return '/404'
+}

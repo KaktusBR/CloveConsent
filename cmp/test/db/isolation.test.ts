@@ -103,8 +103,8 @@ async function serve(route: string, request: Request): Promise<Response> {
   const handler = module[request.method] ?? module.ALL
   if (!handler) throw new Error(`${route} has no ${request.method} handler`)
   const context = (locals: object) => ({ request, url, locals, params: {}, cookies: { set() {} } }) as unknown as Parameters<APIRoute>[0]
-  if (url.pathname.startsWith('/api/auth/') || ['/healthz', '/readyz'].includes(url.pathname)) return handler(context({}))
-  const found = await requestAccess(request)
+  if (route === '/api/auth/[...all]' || ['/healthz', '/readyz'].includes(route)) return handler(context({}))
+  const found = await requestAccess(request, route)
   if (found.access.kind !== 'pass') return refused(found.access)
   return handler(context({ session: found.session, scope: found.scope, entitlement: found.entitlement, locale: 'en' }))
 }

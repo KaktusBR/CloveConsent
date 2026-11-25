@@ -94,6 +94,17 @@ test('an unpaid account sees only the paywall until the super-admin marks it pai
   await expect(customer.getByRole('heading', { level: 1 })).toHaveText(en('not_found_heading'))
   await expectAccessible(customer)
   expect((await customer.request.post('/api/admin/entitlement', { headers: { Origin: origin }, form: { intent: 'set' } })).status()).toBe(404)
+  // the rules go by the route the server serves, not the address: written differently, the same route
+  // gets the same answer (percent-encoded, a doubled slash, any word where the language goes)
+  for (const path of ['/%61dmin/accounts', '/foo/admin/accounts', '//admin/accounts', '/sk/%61dmin/audit']) {
+    expect((await customer.request.get(`${origin}${path}`, { maxRedirects: 0 })).status(), path).toBe(404)
+  }
+  expect((await customer.request.post(`${origin}/api/%61dmin/entitlement`, { headers: { Origin: origin }, form: { intent: 'set' }, maxRedirects: 0 })).status()).toBe(404)
+  for (const path of ['/%73ites', '/foo/sites', '//sites']) {
+    const disguised = await customer.request.get(`${origin}${path}`, { maxRedirects: 0 })
+    expect(disguised.status(), path).toBe(303)
+    expect(disguised.headers()['location'], path).toBe('/paywall')
+  }
 
   // the super-admin: listed, verified, sent to set up two-factor authentication first
   const { context: rootContext, page: root } = await newContext(browser)
