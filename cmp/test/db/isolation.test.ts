@@ -52,7 +52,8 @@ async function person(label: string): Promise<Person> {
 async function newAccount(who: Person, name: string): Promise<string> {
   const request = new Request(`${ORIGIN}/api/accounts/create`, {
     method: 'POST',
-    headers: who.browser.headers({ 'content-type': 'application/x-www-form-urlencoded' }),
+    // from the browser's socket address, as the node adapter stamps it (src/server/socket-peer.ts)
+    headers: who.browser.headers({ 'content-type': 'application/x-www-form-urlencoded', [SOCKET_PEER_HEADER]: who.browser.peer ?? '' }),
     body: new URLSearchParams({ name }),
   })
   const response = await createAccountRoute({ request, locals: await signedInScope(request.headers), url: new URL(request.url) } as unknown as Parameters<APIRoute>[0])
