@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http'
 
 // Security headers and the CSRF origin check. No import of ./env: astro.config.mjs reads the CSP
 // from here at build time, and the node adapter's static file handler uses it (see astro.config.mjs).
@@ -46,26 +47,36 @@ export function securityHeaders(): Headers {
 /**
  * `astro dev` only. Vite's client, the dev toolbar and the CSS Vite injects are scripts and inline styles
  * without a hash, so the hashed policy blocks them and dev pages render unstyled and inert. The dev
- * server's pages get this policy instead: the same directives, scripts and styles from this origin or
- * inline, no 'strict-dynamic' (it would switch 'self' off). The middleware applies it under
- * `import.meta.env.DEV`, which a production build replaces with false, so a build never serves it
- * (e2e/security.spec.ts checks the built server's policy). A function, not a constant, so the build
- * drops it whole.
+ * server's responses get this policy instead: the same directives, scripts and styles from this origin
+ * or inline, no 'strict-dynamic' (it would switch 'self' off).
  */
 export function devCsp(): string {
   return [...CSP_DIRECTIVES, "script-src 'self' 'unsafe-inline'", "style-src 'self' 'unsafe-inline'"].join('; ')
 }
 
-/** The response with devCsp() as its policy (astro dev only). An immutable response is copied. */
-export function withDevPolicy(response: Response): Response {
-  try {
-    response.headers.set('Content-Security-Policy', devCsp())
-    return response
-  } catch {
-    const copy = new Response(response.body, response)
-    copy.headers.set('Content-Security-Policy', devCsp())
-    return copy
-  }
+const CSP_HEADER = 'content-security-policy'
+
+/**
+ * A Connect middleware for the Vite dev server (astro.config.mjs: a plugin with `apply: 'serve'`, which
+ * Vite never runs in a build): every policy the response sets, by setHeader or writeHead, becomes
+ * devCsp(). Not `import.meta.env.DEV` in the app's middleware: Vite derives that from NODE_ENV, so a
+ * build made with NODE_ENV=test (the e2e build) had it true. e2e/security.spec.ts checks the built
+ * server's policy.
+ */
+export function devPolicyMiddleware(_req: IncomingMessage, res: ServerResponse, next: () => void): void {
+  const setHeader = res.setHeader.bind(res)
+  res.setHeader = (name, value) => setHeader(name, name.toLowerCase() === CSP_HEADER ? devCsp() : value)
+  const writeHead = res.writeHead.bind(res) as (...args: unknown[]) => ServerResponse
+  res.writeHead = ((status: number, ...rest: unknown[]) => {
+    const at = rest.findIndex((r) => r !== null && typeof r === 'object' && !Array.isArray(r))
+    if (at !== -1) {
+      const headers = { ...(rest[at] as OutgoingHttpHeaders) }
+      for (const key of Object.keys(headers)) if (key.toLowerCase() === CSP_HEADER) headers[key] = devCsp()
+      rest[at] = headers
+    }
+    return writeHead(status, ...rest)
+  }) as ServerResponse['writeHead']
+  next()
 }
 
 /** The CSP source expression allowing an inline script or style with exactly this text. */

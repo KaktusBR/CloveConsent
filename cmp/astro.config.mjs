@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { patchModule, replaceOnce } from './src/build/patch-module.ts'
 import { THEME_SCRIPT } from './src/lib/theme.ts'
-import { CSP_DIRECTIVES, cspHash } from './src/server/security.ts'
+import { CSP_DIRECTIVES, cspHash, devPolicyMiddleware } from './src/server/security.ts'
 import { MAX_REQUEST_BODY } from './src/server/request-body.ts'
 import { socketPeerDevMiddleware } from './src/server/socket-peer.ts'
 
@@ -87,6 +87,20 @@ const socketPeerInDev = {
   },
 }
 
+/**
+ * The dev server's policy (src/server/security.ts devCsp): Vite's client, the dev toolbar and the CSS it
+ * injects carry no hash, so the hashed policy would leave dev pages unstyled. `apply: 'serve'`: Vite never
+ * runs this plugin in a build, whatever NODE_ENV says. Pinned by e2e/security.spec.ts (the built server's
+ * strict policy).
+ */
+const devPolicyInDev = {
+  name: 'cmp:dev-policy',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use(devPolicyMiddleware)
+  },
+}
+
 const publicHost = URL.canParse(process.env.PUBLIC_ORIGIN ?? '') ? new URL(process.env.PUBLIC_ORIGIN ?? '') : null
 
 // No site/domain here: the public origin comes from PUBLIC_ORIGIN at runtime (src/server/env.ts).
@@ -121,5 +135,5 @@ export default defineConfig({
   },
   // No Markdown pages; Shiki's inline styles would need 'unsafe-inline' under the CSP.
   markdown: { syntaxHighlight: false },
-  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, stampSocketPeerOnRequests, socketPeerInDev, paraglideVitePlugin({ project: './project.inlang' })] },
+  vite: { plugins: [tailwindcss(), validateEnvAtBoot, securityHeadersOnFiles, stampSocketPeerOnRequests, socketPeerInDev, devPolicyInDev, paraglideVitePlugin({ project: './project.inlang' })] },
 })

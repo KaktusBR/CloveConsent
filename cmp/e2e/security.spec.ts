@@ -223,8 +223,9 @@ test.describe(`request bodies are limited to ${MAX_REQUEST_BODY} bytes (finding 
     for (const path of ['/api/auth/sign-up/email', '/api/locale']) {
       expect(await chunkedPost(baseURL ?? '', path, MAX_REQUEST_BODY + 32 * 1024), path).toBe(413)
     }
-    // a much larger one: refused (or its connection closed while it is still sending), never read whole
-    expect([413, 'ECONNRESET', 'EPIPE', 'ECANCELED']).toContain(await chunkedPost(baseURL ?? '', '/api/auth/sign-in/email', 64 * 1024 * 1024))
+    // a much larger one: refused (or its connection closed while it is still sending), never read whole;
+    // Windows reports that closed connection as ECONNABORTED
+    expect([413, 'ECONNRESET', 'EPIPE', 'ECANCELED', 'ECONNABORTED']).toContain(await chunkedPost(baseURL ?? '', '/api/auth/sign-in/email', 64 * 1024 * 1024))
     expect((await request.get('/healthz')).status()).toBe(200)
   })
 })

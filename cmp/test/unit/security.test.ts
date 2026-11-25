@@ -1,6 +1,8 @@
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { describe, expect, test } from 'vitest'
 
-import { BASELINE_CSP, checkOrigin, CLIENT_ADDRESS_HEADER, cspHash, devCsp, securityHeaders, staticSecurityHeaders, stripInternalHeaders, withDevPolicy, withSecurityHeaders } from '../../src/server/security'
+import { BASELINE_CSP, checkOrigin, CLIENT_ADDRESS_HEADER, cspHash, devCsp, devPolicyMiddleware, securityHeaders, staticSecurityHeaders, stripInternalHeaders, withSecurityHeaders } from '../../src/server/security'
 
 /** The headers every response carries, with their exact values (Global Constraints). */
 const EXPECTED = {
@@ -105,20 +107,34 @@ describe('staticSecurityHeaders (files the node adapter serves before the app)',
   })
 })
 
-describe('withDevPolicy (astro dev only)', () => {
-  const page = () => new Response('<p>x</p>', { headers: { 'Content-Security-Policy': "script-src 'self' 'sha256-a' 'strict-dynamic'; style-src 'self'" } })
-  test("replaces the page's hashed policy with one that lets Vite's unhashed scripts and styles run", () => {
-    const csp = withDevPolicy(page()).headers.get('Content-Security-Policy') ?? ''
-    expect(csp).toBe(devCsp())
+describe('devPolicyMiddleware (astro dev only: a Vite plugin with apply serve, never part of a build)', () => {
+  /** A real Node server: the middleware, then a handler that writes `csp` the way it is given. */
+  async function served(write: (res: ServerResponse) => void): Promise<string | null> {
+    const server = createServer((req, res) => devPolicyMiddleware(req, res, () => write(res)))
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const { port } = server.address() as AddressInfo
+      return (await fetch(`http://127.0.0.1:${port}/`)).headers.get('content-security-policy')
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
+  }
+  const strict = "script-src 'self' 'sha256-a' 'strict-dynamic'; style-src 'self'"
+
+  test("replaces the page's hashed policy, however it is written, with one that lets Vite's unhashed scripts and styles run", async () => {
+    // astro dev writes its headers with writeHead(status, object) (astro/dist/vite-plugin-astro-server/response.js)
+    expect(await served((res) => res.writeHead(200, { 'Content-Security-Policy': strict }).end())).toBe(devCsp())
+    expect(await served((res) => res.writeHead(200, 'OK', { 'content-security-policy': strict }).end())).toBe(devCsp())
+    expect(await served((res) => { res.setHeader('Content-Security-Policy', strict); res.end() })).toBe(devCsp())
+    // a response without a policy is left without one
+    expect(await served((res) => res.writeHead(200, { 'Content-Type': 'text/plain' }).end())).toBeNull()
+  })
+  test('the dev policy: inline scripts and styles from this origin, no strict-dynamic, every other directive kept', () => {
+    const csp = devCsp()
     expect(csp).toContain("script-src 'self' 'unsafe-inline'")
     expect(csp).toContain("style-src 'self' 'unsafe-inline'")
     expect(csp).not.toContain('strict-dynamic') // it would switch 'self' off, and Vite's modules with it
-  })
-  test('keeps every other directive of the real policy', () => {
-    for (const d of ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "default-src 'self'"]) expect(devCsp()).toContain(d)
-  })
-  test('copies an immutable response', () => {
-    expect(withDevPolicy(Response.redirect('http://localhost:4321/a', 303)).headers.get('Content-Security-Policy')).toBe(devCsp())
+    for (const d of ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "default-src 'self'"]) expect(csp).toContain(d)
   })
 })
 

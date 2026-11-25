@@ -5,15 +5,17 @@ import { localeOfPath, type Locale } from './i18n/locale'
 import { overwriteServerAsyncLocalStorage } from './paraglide/runtime.js'
 import type { Access } from './server/auth/access'
 import { log, pathForLog } from './server/log'
-import { checkOrigin, stripInternalHeaders, withDevPolicy, withSecurityHeaders } from './server/security'
+import { checkOrigin, stripInternalHeaders, withSecurityHeaders } from './server/security'
 
 // No static import of ./server/env here: this module also runs when pages are prerendered at build
 // time, without the server's environment. The built server validates it before listening (astro.config.mjs).
 
+// Routes are told apart by the route Astro serves the request with (`context.routePattern`), never by the
+// address, which can be written many ways that reach the same route (src/server/auth/access.ts).
 /** Probes that run without auth and are not logged per request (they are polled). */
 const PROBES = new Set(['/healthz', '/readyz'])
 /** Better Auth's own endpoints read the session themselves. */
-const AUTH_API = '/api/auth/'
+const AUTH_API = '/api/auth/[...all]'
 
 /** Paraglide's `getLocale()`, and so every `m.*()` rendered for a request, reads the request's locale from here. */
 const requestLocale = new AsyncLocalStorage<{ locale?: Locale }>()
@@ -21,6 +23,7 @@ overwriteServerAsyncLocalStorage(requestLocale)
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url
+  const route = context.routePattern
 
   // The language is the URL's: `/sk/...` is Slovak, everything else English (src/pages/[...locale]/ has
   // a route for each). This also runs when pages are prerendered, so static pages get their language too.
@@ -28,8 +31,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   context.locals.locale = locale
   // Prerendered pages get their headers where they are served (astro.config.mjs).
   if (context.isPrerendered) {
-    const page = await requestLocale.run({ locale }, () => next())
-    return import.meta.env.DEV ? withDevPolicy(page) : page
+    return requestLocale.run({ locale }, () => next())
   }
 
   // a header only this app may set (the client address for Better Auth): never the client's
@@ -52,9 +54,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // impersonating session: src/server/auth/auth.ts).
   const refreshed = new Headers()
   let access: Access = { kind: 'pass' }
-  if (allowed && !PROBES.has(pathname) && !pathname.startsWith(AUTH_API)) {
+  if (allowed && !PROBES.has(route) && route !== AUTH_API) {
     const { requestAccess } = await import('./server/auth/guard')
-    const found = await requestAccess(context.request, refreshed)
+    const found = await requestAccess(context.request, route, refreshed)
     context.locals.session = found.session
     context.locals.scope = found.scope
     context.locals.entitlement = found.entitlement
@@ -65,13 +67,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     ? await requestLocale.run({ locale }, () => answer(access, pathname, next))
     : new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
 
-  // astro dev: Vite's unhashed scripts and styles need a looser policy (src/server/security.ts devCsp)
-  const secured = import.meta.env.DEV ? withDevPolicy(withSecurityHeaders(response)) : withSecurityHeaders(response)
+  const secured = withSecurityHeaders(response)
   // a sliding session's renewed cookie (src/server/auth/guard.ts)
   for (const cookie of refreshed.getSetCookie()) secured.headers.append('Set-Cookie', cookie)
   secured.headers.set('X-Request-Id', requestId)
 
-  if (!PROBES.has(pathname)) {
+  if (!PROBES.has(route)) {
     context.locals.log.info(
       { method: context.request.method, path: pathForLog(pathname), status: secured.status, ms: Math.round(performance.now() - started) },
       'request',
@@ -88,6 +89,7 @@ function answer(access: Access, pathname: string, next: (rewrite?: string) => Pr
       return next()
     case 'not-found':
       // the 404 page, exactly as for a page that does not exist; an endpoint's 404 has no body
+      // presentation only (an endpoint's 404 has no body); the decision was made on the route
       return pathname.startsWith('/api/') ? new Response(null, { status: 404, headers: noStore }) : next('/404')
     case 'see-other':
       return new Response(null, { status: 303, headers: { ...noStore, Location: access.location } })
