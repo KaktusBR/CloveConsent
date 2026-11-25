@@ -43,6 +43,31 @@ export function securityHeaders(): Headers {
   return new Headers({ ...HEADERS, 'Content-Security-Policy': BASELINE_CSP })
 }
 
+/**
+ * `astro dev` only. Vite's client, the dev toolbar and the CSS Vite injects are scripts and inline styles
+ * without a hash, so the hashed policy blocks them and dev pages render unstyled and inert. The dev
+ * server's pages get this policy instead: the same directives, scripts and styles from this origin or
+ * inline, no 'strict-dynamic' (it would switch 'self' off). The middleware applies it under
+ * `import.meta.env.DEV`, which a production build replaces with false, so a build never serves it
+ * (e2e/security.spec.ts checks the built server's policy). A function, not a constant, so the build
+ * drops it whole.
+ */
+export function devCsp(): string {
+  return [...CSP_DIRECTIVES, "script-src 'self' 'unsafe-inline'", "style-src 'self' 'unsafe-inline'"].join('; ')
+}
+
+/** The response with devCsp() as its policy (astro dev only). An immutable response is copied. */
+export function withDevPolicy(response: Response): Response {
+  try {
+    response.headers.set('Content-Security-Policy', devCsp())
+    return response
+  } catch {
+    const copy = new Response(response.body, response)
+    copy.headers.set('Content-Security-Policy', devCsp())
+    return copy
+  }
+}
+
 /** The CSP source expression allowing an inline script or style with exactly this text. */
 export function cspHash(source: string): string {
   return `sha256-${createHash('sha256').update(source).digest('base64')}`

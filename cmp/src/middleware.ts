@@ -5,7 +5,7 @@ import { localeOfPath, type Locale } from './i18n/locale'
 import { overwriteServerAsyncLocalStorage } from './paraglide/runtime.js'
 import type { Access } from './server/auth/access'
 import { log, pathForLog } from './server/log'
-import { checkOrigin, stripInternalHeaders, withSecurityHeaders } from './server/security'
+import { checkOrigin, stripInternalHeaders, withDevPolicy, withSecurityHeaders } from './server/security'
 
 // No static import of ./server/env here: this module also runs when pages are prerendered at build
 // time, without the server's environment. The built server validates it before listening (astro.config.mjs).
@@ -27,7 +27,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const locale = localeOfPath(pathname)
   context.locals.locale = locale
   // Prerendered pages get their headers where they are served (astro.config.mjs).
-  if (context.isPrerendered) return requestLocale.run({ locale }, () => next())
+  if (context.isPrerendered) {
+    const page = await requestLocale.run({ locale }, () => next())
+    return import.meta.env.DEV ? withDevPolicy(page) : page
+  }
 
   // a header only this app may set (the client address for Better Auth): never the client's
   stripInternalHeaders(context.request.headers)
@@ -62,7 +65,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     ? await requestLocale.run({ locale }, () => answer(access, pathname, next))
     : new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
 
-  const secured = withSecurityHeaders(response)
+  // astro dev: Vite's unhashed scripts and styles need a looser policy (src/server/security.ts devCsp)
+  const secured = import.meta.env.DEV ? withDevPolicy(withSecurityHeaders(response)) : withSecurityHeaders(response)
   // a sliding session's renewed cookie (src/server/auth/guard.ts)
   for (const cookie of refreshed.getSetCookie()) secured.headers.append('Set-Cookie', cookie)
   secured.headers.set('X-Request-Id', requestId)

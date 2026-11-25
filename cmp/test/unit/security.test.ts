@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { BASELINE_CSP, checkOrigin, CLIENT_ADDRESS_HEADER, cspHash, securityHeaders, staticSecurityHeaders, stripInternalHeaders, withSecurityHeaders } from '../../src/server/security'
+import { BASELINE_CSP, checkOrigin, CLIENT_ADDRESS_HEADER, cspHash, devCsp, securityHeaders, staticSecurityHeaders, stripInternalHeaders, withDevPolicy, withSecurityHeaders } from '../../src/server/security'
 
 /** The headers every response carries, with their exact values (Global Constraints). */
 const EXPECTED = {
@@ -102,6 +102,23 @@ describe('staticSecurityHeaders (files the node adapter serves before the app)',
     }
     expect(() => staticSecurityHeaders(pages, true)).not.toThrow()
     expect(() => staticSecurityHeaders(undefined, false)).not.toThrow() // no prerendered page, nothing to find
+  })
+})
+
+describe('withDevPolicy (astro dev only)', () => {
+  const page = () => new Response('<p>x</p>', { headers: { 'Content-Security-Policy': "script-src 'self' 'sha256-a' 'strict-dynamic'; style-src 'self'" } })
+  test("replaces the page's hashed policy with one that lets Vite's unhashed scripts and styles run", () => {
+    const csp = withDevPolicy(page()).headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toBe(devCsp())
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'")
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'")
+    expect(csp).not.toContain('strict-dynamic') // it would switch 'self' off, and Vite's modules with it
+  })
+  test('keeps every other directive of the real policy', () => {
+    for (const d of ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "default-src 'self'"]) expect(devCsp()).toContain(d)
+  })
+  test('copies an immutable response', () => {
+    expect(withDevPolicy(Response.redirect('http://localhost:4321/a', 303)).headers.get('Content-Security-Policy')).toBe(devCsp())
   })
 })
 
