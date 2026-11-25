@@ -53,7 +53,7 @@ export const AUTH_BASE_PATH = '/api/auth'
  * addresses or IPv6 /64s every hour; a single customer with a /56 or /48 holds 256 or more /64s, so can
  * do it alone. Its passkey sign-in is never blocked.
  */
-const FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 200 } } as const
+export const SIGN_IN_FAILURES = { pair: { window: 15 * 60, max: 4 }, account: { window: 60 * 60, max: 200 } } as const
 
 /** The windows a sign-in request took its places in, from the before-hook to the after-hook (keyed by the request). */
 const signInPlaces = new WeakMap<object, { pair: number; account: number }>()
@@ -286,9 +286,9 @@ function authOptions(publicOrigin: string) {
         const signIn = failureKeys(ctx)
         if (signIn) {
           const refuse = () => new APIError('TOO_MANY_REQUESTS', { code: 'SIGN_IN_LIMITED', message: 'too many failed sign-ins' })
-          const pair = await reserveInWindow(signIn.pair, FAILURES.pair.window, FAILURES.pair.max)
+          const pair = await reserveInWindow(signIn.pair, SIGN_IN_FAILURES.pair.window, SIGN_IN_FAILURES.pair.max)
           if (pair === false) throw refuse()
-          const account = await reserveInWindow(signIn.account, FAILURES.account.window, FAILURES.account.max)
+          const account = await reserveInWindow(signIn.account, SIGN_IN_FAILURES.account.window, SIGN_IN_FAILURES.account.max)
           if (account === false) {
             await releaseInWindow(signIn.pair, pair)
             throw refuse()

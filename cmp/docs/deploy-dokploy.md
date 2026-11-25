@@ -102,7 +102,7 @@ go inside URLs.
 | `IMAGE_TAG` | Compose | Optional (default `latest`). |
 | `PUBLIC_ORIGIN` | build, app, worker | `https://<your hostname>`. No path, no trailing slash. |
 | `BETTER_AUTH_SECRET` | app, worker | At least 32 random bytes. Changing it signs everyone out (see Security notes). |
-| `SMTP_URL` | app, worker | `smtps://<user>:<password>@<smtp host>:465`, or `smtp://…:587` (STARTTLS). URL-encode the user and password. |
+| `SMTP_URL` | app, worker | `smtps://<user>:<password>@<smtp host>:465`, or `smtp://…:587` (STARTTLS). URL-encode the user and password. Mail goes over TLS only: STARTTLS is required on `smtp://`, TLS 1.2 at least, the certificate checked; the app refuses to start with `?options` or a `#fragment` in this URL. |
 | `MAIL_FROM` | app, worker | `Name <address>` on the domain your SPF/DKIM cover. |
 | `SUPER_ADMIN_EMAILS` | app, worker | Comma-separated addresses of the super-admins. They must verify their address and turn on two-factor authentication before the console opens. |
 | `TRUSTED_PROXIES` | app, worker | The address range Traefik connects from (see below). |
@@ -150,6 +150,33 @@ Consequences:
   escape the limits.
 
 Check 4 below proves which address the app records.
+
+**What this trusts.** The app believes `X-Forwarded-For` from any address in `TRUSTED_PROXIES`. With the
+whole `dokploy-network` range there, that is every container on that network, not only Traefik: any other
+application Dokploy runs on the same server is on it too, and a compromised one could connect to the app
+directly and name any client address, escaping the sign-in rate limits. To trust Traefik alone, give its
+own address instead of the range:
+
+```sh
+docker inspect dokploy-traefik --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'
+# for example 10.0.1.2: set TRUSTED_PROXIES=10.0.1.2
+```
+
+That address can change when Traefik's container is re-created (a Dokploy update): check it after each
+one (check 4 below shows a wrong value at once: every visitor gets Traefik's address). If you cannot keep
+that up, the range is the accepted fallback, with the residual above.
+
+### Request size
+
+The app refuses a request body over 64 KiB with `413` before reading it (`src/server/request-body.ts`), so
+one large upload cannot exhaust the container's memory. Nothing it serves needs more. Optionally, Traefik
+can refuse such requests before they reach the app, with a buffering middleware on the app's router, for
+example as labels:
+
+```yaml
+traefik.http.middlewares.cmp-body-limit.buffering.maxRequestBodyBytes: "65536"
+traefik.http.routers.<the app's router>.middlewares: cmp-body-limit
+```
 
 ## After the first deploy
 

@@ -569,7 +569,9 @@ describe('clean-up of expired identity rows (client addresses are personal data)
     await asRole('migrate', async (c) => {
       await c.query(`insert into auth_session (token, user_id, expires_at, ip_address) values ($2, $1, now() - interval '1 minute', '203.0.113.9'), ($3, $1, now() + interval '1 day', '203.0.113.9')`, [user, `expired-${user}`, `live-${user}`])
       await c.query(`insert into auth_verification (identifier, value, expires_at) values ($1, 'x', now() - interval '1 minute'), ($2, 'x', now() + interval '1 hour')`, [`expired-${user}`, `live-${user}`])
-      await c.query(`insert into auth_rate_limit (key, count, last_request) values ($1, 1, $2), ($3, 1, $4)`, [`old-${user}`, now - 2 * 60 * 60 * 1000, `recent-${user}`, now - 60 * 1000])
+      // windows start at last_request: old is long finished; margin is an hour-long window that ended a minute
+      // ago, kept by the clean-up's margin (ruling R27, M6); recent is in use
+      await c.query(`insert into auth_rate_limit (key, count, last_request) values ($1, 1, $2), ($3, 1, $4), ($5, 1, $6)`, [`old-${user}`, now - 3 * 60 * 60 * 1000, `margin-${user}`, now - 61 * 60 * 1000, `recent-${user}`, now - 60 * 1000])
     })
     const remaining = async () =>
       asRole('migrate', async (c) =>
@@ -587,8 +589,8 @@ describe('clean-up of expired identity rows (client addresses are personal data)
       expect(schedules).toEqual([{ name: 'auth.cleanup', cron: '*/15 * * * *' }])
       await enqueue('auth.cleanup', {})
       const deadline = Date.now() + 20_000
-      while ((await remaining()).length > 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200))
-      expect(await remaining()).toEqual([`live-${user}`, `live-${user}`, `recent-${user}`])
+      while ((await remaining()).length > 4 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200))
+      expect(await remaining()).toEqual([`live-${user}`, `live-${user}`, `margin-${user}`, `recent-${user}`])
     } finally {
       await worker.stop()
     }
