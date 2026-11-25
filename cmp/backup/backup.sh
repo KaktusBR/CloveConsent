@@ -8,8 +8,9 @@
 # `backup.sh now` exits 1). Old dumps are deleted only after a new one was kept, so failing nights never
 # empty the volume.
 #
-# BACKUP_DATABASE_URL connects as cmp_backup (scripts/db-init.ts): read-only, and it bypasses row-level
-# security, as pg_dump needs (the tenant tables FORCE it). Errors never print a value.
+# BACKUP_DATABASE_URL connects as cmp_backup (scripts/db-init.ts; its password goes to pg_dump in PGPASSWORD):
+# read-only, and it bypasses row-level security, as pg_dump needs (the tenant tables FORCE it). Errors never
+# print a value.
 set -eu
 
 : "${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is not set}"
@@ -18,12 +19,39 @@ BACKUP_AT="${BACKUP_AT:-02:30}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 DIR="${BACKUP_DIR:-/backups}"
 
+# The password of BACKUP_DATABASE_URL reaches pg_dump in PGPASSWORD, never in its arguments: anyone on the
+# machine can read a process's arguments, only its owner its environment. Here it is split off the URL and
+# percent-decoded with shell builtins and a pipe (no other process gets it as an argument either).
+percent_decode() {
+  # backslashes first (printf %b would read them as escapes), then each %XX as a \xXX escape
+  printf '%b' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+rest="${BACKUP_DATABASE_URL#*://}"
+authority="${rest%%/*}"
+case "$authority" in *@*) userinfo="${authority%@*}" ;; *) userinfo='' ;; esac
+case "$userinfo" in
+  *:*)
+    DUMP_URL="${BACKUP_DATABASE_URL%%://*}://${userinfo%%:*}@${rest#"$userinfo"@}"
+    DUMP_PASSWORD="$(percent_decode "${userinfo#*:}")"
+    ;;
+  *) DUMP_URL="$BACKUP_DATABASE_URL" ;;
+esac
+unset rest authority userinfo
+
+run_pg_dump() {
+  if [ -n "${DUMP_PASSWORD+set}" ]; then
+    PGPASSWORD="$DUMP_PASSWORD" pg_dump --format=custom --no-password --dbname="$DUMP_URL"
+  else
+    pg_dump --format=custom --no-password --dbname="$DUMP_URL"
+  fi
+}
+
 dump() {
   name="cmp-$(date -u +%Y%m%dT%H%M%SZ).dump.age"
   partial="$DIR/.$name.partial"
   dumped="$(mktemp)"
   # each stage checked on its own: pg_dump's status is kept aside, the pipeline's is age's
-  if { pg_dump --format=custom --no-password --dbname="$BACKUP_DATABASE_URL"; echo "$?" > "$dumped"; } | age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" > "$partial" &&
+  if { run_pg_dump; echo "$?" > "$dumped"; } | age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" > "$partial" &&
     [ "$(cat "$dumped")" = 0 ] && [ -s "$partial" ] && mv "$partial" "$DIR/$name"; then
     rm -f "$dumped"
     find "$DIR" -maxdepth 1 -name 'cmp-*.dump.age' -mtime "+$BACKUP_KEEP_DAYS" -delete ||

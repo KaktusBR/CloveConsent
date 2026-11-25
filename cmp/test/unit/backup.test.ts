@@ -19,7 +19,11 @@ function posixShell(): string {
 }
 
 // pg_dump: STUB_PG_DUMP=ok writes a dump; fail writes part of one and fails.
+// It also writes down what it was given: its arguments (anyone on the machine can read them) and
+// PGPASSWORD (only its owner can).
 const PG_DUMP = `#!/bin/sh
+for arg in "$@"; do echo "$arg"; done > "$STUB_SEEN/argv"
+echo "\${PGPASSWORD-(unset)}" > "$STUB_SEEN/pgpassword"
 case "$STUB_PG_DUMP" in
   ok) printf 'PGDMP whole dump' ;;
   fail) printf 'PGDMP part'; echo 'pg_dump: error: connection lost' >&2; exit 1 ;;
@@ -52,7 +56,7 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-function runBackup(pgDump: 'ok' | 'fail', age: 'ok' | 'fail') {
+function runBackup(pgDump: 'ok' | 'fail', age: 'ok' | 'fail', databaseUrl = 'postgres://cmp_backup:x@db/cmp') {
   const result = spawnSync(posixShell(), [SCRIPT, 'now'], {
     encoding: 'utf8',
     env: {
@@ -61,7 +65,9 @@ function runBackup(pgDump: 'ok' | 'fail', age: 'ok' | 'fail') {
       STUB_PG_DUMP: pgDump,
       STUB_AGE: age,
       BACKUP_DIR: backups,
-      BACKUP_DATABASE_URL: 'postgres://cmp_backup:x@db/cmp',
+      BACKUP_DATABASE_URL: databaseUrl,
+      PGPASSWORD: undefined,
+      STUB_SEEN: dir,
       BACKUP_AGE_RECIPIENT: 'age1stub',
       BACKUP_KEEP_DAYS: '14',
     },
@@ -92,4 +98,22 @@ describe('backup.sh', () => {
       expect(output).not.toContain('backup written')
     })
   }
+})
+
+describe("backup.sh keeps the password out of pg_dump's arguments (ruling R27, M5)", () => {
+  const seen = () => ({ argv: readFileSync(join(dir, 'argv'), 'utf8'), password: readFileSync(join(dir, 'pgpassword'), 'utf8').replace(/\n$/, '') })
+
+  test('the password goes in PGPASSWORD, percent-decoded; the URL pg_dump gets has none', () => {
+    const { status } = runBackup('ok', 'ok', 'postgres://cmp_backup:p%40ss%3Aw%2Frd%25x%5Cy%20z@db:5432/cmp?sslmode=require')
+    expect(status).toBe(0)
+    const { argv, password } = seen()
+    expect(password).toBe(`p@ss:w/rd%x${String.fromCharCode(92)}y z`)
+    expect(argv).toContain('--dbname=postgres://cmp_backup@db:5432/cmp?sslmode=require')
+    for (const part of ['p%40ss', 'p@ss', 'w/rd']) expect(argv).not.toContain(part)
+  })
+
+  test('a URL without a password is passed as it is, with no PGPASSWORD', () => {
+    expect(runBackup('ok', 'ok', 'postgres://cmp_backup@db/cmp').status).toBe(0)
+    expect(seen()).toEqual({ argv: expect.stringContaining('--dbname=postgres://cmp_backup@db/cmp'), password: '(unset)' })
+  })
 })
