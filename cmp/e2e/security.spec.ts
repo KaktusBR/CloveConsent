@@ -1,8 +1,10 @@
 import { expect, test, type APIResponse } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 
 import { expectAccessible } from './axe'
+import { MAX_REQUEST_BODY } from '../src/server/request-body'
 import { expectNoCspViolations, watchCsp } from './csp'
 
 /** The headers every response carries, with their exact values (Global Constraints). */
@@ -175,5 +177,54 @@ test.describe('under the CSP', () => {
       await page.goto(path)
       await expectAccessible(page)
     }
+  })
+})
+
+/** A POST with a chunked body (no Content-Length) of `bytes`, as a non-browser client may send; its status, or the error that ended it. */
+function chunkedPost(baseURL: string, path: string, bytes: number): Promise<number | string> {
+  return new Promise((resolve) => {
+    const req = httpRequest(new URL(path, baseURL), { method: 'POST', headers: { Origin: baseURL, 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' } })
+    req.on('response', (res) => {
+      res.resume()
+      resolve(res.statusCode ?? 0)
+    })
+    req.on('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? 'error'))
+    const chunk = Buffer.alloc(16 * 1024, 'x')
+    let sent = 0
+    const write = () => {
+      while (sent < bytes) {
+        sent += chunk.length
+        if (!req.write(chunk)) return void req.once('drain', write)
+      }
+      req.end()
+    }
+    write()
+  })
+}
+
+test.describe(`request bodies are limited to ${MAX_REQUEST_BODY} bytes (finding I1)`, () => {
+  const ROUTES = ['/api/auth/sign-up/email', '/api/auth/sign-in/email', '/api/locale', '/api/accounts/create', '/sign-in']
+
+  test('a body over the limit is refused with 413 before anything reads it, with every security header', async ({ request, baseURL }) => {
+    const over = Buffer.alloc(MAX_REQUEST_BODY + 1, 'x')
+    for (const path of ROUTES) {
+      const res = await request.post(path, { headers: { Origin: baseURL ?? '', 'Content-Type': 'application/json' }, data: over, maxRedirects: 0 })
+      expect(res.status(), path).toBe(413)
+      expectSecurityHeaders(res, `413 ${path}`)
+    }
+  })
+
+  test('a body at the limit is not refused for its size', async ({ request, baseURL }) => {
+    const res = await request.post('/api/locale', { headers: { Origin: baseURL ?? '', 'Content-Type': 'application/json' }, data: Buffer.alloc(MAX_REQUEST_BODY, 'x'), maxRedirects: 0 })
+    expect(res.status()).not.toBe(413)
+  })
+
+  test('a chunked body (no Content-Length) is cut off at the limit: 413, and the server keeps serving', async ({ request, baseURL }) => {
+    for (const path of ['/api/auth/sign-up/email', '/api/locale']) {
+      expect(await chunkedPost(baseURL ?? '', path, MAX_REQUEST_BODY + 32 * 1024), path).toBe(413)
+    }
+    // a much larger one: refused (or its connection closed while it is still sending), never read whole
+    expect([413, 'ECONNRESET', 'EPIPE', 'ECANCELED']).toContain(await chunkedPost(baseURL ?? '', '/api/auth/sign-in/email', 64 * 1024 * 1024))
+    expect((await request.get('/healthz')).status()).toBe(200)
   })
 })

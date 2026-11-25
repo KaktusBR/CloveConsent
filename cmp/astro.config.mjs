@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { patchModule, replaceOnce } from './src/build/patch-module.ts'
 import { THEME_SCRIPT } from './src/lib/theme.ts'
 import { CSP_DIRECTIVES, cspHash } from './src/server/security.ts'
+import { MAX_REQUEST_BODY } from './src/server/request-body.ts'
 import { socketPeerDevMiddleware } from './src/server/socket-peer.ts'
 
 const sourcePath = (path) => JSON.stringify(fileURLToPath(new URL(path, import.meta.url)).replaceAll('\\', '/'))
@@ -60,14 +61,20 @@ const securityHeadersOnFiles = patchModule({
  * allowedDomains, rewrites). Pinned by e2e/client-address.spec.ts. `astro dev` gets the same from
  * socketPeerInDev below. Not Astro's `clientAddress` (the client-chosen leftmost X-Forwarded-For entry
  * once allowedDomains validates the Host).
+ * The same place refuses a request body over MAX_REQUEST_BODY with 413 before anything reads it, and reads
+ * a smaller one whole for Astro (src/server/request-body.ts). Pinned by e2e/security.spec.ts.
  */
 const stampSocketPeerOnRequests = patchModule({
   name: 'cmp:stamp-socket-peer',
   module: '/@astrojs/node/dist/serve-app.js',
   edit(code, fail) {
     const anchor = 'request = createRequestFromNodeRequest(req, {'
-    const patched = replaceOnce(code, anchor, `__cmpStampSocketPeer(req);\n\t\t\t${anchor}`, fail)
-    return `import { stampSocketPeer as __cmpStampSocketPeer } from ${sourcePath('./src/server/socket-peer.ts')};\n${patched}`
+    const patched = replaceOnce(code, anchor, `__cmpStampSocketPeer(req);\n\t\t\tif (await __cmpBufferRequestBody(req, res)) return;\n\t\t\t${anchor}`, fail)
+    return [
+      `import { stampSocketPeer as __cmpStampSocketPeer } from ${sourcePath('./src/server/socket-peer.ts')};`,
+      `import { bufferRequestBody as __cmpBufferRequestBody } from ${sourcePath('./src/server/request-body.ts')};`,
+      patched,
+    ].join('\n')
   },
 })
 
@@ -96,7 +103,8 @@ const publicHost = URL.canParse(process.env.PUBLIC_ORIGIN ?? '') ? new URL(proce
 // its hash. The other headers and the CSRF origin check: src/middleware.ts and src/server/security.ts.
 export default defineConfig({
   output: 'server',
-  adapter: node({ mode: 'standalone', staticHeaders: true }),
+  // bodySizeLimit: the adapter's own cut-off, behind bufferRequestBody's 413 (stampSocketPeerOnRequests)
+  adapter: node({ mode: 'standalone', staticHeaders: true, bodySizeLimit: MAX_REQUEST_BODY }),
   integrations: [react()],
   security: {
     // The public host (PUBLIC_ORIGIN, which every build needs): behind the reverse proxy, Astro builds the
