@@ -13,7 +13,7 @@ import { POST as stopRoute } from '../../src/pages/api/impersonation/stop'
 import { auth } from '../../src/server/auth/auth'
 import { completeSession, requestAccess, signedInScope } from '../../src/server/auth/guard'
 import { ADMIN_LIMITS, IMPERSONATION_MINUTES, superAdminStatus } from '../../src/server/auth/super-admin'
-import { accountDetail, auditEvents, searchAccounts } from '../../src/server/data/admin'
+import { accountDetail, auditEvents, CONSOLE_PAGE, searchAccounts } from '../../src/server/data/admin'
 import { closeDatabases } from '../../src/server/data/client'
 import { entitlementOf, GRACE_DAYS, listPlans, setEntitlement, suspendAccount, unsuspendAccount } from '../../src/server/data/entitlements'
 import { closeQueue } from '../../src/server/data/queue'
@@ -369,10 +369,10 @@ describe('the console', () => {
   test('the audit viewer lists the newest events, of one account when asked', async () => {
     const accountId = await addAccount()
     await setEntitlement(rootA.userId, accountId, { planId: 'starter', paidUntil: new Date('2030-01-01') }, 'audit viewer test')
-    const events = await auditEvents(rootA.userId, { accountId })
+    const { events } = await auditEvents(rootA.userId, { accountId })
     expect(events.map((e) => e.action)).toEqual(['admin.entitlement_set'])
     expect(events[0]).toMatchObject({ accountId, actorUserId: rootA.userId, actorEmail: rootA.email, meta: { reason: 'audit viewer test' } })
-    expect((await auditEvents(rootA.userId, {})).length).toBeGreaterThan(0)
+    expect((await auditEvents(rootA.userId, {})).events.length).toBeGreaterThan(0)
   })
 
   test("a super-admin's look at one account (its page, its audit log) is recorded in that account's audit log", async () => {
@@ -384,10 +384,71 @@ describe('the console', () => {
       ['admin.audit_view', rootB.userId, `account:${accountId}`],
     ])
     // the next look at the audit log shows the earlier ones
-    expect((await auditEvents(rootB.userId, { accountId })).map((e) => e.action)).toEqual(['admin.audit_view', 'admin.account_view'])
+    expect((await auditEvents(rootB.userId, { accountId })).events.map((e) => e.action)).toEqual(['admin.audit_view', 'admin.account_view'])
     // an account that does not exist: nothing to record it in, and no error
     expect(await accountDetail(rootB.userId, newId())).toBeNull()
-    expect(await auditEvents(rootB.userId, { accountId: newId() })).toEqual([])
+    expect(await auditEvents(rootB.userId, { accountId: newId() })).toEqual({ events: [], next: null })
+  })
+
+  describe('the audit viewer is not flooded by its own reads, and pages through everything (finding I3)', () => {
+    /** Every page of the viewer from the newest, as `actor` sees it. */
+    async function allPages(actor: string, filter: { accountId?: string; access?: boolean }) {
+      const pages: Awaited<ReturnType<typeof auditEvents>>['events'][] = []
+      let before: string | undefined
+      do {
+        const page = await auditEvents(actor, { ...filter, before })
+        pages.push(page.events)
+        before = page.next ?? undefined
+      } while (before !== undefined)
+      return pages
+    }
+
+    test('the console reads (system.access) are hidden unless asked for; a newer real event stays on the first page', async () => {
+      // more console reads than a page holds, all with one timestamp (one statement): the id breaks the tie
+      await asRole('system', (c) => c.query(`insert into audit_log (actor_user_id, action, meta) select $1, 'system.access', '{"reason":"flood"}' from generate_series(1, ${CONSOLE_PAGE + 20})`, [rootA.userId]))
+      const accountId = await addAccount()
+      await setEntitlement(rootA.userId, accountId, { planId: 'starter', paidUntil: new Date('2030-01-01') }, 'hidden reads test')
+      const first = await auditEvents(rootA.userId, {})
+      expect(first.events.filter((e) => e.action === 'system.access')).toEqual([])
+      expect(first.events.some((e) => e.accountId === accountId && e.action === 'admin.entitlement_set')).toBe(true)
+      const withAccess = await auditEvents(rootA.userId, { access: true })
+      expect(withAccess.events).toHaveLength(CONSOLE_PAGE)
+      expect(withAccess.events.filter((e) => e.action === 'system.access').length).toBeGreaterThan(CONSOLE_PAGE / 2)
+      expect(withAccess.next).not.toBeNull()
+    })
+
+    test('keyset paging: every event exactly once, newest first, unaffected by events written while paging', async () => {
+      for (const access of [false, true]) {
+        const pages = await allPages(rootB.userId, { access })
+        const seen = pages.flat()
+        expect(pages.slice(0, -1).every((p) => p.length === CONSOLE_PAGE), String(access)).toBe(true)
+        const first = seen[0]
+        expect(first).toBeDefined()
+        // what the database holds up to the first row shown, in the viewer's order (the walk's own reads came later)
+        const expected = await asRole('system', async (c) =>
+          (await c.query<{ id: string }>(
+            `select id from audit_log where (created_at, id) <= (select created_at, id from audit_log where id = $1) and ($2 or action <> 'system.access') order by created_at desc, id desc`,
+            [first?.id, access],
+          )).rows.map((r) => r.id),
+        )
+        expect(seen.map((e) => e.id), String(access)).toEqual(expected)
+      }
+    })
+
+    test("one account's log pages too, and a malformed position starts from the newest", async () => {
+      const accountId = await addAccount()
+      for (let i = 0; i < CONSOLE_PAGE + 5; i++) {
+        await asRole('system', (c) => c.query(`insert into audit_log (account_id, action, meta) values ($1, 'test.event', $2)`, [accountId, JSON.stringify({ i })]))
+      }
+      const pages = await allPages(rootA.userId, { accountId })
+      // its events, and the viewer's own looks at it (admin.audit_view, written after each page was read)
+      const events = pages.flat().filter((e) => e.action === 'test.event')
+      expect(events.map((e) => e.meta.i)).toEqual(Array.from({ length: CONSOLE_PAGE + 5 }, (_, i) => CONSOLE_PAGE + 4 - i))
+      expect(pages.flat().every((e) => e.accountId === accountId)).toBe(true)
+      for (const before of ['nope', `2020-01-01T00:00:00.000000Z~${newId()}x`, "'; drop table audit_log; --"]) {
+        expect((await auditEvents(rootA.userId, { accountId, before })).events[0]?.action, before).toBe('admin.audit_view')
+      }
+    })
   })
 })
 

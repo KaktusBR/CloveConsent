@@ -7,8 +7,9 @@ import { m } from '../../../paraglide/messages.js'
 import { requireSuperAdmin } from '../../../server/auth/guard'
 import { auditEvents, CONSOLE_PAGE } from '../../../server/data/admin'
 
-// The super-admin's audit log viewer: the newest events of every account (and the system's), or of one
-// account (`?account=<id>`). A 404 for anyone but a super-admin.
+// The super-admin's audit log viewer: the events of every account (and the system's), or of one account
+// (`?account=<id>`), newest first, a page at a time (`?before=<the next page's position>`). The console's
+// own reads (system.access) are shown only with `?access=1`. A 404 for anyone but a super-admin.
 export const prerender = false
 
 const locale = localeFromParam(Astro.params.locale)
@@ -16,10 +17,23 @@ if (!locale) return Astro.rewrite('/404')
 
 const root = await requireSuperAdmin(Astro)
 if (root instanceof Response) return root
-const accountId = Astro.url.searchParams.get('account') ?? undefined
-const events = await auditEvents(root.user.id, { accountId })
+const params = Astro.url.searchParams
+const accountId = params.get('account') ?? undefined
+const access = params.get('access') === '1'
+const before = params.get('before') ?? undefined
+const { events, next } = await auditEvents(root.user.id, { accountId, access, before })
 const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'UTC' })
 const count = String(CONSOLE_PAGE)
+
+/** This viewer with these query values (the account kept). */
+function viewer(values: { access: boolean; before?: string | null | undefined }): string {
+  const query = new URLSearchParams()
+  if (accountId) query.set('account', accountId)
+  if (values.access) query.set('access', '1')
+  if (values.before) query.set('before', values.before)
+  const search = query.toString()
+  return `${localizedPath('/admin/audit', locale ?? 'en')}${search ? `?${search}` : ''}`
+}
 ---
 
 <Base title={m.admin_audit_title()} indexable={false}>
@@ -28,7 +42,12 @@ const count = String(CONSOLE_PAGE)
     <div class="grid gap-2">
       <h1 class="text-3xl font-semibold tracking-tight">{m.admin_audit_heading()}</h1>
       <p class="text-muted-foreground">{accountId ? m.admin_audit_filtered({ count }) : m.admin_audit_intro({ count })}</p>
-      {accountId && <a class="text-sm underline underline-offset-4" href={localizedPath('/admin/audit', locale)}>{m.admin_audit_all()}</a>}
+      {!access && <p class="text-muted-foreground text-sm">{m.admin_audit_access_hidden()}</p>}
+      <nav class="flex flex-wrap gap-4 text-sm">
+        {accountId && <a class="underline underline-offset-4" href={localizedPath('/admin/audit', locale)}>{m.admin_audit_all()}</a>}
+        <a class="underline underline-offset-4" href={viewer({ access: !access })}>{access ? m.admin_audit_hide_access() : m.admin_audit_show_access()}</a>
+        {before && <a class="underline underline-offset-4" href={viewer({ access })}>{m.admin_audit_newest()}</a>}
+      </nav>
     </div>
     {events.length === 0 && <p class="text-muted-foreground">{m.admin_audit_none()}</p>}
     {
@@ -71,6 +90,13 @@ const count = String(CONSOLE_PAGE)
             ))}
           </TableBody>
         </Table>
+      )
+    }
+    {
+      next && (
+        <a class="justify-self-start text-sm underline underline-offset-4" href={viewer({ access, before: next })} rel="next">
+          {m.admin_audit_older()}
+        </a>
       )
     }
   </main>

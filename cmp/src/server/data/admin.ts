@@ -14,7 +14,7 @@ import { asSystem } from './scope'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID.test(value)
 
-/** At most this many accounts in a list, and audit events on a page. */
+/** At most this many accounts in a list, and audit events on a page (older ones: the next page). */
 export const CONSOLE_PAGE = 100
 
 export interface AccountListItem {
@@ -172,16 +172,41 @@ export interface AuditEventRow {
   meta: Record<string, unknown>
 }
 
-/** The newest audit events (CONSOLE_PAGE at most), of one account when `accountId` is given. */
-export async function auditEvents(actorUserId: string, filter: { accountId?: string | undefined }): Promise<AuditEventRow[]> {
+/** One page of the audit viewer, and the position of the next (older) page: null when there is none. */
+export interface AuditPage {
+  events: AuditEventRow[]
+  next: string | null
+}
+
+/** The console's own reads: every page of the console writes one (asSystem). */
+const ACCESS_ACTION = 'system.access'
+
+/**
+ * A page position: the last row shown, as its time to the microsecond (the column's precision, which a
+ * Date would lose) and its id. Anything else is no position (the newest page).
+ */
+const POSITION = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)~([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
+
+/**
+ * A page of audit events (CONSOLE_PAGE at most), newest first: of one account when `accountId` is given,
+ * else of every account and the system. The console's own reads (system.access) are left out unless
+ * `access` asks for them: otherwise its every page load would push the real events off the first page.
+ * `before` is the `next` of the page before (keyset paging on time and id: rows written meanwhile never
+ * shift the pages, and none is shown twice or skipped).
+ */
+export async function auditEvents(actorUserId: string, filter: { accountId?: string | undefined; access?: boolean | undefined; before?: string | undefined }): Promise<AuditPage> {
   const accountId = isUuid(filter.accountId) ? filter.accountId : null
-  if (filter.accountId !== undefined && accountId === null) return []
+  if (filter.accountId !== undefined && accountId === null) return { events: [], next: null }
+  const access = filter.access === true
+  const position = POSITION.exec(filter.before ?? '')
+  const [beforeTime, beforeId] = position ? [position[1] ?? null, position[2] ?? null] : [null, null]
   return asSystem(
     'super-admin: audit log',
     async (tx) => {
       const { rows } = await tx.execute<{
         id: string
         created_at: Timestamp
+        position: string
         actor_user_id: string | null
         actor_email: string | null
         account_id: string | null
@@ -190,16 +215,21 @@ export async function auditEvents(actorUserId: string, filter: { accountId?: str
         target: string | null
         meta: Record<string, unknown>
       }>(sql`
-        select l.id, l.created_at, l.actor_user_id, u.email as actor_email, l.account_id, a.name as account_name, l.action, l.target, l.meta
+        select l.id, l.created_at, to_char(l.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '~' || l.id as position,
+               l.actor_user_id, u.email as actor_email, l.account_id, a.name as account_name, l.action, l.target, l.meta
         from audit_log l left join auth_user u on u.id = l.actor_user_id left join auth_account a on a.id = l.account_id
-        where ${accountId}::uuid is null or l.account_id = ${accountId}::uuid
+        where (${accountId}::uuid is null or l.account_id = ${accountId}::uuid)
+          and (${access} or l.action <> ${ACCESS_ACTION})
+          and (${beforeTime}::timestamptz is null or (l.created_at, l.id) < (${beforeTime}::timestamptz, ${beforeId}::uuid))
         order by l.created_at desc, l.id desc
-        limit ${CONSOLE_PAGE}`)
+        limit ${CONSOLE_PAGE + 1}`)
       // a look at one account's log goes into that log, after the rows read (so not among them)
       if (accountId !== null && (await tx.execute(sql`select id from auth_account where id = ${accountId}`)).rows.length > 0) {
         await audit(tx, { action: 'admin.audit_view', target: `account:${accountId}`, actorUserId, accountId })
       }
-      return rows.map((r) => ({
+      const shown = rows.slice(0, CONSOLE_PAGE)
+      const next = rows.length > CONSOLE_PAGE ? (shown.at(-1)?.position ?? null) : null
+      const events = shown.map((r) => ({
         id: r.id,
         createdAt: dateOf(r.created_at),
         actorUserId: r.actor_user_id,
@@ -210,6 +240,7 @@ export async function auditEvents(actorUserId: string, filter: { accountId?: str
         target: r.target,
         meta: r.meta,
       }))
+      return { events, next }
     },
     actorUserId,
   )

@@ -30,6 +30,8 @@ export const auditLog = pgTable(
   },
   (t) => [
     index('audit_log_account_created_idx').on(t.accountId, t.createdAt.desc()),
+    // the super-admin's viewer of every account's events, page by page (src/server/data/admin.ts, auditEvents)
+    index('audit_log_created_idx').on(t.createdAt.desc(), t.id.desc()),
     // A super-admin's view (src/server/auth/super-admin.ts) ends once: one stop row per view, whoever
     // tries to end it and however often (src/server/data/admin.ts relies on this to make ending single-use).
     uniqueIndex('audit_log_impersonation_ends_once').on(sql`(${t.meta}->>'impersonation')`).where(sql`${t.action} = 'admin.impersonation_stop'`),
