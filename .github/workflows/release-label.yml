@@ -1,0 +1,25 @@
+name: release-label
+# A pull request that changes the library needs exactly one release label (release:patch, release:minor,
+# release:major or release:none): release.yml publishes what it says when the pull request is merged.
+# Pull requests that change only docs or the hosted app in cmp/ need none.
+on: { pull_request: { types: [opened, synchronize, reopened, labeled, unlabeled] } }
+permissions: { contents: read }
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          FROM=$(git merge-base "$BASE" "$HEAD")
+          if [ "$(node scripts/version.mjs skip "$FROM" "$HEAD")" = "true" ]; then
+            echo "Only docs or the hosted app (cmp/) changed: no release label needed."
+            exit 0
+          fi
+          node scripts/version.mjs check-labels "$LABELS"

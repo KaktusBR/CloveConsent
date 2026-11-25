@@ -46,6 +46,31 @@ export function plan(tags, labels) {
   return version === null ? { skip: 'release:none' } : { release: version }
 }
 
+/**
+ * What a push to main releases, from the label lists of the merged pull requests whose merge commit it is.
+ * None (a direct push) releases nothing; one releases what its label says; a missing or doubled label, or
+ * more than one pull request, throws, so the run fails instead of quietly not releasing.
+ */
+export function decide(tags, pullRequests) {
+  if (pullRequests.length === 0) {
+    return { skip: 'no merged pull request for this commit (a direct push): nothing released. To release, run the release workflow by hand and pick the kind of version.' }
+  }
+  if (pullRequests.length > 1) throw new Error('more than one merged pull request for this commit: run the release workflow by hand')
+  const picked = pickLabel(pullRequests[0])
+  if ('error' in picked) throw new Error(`the merged pull request: ${picked.error}`)
+  return plan(tags, [picked.label])
+}
+
+/** A JSON array of label arrays, one per merged pull request. */
+export function parsePullRequests(json) {
+  let v
+  try { v = JSON.parse(json) } catch { throw new Error('pull requests must be a JSON array of label arrays') }
+  if (!Array.isArray(v) || !v.every((l) => Array.isArray(l) && l.every((x) => typeof x === 'string'))) {
+    throw new Error('pull requests must be a JSON array of label arrays')
+  }
+  return v
+}
+
 export function parseLabels(json) {
   let v
   try { v = JSON.parse(json) } catch { throw new Error('labels must be a JSON array of strings') }
@@ -82,6 +107,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (cmd === 'skip') {
       const [before, after] = process.argv.slice(3)
       console.log(String(skipBetween(before, after)))
+    } else if (cmd === 'decide') {
+      console.log(JSON.stringify(decide(gitTags(), parsePullRequests(labelsJson ?? ''))))
     } else if (cmd === 'plan') {
       console.log(JSON.stringify(plan(gitTags(), parseLabels(labelsJson ?? ''))))
     } else if (cmd === 'check-labels') {
@@ -89,7 +116,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       if ('error' in picked) { console.error(picked.error); process.exit(1) }
       console.log(`release label: ${picked.label}`)
     } else {
-      console.error('usage: version.mjs plan <labels-json> | check-labels <labels-json> | skip <before-sha> <after-sha>')
+      console.error('usage: version.mjs decide <pull-requests-json> | plan <labels-json> | check-labels <labels-json> | skip <before-sha> <after-sha>')
       process.exit(1)
     }
   } catch (err) {

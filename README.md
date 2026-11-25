@@ -461,18 +461,20 @@ Each also accepts an optional `category` to override the default. These entries 
 
 ### Automatic (normal path)
 
-Every push to `main` (that is, every merged pull request) runs the `release` workflow. It takes the highest `vX.Y.Z` tag, bumps the minor (`v1.4.0` becomes `v1.5.0`; the first release is `v1.0.0`), builds, tests, checks the tag in a fresh clone and pushes the tag. Merges that only change `docs/` or top-level `*.md` files are skipped. Only the tag carries `dist/`; `main` never does.
+A pull request that changes the library carries exactly one release label: `release:major` (breaking), `release:minor`, `release:patch` or `release:none`. The `release-label` check fails until it does; pull requests that only change `docs/`, top-level `*.md` files or the hosted app in `cmp/` need no label. Create the four labels once in the GitHub repo.
 
-In a consuming repo, track the latest release with a range and update when you want it:
+When such a pull request is merged, the `release` workflow takes the highest `vX.Y.Z` tag and bumps what the label names. The first release is `v0.1.0`; before 1.0, `release:major` bumps the minor and anything else bumps the patch. It then builds, tests, checks the tag in a fresh clone and pushes the tag. Only the tag carries `dist/`; `main` never does.
+
+A direct push to `main` (no pull request) publishes nothing; the run ends with a notice. To release from `main` without a pull request, open the `release` workflow under Actions, choose "Run workflow" and pick the kind of version.
+
+In a consuming repo, track releases with a range and update when you want it:
 
 ```sh
-npm install github:KaktusBR/CloveConsent#semver:^1.0.0
+npm install github:KaktusBR/CloveConsent#semver:^0.1.0
 npm update cloveconsent
 ```
 
-Because every merge is a minor bump, versions cannot signal a breaking change: read the merged PR before updating a production site, and rely on the lockfile.
-
-For this to be safe, turn on branch protection for `main` in the GitHub repo settings (require a pull request and the `ci` check before merging). The release workflow has write access to push tags, so anything that reaches `main` is published.
+For this to be safe, turn on branch protection for `main` in the GitHub repo settings (require a pull request and the `ci` and `release-label` checks before merging). The release workflow has write access to push tags, so anything that reaches `main` with a release label is published.
 
 ### Manual (fallback)
 

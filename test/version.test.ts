@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
-import { LABELS, latest, nextVersion, parseLabels, pickLabel, plan, skipBetween, skipRelease } from '../scripts/version.mjs'
+import { LABELS, decide, latest, nextVersion, parseLabels, parsePullRequests, pickLabel, plan, skipBetween, skipRelease } from '../scripts/version.mjs'
 
 describe('latest', () => {
   test('no tags', () => expect(latest([])).toBeNull())
@@ -53,6 +53,34 @@ describe('plan', () => {
   test('skips with none', () => expect(plan(['v0.1.0'], ['release:none'])).toEqual({ skip: 'release:none' }))
   test('skips with no label and says why', () => expect((plan(['v0.1.0'], []) as { skip: string }).skip).toMatch(/exactly one/))
   test('skips with two labels', () => expect(plan([], ['release:major', 'release:minor'])).toHaveProperty('skip'))
+})
+
+describe('decide (what release.yml does with the merged pull requests of a push)', () => {
+  test('no merged pull request (a direct push) releases nothing and says how to release', () => {
+    const d = decide(['v0.1.0'], []) as { skip: string }
+    expect(d.skip).toMatch(/direct push/)
+    expect(d.skip).toMatch(/by hand/)
+  })
+  test('one merged pull request with a release label releases', () => {
+    expect(decide([], [['bug', 'release:minor']])).toEqual({ release: '0.1.0' })
+    expect(decide(['v0.1.0'], [['release:patch']])).toEqual({ release: '0.1.1' })
+  })
+  test('release:none skips quietly', () => expect(decide(['v0.1.0'], [['release:none']])).toEqual({ skip: 'release:none' }))
+  test('a merged pull request without exactly one release label is an error, not a quiet skip', () => {
+    expect(() => decide([], [[]])).toThrow(/exactly one/)
+    expect(() => decide([], [['release:major', 'release:patch']])).toThrow(/more than one/)
+  })
+  test('more than one merged pull request is an error', () => {
+    expect(() => decide([], [['release:patch'], ['release:minor']])).toThrow(/more than one merged pull request/)
+  })
+})
+
+describe('parsePullRequests', () => {
+  test('accepts an array of label arrays', () => {
+    expect(parsePullRequests('[]')).toEqual([])
+    expect(parsePullRequests('[["release:minor","x"]]')).toEqual([['release:minor', 'x']])
+  })
+  test.each(['', '{}', 'null', '["release:minor"]', '[[1]]', '[null]'])('rejects %j', (s) => expect(() => parsePullRequests(s)).toThrow())
 })
 
 describe('parseLabels', () => {
@@ -131,6 +159,15 @@ describe('version.mjs skip (as release.yml runs it)', () => {
     const after = git('rev-parse', 'HEAD')
     expect(git('diff', '--name-only', before, after)).toBe(to) // what rename detection alone would show
     expect(skip(before, after).out).toBe('false')
+  })
+  test('decide prints the decision as JSON; a bad pull request list is an error', () => {
+    const run = (arg: string) => spawnSync(process.execPath, [script, 'decide', arg], { cwd: repo, encoding: 'utf8' })
+    const ok = run('[["release:minor"]]')
+    expect(ok.status).toBe(0)
+    expect(JSON.parse(ok.stdout)).toEqual({ release: '0.1.0' }) // the scratch repo has no tags
+    const bad = run('[[]]')
+    expect(bad.status).toBe(1)
+    expect(bad.stderr).toMatch(/exactly one/)
   })
   test('a malformed after-SHA is a usage error', () => {
     const r = skip(base, 'HEAD')
