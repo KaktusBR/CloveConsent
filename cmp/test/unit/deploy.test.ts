@@ -103,3 +103,13 @@ describe('compose.prod.yaml', () => {
     expect(text).not.toMatch(/Host\(/)
   })
 })
+
+describe('CI (../.github/workflows/cmp.yml)', () => {
+  const workflow = parse(readFileSync(join(ROOT, '..', '.github', 'workflows', 'cmp.yml'), 'utf8')) as { jobs: Record<string, { steps: { run?: string }[] }> }
+  const runs = Object.values(workflow.jobs).flatMap((job) => job.steps.map((step) => step.run ?? ''))
+
+  test('builds both images compose.prod.yaml deploys: the app and the backup (ruling R27, M4)', () => {
+    expect(runs.some((run) => /docker build\b[^\n]*-f cmp\/Dockerfile\b/.test(run))).toBe(true)
+    expect(runs.some((run) => /docker build\b[^\n]*\scmp\/backup\/?$/m.test(run))).toBe(true)
+  })
+})

@@ -74,3 +74,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the container image (context is the repository root)
         run: docker build -f cmp/Dockerfile --build-arg PUBLIC_ORIGIN=https://cmp.invalid -t cloveconsent-cmp:ci .
+      - name: Build the backup image (compose.prod.yaml, service backup; context is cmp/backup)
+        run: docker build -t cloveconsent-cmp-backup:ci cmp/backup
