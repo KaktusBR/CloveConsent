@@ -7,6 +7,7 @@
 // the job, template and language: never the recipient, a link (it may hold a token) or the body.
 import { createTransport } from 'nodemailer'
 import type { SendMailOptions } from 'nodemailer/lib/mailer'
+import type SMTPTransport from 'nodemailer/lib/smtp-transport'
 import { z } from 'zod'
 import invitation from '../../emails/invitation'
 import newSignIn from '../../emails/new-sign-in'
@@ -19,7 +20,8 @@ import { locales, type Locale } from '../../i18n/locale'
 import { plainText } from '../../lib/plain-text'
 import type { QueueJob } from '../data/queue'
 import type { SystemTx, TenantTx } from '../data/scope'
-import { env } from '../env'
+import { env, type Env } from '../env'
+import { isLoopbackHost } from '../origin'
 import { log as defaultLog, type Logger } from '../log'
 import { enqueue } from './queue'
 
@@ -129,9 +131,23 @@ export interface MailTransport {
   close?(): void
 }
 
+/**
+ * The transport options for an SMTP URL. In production, mail to a host other than this machine goes over
+ * TLS only: STARTTLS required on smtp:// (no fallback to plain text when the server, or someone in the
+ * way, does not offer it), implicit TLS on smtps://; TLS 1.2 at least, the certificate checked. The URL
+ * cannot undo it: src/server/env.ts refuses options in such a URL. This machine (a local relay, Mailpit in
+ * development and tests) is reached as the URL says.
+ */
+export function mailTransportOptions(url: string, nodeEnv: Env['NODE_ENV']): SMTPTransport.Options {
+  const options: SMTPTransport.Options = { url, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 }
+  const host = URL.canParse(url) ? new URL(url).hostname : ''
+  if (nodeEnv !== 'production' || isLoopbackHost(host)) return options
+  return { ...options, requireTLS: true, tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true } }
+}
+
 /** The SMTP transport of SMTP_URL. */
 export function createMailTransport(url: string = env.SMTP_URL): MailTransport {
-  return createTransport({ url, connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 })
+  return createTransport(mailTransportOptions(url, env.NODE_ENV))
 }
 
 /** Render and send one mail. Throws if the transport fails (the queue then retries the job). */

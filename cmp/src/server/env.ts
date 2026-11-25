@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { parseRange } from './client-address'
-import { isOrigin, parseUrl } from './origin'
+import { isLoopbackHost, isOrigin, parseUrl } from './origin'
 
 const urlOf = (...protocols: string[]) =>
   z.string().refine((v) => {
@@ -47,7 +47,7 @@ const REQUIREMENT: Record<keyof z.infer<typeof schema>, string> = {
   DATABASE_URL_SYSTEM: 'a postgres:// URL (the system role)',
   BETTER_AUTH_SECRET: 'a secret of at least 32 bytes',
   PUBLIC_ORIGIN: 'a bare https origin (http only for localhost, and never in production)',
-  SMTP_URL: 'an smtp:// or smtps:// URL',
+  SMTP_URL: 'an smtp:// or smtps:// URL (in production, to a host other than this machine: no ?options or #fragment; TLS is required)',
   MAIL_FROM: 'an email address, optionally as "Name <address>"',
   SUPER_ADMIN_EMAILS: 'a comma-separated list of email addresses',
   NODE_ENV: 'one of development, test, production',
@@ -74,6 +74,10 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   const names = new Set(result.success ? [] : result.error.issues.map((i) => String(i.path[0])))
   // plain http is for local development and tests only
   if (input.NODE_ENV === 'production' && parseUrl(input.PUBLIC_ORIGIN ?? '')?.protocol === 'http:') names.add('PUBLIC_ORIGIN')
+  // mail to another host leaves the machine over TLS only (the transport requires it, src/server/jobs/mail.ts):
+  // no URL option may turn that off (ignoreTLS, requireTLS=false, tls.rejectUnauthorized=false, service …)
+  const smtp = parseUrl(input.SMTP_URL ?? '')
+  if (input.NODE_ENV === 'production' && smtp && !isLoopbackHost(smtp.hostname) && (smtp.search !== '' || smtp.hash !== '')) names.add('SMTP_URL')
   if (!result.success || names.size > 0) throw new EnvError([...names].sort())
   return Object.freeze(result.data)
 }

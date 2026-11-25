@@ -1,7 +1,8 @@
+import { createServer, type AddressInfo } from 'node:net'
 import { createTransport } from 'nodemailer'
 import { describe, expect, test } from 'vitest'
 import type { QueueJob } from '../../src/server/data/queue'
-import { checkMail, deadMailHandler, deliverMail, MAIL_TEMPLATES, mailHandler, MailDeliveryError, MailError, renderMail, type MailJob, type MailTransport } from '../../src/server/jobs/mail'
+import { checkMail, deadMailHandler, deliverMail, MAIL_TEMPLATES, mailHandler, MailDeliveryError, MailError, mailTransportOptions, renderMail, type MailJob, type MailTransport } from '../../src/server/jobs/mail'
 import { captureLog } from './capture-log'
 
 // PUBLIC_ORIGIN and MAIL_FROM of vitest.config.ts
@@ -242,5 +243,44 @@ describe('the worker handlers', () => {
     // both the copy and the failed job it came from keep only the summary
     expect(written).toHaveLength(1)
     expect(sourceWritten).toEqual(written)
+  })
+})
+
+describe('the SMTP transport requires TLS for a host other than this machine in production (ruling R27, M1)', () => {
+  test('STARTTLS required for smtp://, implicit TLS for smtps://, TLS 1.2 at least, certificates checked', () => {
+    expect(mailTransportOptions('smtp://u:p@smtp.example.eu:587', 'production')).toMatchObject({ url: 'smtp://u:p@smtp.example.eu:587', requireTLS: true, tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true } })
+    expect(mailTransportOptions('smtps://u:p@smtp.example.eu:465', 'production')).toMatchObject({ requireTLS: true, tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true } })
+  })
+
+  test('not for this machine (a local relay or Mailpit), nor outside production', () => {
+    for (const [url, nodeEnv] of [['smtp://localhost:1025', 'production'], ['smtp://127.0.0.1:25', 'production'], ['smtp://smtp.example.eu:587', 'test'], ['smtp://smtp.example.eu:587', 'development']] as const) {
+      expect(mailTransportOptions(url, nodeEnv), `${url} ${nodeEnv}`).not.toHaveProperty('requireTLS')
+    }
+  })
+
+  test('a server that offers no STARTTLS gets no mail', async () => {
+    // a plain SMTP server that never offers STARTTLS (a stripped or downgraded connection)
+    const received: string[] = []
+    const server = createServer((socket) => {
+      socket.write('220 plain.test ESMTP\r\n')
+      socket.on('data', (data) => {
+        for (const line of data.toString().split('\r\n').filter(Boolean)) {
+          received.push(line)
+          socket.write(/^EHLO/i.test(line) ? '250-plain.test\r\n250 AUTH PLAIN\r\n' : /^QUIT/i.test(line) ? '221 bye\r\n' : '250 OK\r\n')
+        }
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    try {
+      // the options for a remote host, pointed at the plain server
+      const options = { ...mailTransportOptions('smtp://u:p@smtp.example.eu:587', 'production'), url: undefined, host: '127.0.0.1', port }
+      const transport = createTransport(options)
+      await expect(transport.sendMail({ from: FROM, to: 'ana@example.test', subject: 's', text: 't' })).rejects.toThrow()
+      transport.close()
+      expect(received.some((line) => /^(AUTH|MAIL FROM)/i.test(line))).toBe(false)
+    } finally {
+      server.close()
+    }
   })
 })

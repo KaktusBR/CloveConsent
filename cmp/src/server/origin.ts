@@ -29,3 +29,9 @@ export function buildOrigin(source: Record<string, string | undefined> = process
   }
   return new URL(value).origin
 }
+
+/** This machine's own names: `localhost`, 127.0.0.0/8 and ::1 (a URL's hostname, IPv6 in brackets). */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  return host === 'localhost' || host === '[::1]' || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+}

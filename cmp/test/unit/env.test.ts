@@ -150,3 +150,27 @@ describe('parseEnv', () => {
     expect(err.cause).toBeUndefined()
   })
 })
+
+describe('SMTP_URL in production: mail leaves the machine only over TLS (ruling R27, M1)', () => {
+  const production = (SMTP_URL: string) => ({ ...valid(), NODE_ENV: 'production', SMTP_URL })
+
+  test.each(['smtps://u:p@smtp.example.eu:465', 'smtp://u:p@smtp.example.eu:587', 'smtp://localhost:1025', 'smtp://127.0.0.1:25', 'smtp://[::1]:25?ignoreTLS=true'])('accepts %s', (url) => {
+    expect(() => parseEnv(production(url))).not.toThrow()
+  })
+
+  // the transport requires TLS for such a host (src/server/jobs/mail.ts): no option in the URL may undo it
+  test.each([
+    'smtp://u:p@smtp.example.eu:587?ignoreTLS=true',
+    'smtp://smtp.example.eu:587?requireTLS=false',
+    'smtps://smtp.example.eu?tls.rejectUnauthorized=false',
+    'smtps://smtp.example.eu?secure=false',
+    'smtp://smtp.example.eu?service=x',
+    'smtp://smtp.example.eu:587#x',
+  ])('refuses %s for a host that is not this machine', (url) => {
+    expect(errorOf(production(url)).variables).toEqual(['SMTP_URL'])
+  })
+
+  test('outside production a URL may carry options', () => {
+    expect(() => parseEnv({ ...production('smtp://smtp.example.eu:587?ignoreTLS=true'), NODE_ENV: 'development', PUBLIC_ORIGIN: 'http://localhost:4321' })).not.toThrow()
+  })
+})
