@@ -10,6 +10,7 @@ import { sql } from 'drizzle-orm'
 import { plainText } from '../../lib/plain-text'
 import { grantableRoles } from '../../lib/roles'
 import { appendAuditEvent, audit } from './audit'
+import { entitlementIn } from './entitlements'
 import { appDatabase, systemDatabase } from './client'
 import { withAccount, type AccountScope, type Role, type TenantTx } from './scope'
 
@@ -257,7 +258,7 @@ export interface NewInvitation {
 }
 
 export type InvitationLimit = 'pending_limit' | 'account_day_limit' | 'user_day_limit'
-export type InvitationCreated = 'ok' | 'not_found' | 'owner_only' | 'already_member' | 'already_invited' | InvitationLimit
+export type InvitationCreated = 'ok' | 'not_found' | 'owner_only' | 'already_member' | 'already_invited' | 'unpaid' | InvitationLimit
 
 /** The SHA-256 of an invitation token: what the database stores instead of the token. */
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('base64url')
@@ -267,6 +268,7 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/
 /**
  * Invite `email` to the scope's account with `role`, valid for INVITATION_DAYS days. `deliver` runs in the
  * same transaction (queue the email there with its `tx`): the invitation exists only if its email is queued.
+ * Only an account that has paid (`active` or `grace`, src/server/data/entitlements.ts) may invite (ruling R27).
  */
 export async function createInvitation(
   scope: AccountScope,
@@ -279,6 +281,9 @@ export async function createInvitation(
       const actor = await actorRole(tx, scope)
       if (!managesMembers(actor)) throw new Refused('not_found')
       if (input.role === 'owner' && actor !== 'owner') throw new Refused('owner_only')
+      // an account that has not paid (never, or past its grace) invites no one: its email would be an unpaid relay
+      const { state } = await entitlementIn(tx, scope.accountId)
+      if (state === 'none' || state === 'necessary-only') throw new Refused('unpaid')
       const member = await tx.execute(sql`
         select 1 from auth_account_member m join auth_user u on u.id = m.user_id
         where m.account_id = ${scope.accountId} and lower(u.email) = ${email}`)

@@ -76,3 +76,15 @@ export async function freeAddress(email: string): Promise<void> {
   await deleteMailTo(email)
   await database((c) => c.query(`update auth_user set email = 'retired-' || id || '@example.test' where email = $1`, [email]))
 }
+
+/**
+ * Marks the account named `name` paid until 2100, as the system role and without an audit row (a fixture:
+ * only a paying account may invite, ruling R27; e2e/super-admin.spec.ts and e2e/journey.spec.ts go through the console).
+ */
+export async function markPaidNamed(name: string): Promise<void> {
+  await database(async (c) => {
+    const id = (await c.query<{ id: string }>(`select id from auth_account where name = $1`, [name])).rows[0]?.id
+    if (!id) throw new Error(`no account named ${name}`)
+    await c.query(`insert into entitlements (account_id, plan_id, paid_until) values ($1, 'starter', '2100-01-01') on conflict (account_id) do update set paid_until = excluded.paid_until`, [id])
+  }, 'system')
+}

@@ -78,6 +78,7 @@ export const accountEndpoints = () =>
           )
           if (result === 'ok') return ctx.json({ invited: email })
           if (result === 'owner_only') throw refuse('FORBIDDEN', 'OWNER_ONLY')
+          if (result === 'unpaid') throw refuse('FORBIDDEN', 'INVITATION_NEEDS_PAYMENT')
           if (result === 'already_member') throw refuse('BAD_REQUEST', 'ALREADY_MEMBER')
           if (result === 'already_invited') throw refuse('BAD_REQUEST', 'ALREADY_INVITED')
           if (result === 'pending_limit') throw refuse('BAD_REQUEST', 'INVITATION_LIMIT_PENDING')

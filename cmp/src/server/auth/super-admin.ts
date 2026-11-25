@@ -14,12 +14,10 @@
 // and end are in the account's audit log with the super-admin (the start with their reason), each
 // written before the session changes. Past its time no endpoint serves it, and the next request ends it:
 // the end is recorded and the super-admin's own session comes back.
-import { clientAddress, trustedProxies } from '../client-address'
-import { releaseInWindow, reserveInWindow } from '../data/auth-limits'
 import { env } from '../env'
-import { socketPeer } from '../socket-peer'
 import type { AuthSession } from './auth'
 import { isComplete } from './complete'
+import { withinLimit } from './request-limits'
 
 export type SuperAdminStatus = 'super-admin' | 'needs-two-factor' | 'none'
 
@@ -65,22 +63,9 @@ export const ADMIN_LIMITS = {
   impersonate: { window: 10 * 60, max: 10 },
 } as const
 
-const proxies = trustedProxies(env.TRUSTED_PROXIES)
-
 /**
  * Takes a place in the super-admin's and the client address's window for `kind`; false when either is
- * full or the address is unknown (src/server/socket-peer.ts: never a header the client chose).
+ * full or the address is unknown (src/server/auth/request-limits.ts).
  */
-export async function withinAdminLimit(request: Request, kind: keyof typeof ADMIN_LIMITS, userId: string): Promise<boolean> {
-  const client = clientAddress(socketPeer(request), request.headers.get('x-forwarded-for'), proxies)
-  if (client === null) return false
-  const { window, max } = ADMIN_LIMITS[kind]
-  const byUser = `super-admin:${kind}:user:${userId}`
-  const user = await reserveInWindow(byUser, window, max)
-  if (user === false) return false
-  if ((await reserveInWindow(`super-admin:${kind}:client:${client}`, window, max)) === false) {
-    await releaseInWindow(byUser, user)
-    return false
-  }
-  return true
-}
+export const withinAdminLimit = (request: Request, kind: keyof typeof ADMIN_LIMITS, userId: string): Promise<boolean> =>
+  withinLimit(request, `super-admin:${kind}`, userId, ADMIN_LIMITS[kind])

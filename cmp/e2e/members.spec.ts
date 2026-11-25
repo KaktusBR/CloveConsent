@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 
 import { expectAccessible } from './axe'
 import { linkIn, mail } from './mailpit'
+import { markPaidNamed } from './people'
 
 const texts = JSON.parse(readFileSync('messages/en.json', 'utf8')) as Record<string, string>
 /** An English catalog text, with its {variables} filled in. */
@@ -66,6 +67,13 @@ test('an owner invites an editor, who accepts, sees the account and cannot open 
   const editorContext = await browser.newContext({ extraHTTPHeaders: { 'X-Forwarded-For': clientAddress() } })
   const editor = await editorContext.newPage()
   const editorLogin = await verifiedUser(editor, origin, 'Eddie Editor')
+  // an account that has not paid cannot invite (ruling R27): the reason, translated
+  await owner.getByLabel(en('auth_email_label')).fill(editorLogin.email)
+  await owner.getByRole('button', { name: en('members_invite_submit') }).click()
+  await expect(owner.getByRole('alert')).toHaveText(en('members_error_unpaid'))
+  await expect(owner.locator(`[data-invitation="${editorLogin.email}"]`)).toHaveCount(0)
+  await expectAccessible(owner)
+  await markPaidNamed(accountName)
   await owner.getByLabel(en('auth_email_label')).fill(editorLogin.email)
   await owner.getByLabel(en('members_invite_role_label'), { exact: true }).selectOption('editor')
   await owner.getByRole('button', { name: en('members_invite_submit') }).click()
@@ -131,6 +139,7 @@ test('an invitation opened by someone signed in with another address is refused 
   await page.getByLabel(en('accounts_new_name_label')).fill(accountName)
   await page.getByRole('button', { name: en('accounts_new_submit') }).click()
   await at(page, '/account')
+  await markPaidNamed(accountName)
   await page.goto('/account/members')
   const invitee = newEmail('someone-else')
   await page.getByLabel(en('auth_email_label')).fill(invitee)

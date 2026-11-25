@@ -23,6 +23,7 @@ const MESSAGES: Readonly<Record<string, () => string>> = {
   INVITATION_LIMIT_PENDING: m.members_error_limit_pending,
   INVITATION_LIMIT_ACCOUNT_DAY: m.members_error_limit_account_day,
   INVITATION_LIMIT_USER_DAY: m.members_error_limit_user_day,
+  INVITATION_NEEDS_PAYMENT: m.members_error_unpaid,
 }
 
 /** Invites an email address to the account; the invitation's email is sent by the server. */

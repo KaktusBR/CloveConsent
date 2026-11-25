@@ -10,7 +10,7 @@ import { plainText } from '../../lib/plain-text'
 import { audit } from './audit'
 import { appDatabase } from './client'
 import type { PlanLimits } from './schema'
-import { asSystem, withAccount, type SystemTx } from './scope'
+import { asSystem, withAccount, type SystemTx, type TenantTx } from './scope'
 
 /** Days of grace after the paid time ends or the account is suspended. */
 export const GRACE_DAYS = 30
@@ -70,13 +70,16 @@ type EntitlementRow = {
 const recordOf = (row: EntitlementRow | undefined): EntitlementRecord | null =>
   row ? { planId: row.plan_id, paidUntil: dateOrNull(row.paid_until), suspendedAt: dateOrNull(row.suspended_at) } : null
 
+/** The entitlement of the account `tx` is scoped to, at `now` (inside a change that depends on it). */
+export async function entitlementIn(tx: TenantTx, accountId: string, now: Date = new Date()): Promise<Entitlement> {
+  const row = (await tx.execute<EntitlementRow>(sql`select plan_id, paid_until, suspended_at from entitlements where account_id = ${accountId}`)).rows[0]
+  return entitlementAt(recordOf(row), now)
+}
+
 /** The entitlement of `accountId` at `now`, read in a transaction scoped to that account. */
 export async function entitlementOf(accountId: string, now: Date = new Date()): Promise<Entitlement> {
   if (!isUuid(accountId)) return entitlementAt(null, now)
-  const row = await withAccount({ accountId }, async (tx) =>
-    (await tx.execute<EntitlementRow>(sql`select plan_id, paid_until, suspended_at from entitlements where account_id = ${accountId}`)).rows[0],
-  )
-  return entitlementAt(recordOf(row), now)
+  return withAccount({ accountId }, (tx) => entitlementIn(tx, accountId, now))
 }
 
 /** The entitlement records of some accounts, for the console (system role). */

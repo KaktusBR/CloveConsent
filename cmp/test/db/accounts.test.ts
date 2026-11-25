@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto'
 import type { APIRoute } from 'astro'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
-import { POST as createAccountRoute } from '../../src/pages/api/accounts/create'
+import { ACCOUNT_CREATE_LIMIT, POST as createAccountRoute } from '../../src/pages/api/accounts/create'
 import { POST as membersRoute } from '../../src/pages/api/account/members'
 import { POST as switchRoute } from '../../src/pages/api/account/switch'
 import { ORGANIZATION_PATHS } from '../../src/server/auth/auth'
@@ -16,6 +16,7 @@ import { closeQueue } from '../../src/server/data/queue'
 import type { Role } from '../../src/server/data/scope'
 import { address, Browser, mailsTo, nextIp, ORIGIN, pwnedStandIn, signedIn, verifiedUser } from './browser'
 import { handleAuth } from '../../src/server/auth/handler'
+import { SOCKET_PEER_HEADER } from '../../src/server/socket-peer'
 import { asRole, errorCode, newId } from './raw'
 
 interface Person {
@@ -36,7 +37,8 @@ async function person(label: string): Promise<Person> {
 async function post(route: APIRoute, who: Person, path: string, fields: Record<string, string>) {
   const request = new Request(`${ORIGIN}${path}`, {
     method: 'POST',
-    headers: who.browser.headers({ 'content-type': 'application/x-www-form-urlencoded', referer: `${ORIGIN}/account/members` }),
+    // from the browser's socket address, as the node adapter stamps it (src/server/socket-peer.ts)
+    headers: who.browser.headers({ 'content-type': 'application/x-www-form-urlencoded', referer: `${ORIGIN}/account/members`, ...(who.browser.peer ? { [SOCKET_PEER_HEADER]: who.browser.peer } : {}) }),
     body: new URLSearchParams(fields),
   })
   const locals = await signedInScope(request.headers)
@@ -47,12 +49,17 @@ async function post(route: APIRoute, who: Person, path: string, fields: Record<s
 /** The scope a next request of `who` would get. */
 const scopeOf = async (who: Person) => (await signedInScope(who.browser.headers())).scope
 
-/** A new account owned by `who` (through the app's form), now their active account. */
-async function newAccount(who: Person, name = `Account ${newId().slice(0, 8)}`): Promise<string> {
+/** Marks an account paid (only a paying account may invite: ruling R27), as the system role, without an audit row. */
+const markPaid = (accountId: string, paidUntil = '2100-01-01') =>
+  asRole('system', (c) => c.query(`insert into entitlements (account_id, plan_id, paid_until) values ($1, 'starter', $2) on conflict (account_id) do update set paid_until = excluded.paid_until`, [accountId, paidUntil]))
+
+/** A new account owned by `who` (through the app's form), now their active account; paid unless `paid` is false. */
+async function newAccount(who: Person, name = `Account ${newId().slice(0, 8)}`, { paid = true } = {}): Promise<string> {
   const created = await post(createAccountRoute, who, '/api/accounts/create', { name })
   expect(created).toMatchObject({ status: 303, location: '/account' })
   const scope = await scopeOf(who)
   expect(scope?.role).toBe('owner')
+  if (paid) await markPaid(scope!.accountId)
   return scope!.accountId
 }
 
@@ -640,6 +647,7 @@ describe('fix round 1: limits (ruling R22)', () => {
     for (const name of ['One', 'Two', 'Three']) {
       const created = await createAccount(owner.userId, name)
       if (!('accountId' in created)) throw new Error('refused')
+      await markPaid(created.accountId)
       scopes.push({ accountId: created.accountId, userId: owner.userId, role: 'owner' })
     }
     for (const scope of scopes.slice(0, 2)) for (let i = 0; i < 50; i++) expect(await createInvitation(scope, { email: address(`u${i}`), role: 'viewer' }, quiet)).toBe('ok')
@@ -654,6 +662,77 @@ describe('fix round 1: limits (ruling R22)', () => {
     const results = await Promise.all(Array.from({ length: 60 }, (_, i) => createInvitation(scope, { email: address(`c${i}`), role: 'viewer' }, quiet)))
     expect(results.filter((r) => r === 'ok')).toHaveLength(50)
     expect(await invitationsOf(accountId)).toHaveLength(50)
+  })
+})
+
+describe('the account-creation form is rate limited (finding T7: each refusal is an audit row)', () => {
+  const refusals = (userId: string) =>
+    asRole('system', async (c) => (await c.query(`select count(*)::int as n from audit_log where action = 'account.create_refused' and actor_user_id = $1`, [userId])).rows[0]?.n)
+
+  test(`${ACCOUNT_CREATE_LIMIT.max} tries per person per ${ACCOUNT_CREATE_LIMIT.window / 60} minutes; past it nothing is written`, async () => {
+    const who = await person('create-flood')
+    // a person at the account limit: each try that gets through writes a refusal to the append-only log
+    for (let i = 0; i < LIMITS.accountsPerUser; i++) expect(await createAccount(who.userId, `Mine ${i}`)).toHaveProperty('accountId')
+    for (let i = 0; i < ACCOUNT_CREATE_LIMIT.max; i++) {
+      expect(await post(createAccountRoute, who, '/api/accounts/create', { name: `Flood ${i}` })).toMatchObject({ status: 303, location: '/accounts/new?error=limit' })
+    }
+    for (const name of ['Flood again', '']) {
+      expect(await post(createAccountRoute, who, '/api/accounts/create', { name })).toMatchObject({ status: 303, location: '/accounts/new?error=limited' })
+    }
+    expect(await refusals(who.userId)).toBe(ACCOUNT_CREATE_LIMIT.max)
+    // the same person from another address: still their window
+    const elsewhere: Person = { ...who, browser: new Browser(nextIp()) }
+    for (const [name, value] of who.browser.cookies) elsewhere.browser.cookies.set(name, value)
+    expect(await post(createAccountRoute, elsewhere, '/api/accounts/create', { name: 'Elsewhere' })).toMatchObject({ location: '/accounts/new?error=limited' })
+  })
+
+  test('per client address too: other people behind the same address share its window', async () => {
+    const first = await person('create-address')
+    for (let i = 0; i < ACCOUNT_CREATE_LIMIT.max; i++) {
+      expect(await post(createAccountRoute, first, '/api/accounts/create', { name: '' })).toMatchObject({ location: '/accounts/new?error=name' })
+    }
+    const other = await person('create-address-other')
+    const sameAddress: Person = { ...other, browser: new Browser(first.browser.peer) }
+    for (const [name, value] of other.browser.cookies) sameAddress.browser.cookies.set(name, value)
+    expect(await post(createAccountRoute, sameAddress, '/api/accounts/create', { name: 'Shared' })).toMatchObject({ location: '/accounts/new?error=limited' })
+    expect(await scopeOf(other)).toBeNull()
+    // from its own address the other person is not limited
+    expect(await post(createAccountRoute, other, '/api/accounts/create', { name: 'Own address' })).toMatchObject({ location: '/account' })
+  })
+
+  test('a request without a known client address is refused, never counted in a shared window', async () => {
+    const who = await person('create-no-address')
+    const unknown: Person = { ...who, browser: new Browser(null) }
+    for (const [name, value] of who.browser.cookies) unknown.browser.cookies.set(name, value)
+    expect(await post(createAccountRoute, unknown, '/api/accounts/create', { name: 'Nowhere' })).toMatchObject({ location: '/accounts/new?error=limited' })
+    expect(await scopeOf(who)).toBeNull()
+  })
+})
+
+describe('only an account that has paid may invite (ruling R27: no unpaid relay of invitation emails)', () => {
+  test('never paid, or past its grace period: refused with its code; no invitation, no mail, nothing in the log', async () => {
+    const owner = await person('unpaid-inviter')
+    const accountId = await newAccount(owner, `Unpaid ${newId().slice(0, 8)}`, { paid: false })
+    const scope = (await scopeOf(owner))!
+    const quiet = async () => undefined
+    for (const state of ['none', 'necessary-only']) {
+      if (state === 'necessary-only') await markPaid(accountId, '2001-01-01') // paid once, long past its grace
+      const email = address(`unpaid-${state}`)
+      expect(await invite(owner, accountId, email), state).toMatchObject({ status: 403, json: expect.objectContaining({ code: 'INVITATION_NEEDS_PAYMENT' }) })
+      expect(await createInvitation(scope, { email, role: 'viewer' }, quiet), state).toBe('unpaid')
+      expect(await mailsTo(email), state).toEqual([])
+    }
+    expect(await invitationsOf(accountId)).toEqual([])
+    expect((await auditOf(accountId)).map((e) => e.action)).not.toContain('member.invite')
+  })
+
+  test('paid, or in its grace period: invites', async () => {
+    const owner = await person('paid-inviter')
+    const accountId = await newAccount(owner, `Grace ${newId().slice(0, 8)}`, { paid: false })
+    await markPaid(accountId, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // ended yesterday: grace
+    expect((await invite(owner, accountId, address('in-grace'))).status).toBe(200)
+    await markPaid(accountId)
+    expect((await invite(owner, accountId, address('paid'))).status).toBe(200)
   })
 })
 

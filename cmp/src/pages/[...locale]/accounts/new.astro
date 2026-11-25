@@ -18,11 +18,13 @@ const signedIn = await requireUser(Astro)
 if (signedIn instanceof Response) return signedIn
 const invalid = Astro.url.searchParams.get('error') === 'name'
 const limited = Astro.url.searchParams.get('error') === 'limit'
+const tooMany = Astro.url.searchParams.get('error') === 'limited'
 ---
 
 <AuthPage title={m.accounts_new_title()} heading={m.accounts_new_heading()}>
   <p>{m.accounts_new_intro()}</p>
   {limited && <p role="alert" class="text-destructive text-sm font-medium">{m.accounts_new_error_limit({ max: String(LIMITS.accountsPerUser) })}</p>}
+  {tooMany && <p role="alert" class="text-destructive text-sm font-medium">{m.accounts_new_error_limited()}</p>}
   <form method="post" action="/api/accounts/create" class="grid gap-4">
     <div class="grid gap-2">
       <Label htmlFor="account-name">{m.accounts_new_name_label()}</Label>
