@@ -442,6 +442,69 @@ describe('failed password sign-ins per account (ruling R19)', () => {
   })
 })
 
+describe('security changes are in the audit log (ruling R27, M2)', () => {
+  const NEW_PASSWORD = 'another long passphrase 77'
+  const userIdOf = async (email: string) => asRole('app', async (c) => (await c.query<{ id: string }>('select id from auth_user where email = $1', [email])).rows[0]!.id)
+  /** The person's security rows, oldest first, as the system role reads them. */
+  const securityRows = (userId: string) =>
+    asRole('system', async (c) =>
+      (await c.query<{ action: string; actor_user_id: string; account_id: string | null; target: string; meta: Record<string, unknown> }>(
+        `select action, actor_user_id, account_id, target, meta from audit_log where actor_user_id = $1 and action like 'user.%' order by created_at, id`,
+        [userId],
+      )).rows,
+    )
+  const row = (action: string, userId: string, meta: Record<string, unknown> = {}) => ({ action, actor_user_id: userId, account_id: null, target: `user:${userId}`, meta })
+
+  test('changing and resetting the password: one row each, by the person, in no account, nothing secret; a failed change writes nothing', async () => {
+    const email = await verifiedUser('audit-password')
+    const userId = await userIdOf(email)
+    const browser = await signedIn(email)
+    expect((await browser.call('/change-password', { currentPassword: 'not the password at all', newPassword: NEW_PASSWORD })).status).toBe(400)
+    expect(await securityRows(userId)).toEqual([])
+    expect((await browser.call('/change-password', { currentPassword: PASSWORD, newPassword: NEW_PASSWORD, revokeOtherSessions: true })).status).toBe(200)
+    expect(await securityRows(userId)).toEqual([row('user.password_change', userId)])
+
+    expect((await new Browser().call('/request-password-reset', { email })).status).toBe(200)
+    const reset = (await mailsTo(email)).find((m) => m.template === 'reset-password')
+    const token = new URL(reset?.data.url ?? '').searchParams.get('token')
+    expect((await new Browser().call('/reset-password', { token: 'not-a-token', newPassword: PASSWORD })).status).toBe(400)
+    expect((await new Browser().call('/reset-password', { token, newPassword: PASSWORD })).status).toBe(200)
+    const rows = await securityRows(userId)
+    expect(rows).toEqual([row('user.password_change', userId), row('user.password_reset', userId)])
+    expect(JSON.stringify(rows)).not.toContain(NEW_PASSWORD)
+    expect(JSON.stringify(rows)).not.toContain(token)
+  })
+
+  test('turning two-factor authentication on and off: one row each (starting the setup is not turning it on)', async () => {
+    const email = await verifiedUser('audit-2fa')
+    const userId = await userIdOf(email)
+    const browser = await signedIn(email)
+    await enableTwoFactor(browser)
+    expect(await securityRows(userId)).toEqual([row('user.two_factor_enable', userId)])
+    expect((await browser.call('/two-factor/disable', { password: PASSWORD })).status).toBe(200)
+    expect((await securityRows(userId)).map((r) => r.action)).toEqual(['user.two_factor_enable', 'user.two_factor_disable'])
+  })
+
+  test("removing a passkey: one row naming it; another person's passkey id writes nothing (adding one: e2e/auth.spec.ts)", async () => {
+    const email = await verifiedUser('audit-passkey')
+    const userId = await userIdOf(email)
+    const browser = await signedIn(email)
+    const passkey = await asRole('migrate', async (c) =>
+      (await c.query<{ id: string }>(
+        `insert into auth_passkey (name, public_key, user_id, credential_id, counter, device_type, backed_up, created_at)
+         values ('Laptop', 'audit-public-key', $1, $2, 0, 'singleDevice', false, now()) returning id`,
+        [userId, `credential-${newId()}`],
+      )).rows[0]!.id,
+    )
+    const strangerEmail = await verifiedUser('audit-passkey-stranger')
+    const stranger = await signedIn(strangerEmail)
+    expect((await stranger.call('/passkey/delete-passkey', { id: passkey })).status).toBe(404)
+    expect((await browser.call('/passkey/delete-passkey', { id: passkey })).status).toBe(200)
+    expect(await securityRows(userId)).toEqual([row('user.passkey_remove', userId, { passkey })])
+    expect(await securityRows(await userIdOf(strangerEmail))).toEqual([])
+  })
+})
+
 describe('the second-factor marker on every new session', () => {
   test('changing the password (revoking other sessions) keeps a 2FA session complete', async () => {
     const email = await verifiedUser('change-password')

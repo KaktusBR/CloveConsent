@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { totp } from '../test/totp'
 import { expectAccessible, expectAccessibleState } from './axe'
 import { linkIn, mail } from './mailpit'
+import { database } from './people'
 
 function catalog(locale: string): (key: string) => string {
   const texts = JSON.parse(readFileSync(`messages/${locale}.json`, 'utf8')) as Record<string, string>
@@ -112,6 +113,14 @@ test('full flow: sign up, verify by email, TOTP, sign in with TOTP, add a passke
   await passkeys.getByRole('button', { name: en('security_passkey_add') }).click()
   await expect(passkeys.getByText('E2E key')).toBeVisible()
   await expectAccessible(page)
+  // in the audit log, by the person, naming the passkey (ruling R27, M2)
+  const added = await database(async (c) => {
+    const userId = (await c.query<{ id: string }>('select id from auth_user where email = $1', [email])).rows[0]?.id
+    const passkey = (await c.query<{ id: string }>('select id from auth_passkey where user_id = $1', [userId])).rows[0]?.id
+    return { userId, passkey }
+  })
+  const audited = await database(async (c) => (await c.query("select actor_user_id, account_id, target, meta from audit_log where action = 'user.passkey_add' and actor_user_id = $1", [added.userId])).rows, 'system')
+  expect(audited).toEqual([{ actor_user_id: added.userId, account_id: null, target: `user:${added.userId}`, meta: { passkey: added.passkey } }])
 
   await signOut(page)
   await page.getByRole('button', { name: en('sign_in_passkey') }).click()

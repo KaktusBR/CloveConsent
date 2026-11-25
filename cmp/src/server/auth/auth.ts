@@ -23,6 +23,7 @@ import { authDatabase } from '../data/auth-database'
 import { CLIENT_ADDRESS_HEADER } from '../security'
 import { releaseInWindow, reserveInWindow } from '../data/auth-limits'
 import { authSchema } from '../data/schema'
+import { recordSecurityEvent } from '../data/security-events'
 import { env } from '../env'
 import { log } from '../log'
 import { sendMail } from '../jobs/mail'
@@ -66,6 +67,24 @@ function failureKeys(ctx: { path: string; body?: unknown; headers?: Headers | un
   // set by src/server/auth/handler.ts for every request it passes on
   const address = (ctx.headers ?? ctx.request?.headers)?.get(CLIENT_ADDRESS_HEADER) ?? 'unknown'
   return { pair: `sign-in-failures:${account}:${address}`, account: `sign-in-failures:${account}` }
+}
+
+/** The value an endpoint returned, when it succeeded (null for a refusal or an error answer). */
+async function succeeded(returned: unknown): Promise<unknown> {
+  if (isAPIError(returned)) return null
+  if (returned instanceof Response) return returned.ok ? await returned.clone().json().catch(() => ({})) : null
+  return returned ?? {}
+}
+
+/** Records a password change or a passkey added or removed by the signed-in person, once it has succeeded. */
+async function recordSecurityChange(path: string, userId: string | undefined, body: unknown, returned: unknown): Promise<void> {
+  if (!userId || !['/change-password', '/passkey/verify-registration', '/passkey/delete-passkey'].includes(path)) return
+  const result = await succeeded(returned)
+  if (result === null) return
+  if (path === '/change-password') return recordSecurityEvent(userId, 'user.password_change')
+  const passkey = path === '/passkey/verify-registration' ? (result as { id?: unknown }).id : (body as { id?: unknown } | undefined)?.id
+  if (typeof passkey !== 'string') return
+  await recordSecurityEvent(userId, path === '/passkey/verify-registration' ? 'user.passkey_add' : 'user.passkey_remove', { passkey })
 }
 
 /**
@@ -138,6 +157,9 @@ function authOptions(publicOrigin: string) {
         const url = pageLink('/reset-password', locale)
         url.searchParams.set('token', token)
         await sendMail({ to: user.email, template: 'reset-password', locale, data: { url: url.href } })
+      },
+      async onPasswordReset({ user }) {
+        await recordSecurityEvent(user.id, 'user.password_reset')
       },
     },
     emailVerification: {
@@ -285,6 +307,10 @@ function authOptions(publicOrigin: string) {
         const failed = isAPIError(returned) && (returned.body as { code?: unknown } | undefined)?.code === 'INVALID_EMAIL_OR_PASSWORD'
         if (signIn && places && !failed) await Promise.all([releaseInWindow(signIn.pair, places.pair), releaseInWindow(signIn.account, places.account)])
 
+        // A person's security changes, once made, in the audit log (ruling R27; the password reset, which
+        // has no session, in onPasswordReset; two-factor authentication in the user update hook below).
+        await recordSecurityChange(ctx.path, ctx.context.session?.user.id, ctx.body, returned)
+
         // Signing out after a super-admin's view has ended (past its time, or revoked by the member: a
         // live view cannot sign out) ends it here too: recorded, the impersonator cookie expired and the
         // super-admin's own session deleted, so the next request does not bring it back.
@@ -323,6 +349,7 @@ function authOptions(publicOrigin: string) {
             // Turning it on ends every session of the user that did not pass it; the request's own session
             // is replaced by Better Auth right after this hook.
             if (state === 'enabled') await ctx.context.internalAdapter.deleteUserSessions(user.id)
+            await recordSecurityEvent(user.id, state === 'enabled' ? 'user.two_factor_enable' : 'user.two_factor_disable')
             const locale = localeOfRequest(ctx.request)
             await sendMail({ to: user.email, template: 'two-factor-changed', locale, data: { url: pageLink('/account/security', locale).href, state } })
           },
