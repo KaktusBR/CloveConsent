@@ -154,12 +154,9 @@ export const accountEndpoints = () =>
        * Ends the super-admin's view the impersonator cookie is bound to (server only), whether it is still
        * running (stopped), past its time (expired) or revoked by the member: recorded once, then the
        * super-admin's own session comes back (`restored`), or the browser is signed out if that has
-       * ended too. 404 when there is nothing to end (impersonation.ts, endView).
+       * ended too. `ended` is null when there is nothing to end (impersonation.ts, endView); the answer's
+       * cookies then still expire a stale impersonator cookie (not an error, whose cookies would be lost).
        */
-      endImpersonation: createAuthEndpoint.serverOnly({ method: 'POST' }, async (ctx) => {
-        const ended = await endView(ctx, 'restore')
-        if (!ended) throw refuse('NOT_FOUND', 'NOT_FOUND')
-        return ctx.json(ended)
-      }),
+      endImpersonation: createAuthEndpoint.serverOnly({ method: 'POST' }, async (ctx) => ctx.json({ ended: await endView(ctx, 'restore') })),
     },
   }) satisfies BetterAuthPlugin

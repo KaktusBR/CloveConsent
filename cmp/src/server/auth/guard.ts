@@ -62,8 +62,9 @@ export async function requestAccess(request: Request, responseHeaders?: Headers)
   if (!session && carriesImpersonatorCookie(request.headers)) {
     const url = new URL(request.url)
     const ended = await endImpersonation(request, url, localeOfPath(url.pathname))
-    if (ended) {
-      if (responseHeaders) for (const cookie of ended.cookies) responseHeaders.append('Set-Cookie', cookie)
+    // also when nothing ended: a stale impersonator cookie is expired, so the next request does not try again
+    if (responseHeaders) for (const cookie of ended.cookies) responseHeaders.append('Set-Cookie', cookie)
+    if (ended.location !== null) {
       return { session: null, scope: null, entitlement: null, superAdmin: 'none', access: { kind: 'see-other', location: ended.location } }
     }
   }
@@ -81,16 +82,18 @@ export async function requestAccess(request: Request, responseHeaders?: Headers)
 
 /**
  * Ends the super-admin's view a request carries (src/server/auth/account-endpoints.ts, endImpersonation):
- * where to go next (the account's console page, or sign-in when their own session has ended too) and the
- * cookies to set; null when there is nothing to end.
+ * where to go next (the account's console page, or sign-in when their own session has ended too; null when
+ * there was nothing to end) and the cookies to set, which expire a stale impersonator cookie in either case.
  */
-export async function endImpersonation(request: Request, url: URL, locale: Locale): Promise<{ location: string; cookies: string[] } | null> {
+export async function endImpersonation(request: Request, url: URL, locale: Locale): Promise<{ location: string | null; cookies: string[] }> {
   try {
     const { headers, response } = await auth.api.endImpersonation({ headers: request.headers, returnHeaders: true })
-    const console = localizedPath(`/admin/accounts/${response.accountId}`, locale)
-    return { location: response.restored ? console : signInPath(new URL(console, url)), cookies: headers.getSetCookie() }
+    const cookies = headers.getSetCookie()
+    if (!response.ended) return { location: null, cookies }
+    const console = localizedPath(`/admin/accounts/${response.ended.accountId}`, locale)
+    return { location: response.ended.restored ? console : signInPath(new URL(console, url)), cookies }
   } catch (err) {
-    if (isAPIError(err)) return null
+    if (isAPIError(err)) return { location: null, cookies: [] }
     throw err
   }
 }

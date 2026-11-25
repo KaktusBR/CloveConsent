@@ -778,6 +778,29 @@ describe('read-only impersonation', () => {
     expect(await impersonationSessions(owner)).toBe(0)
   })
 
+  test('a stale impersonator cookie (its view already ended) is expired by the first request that finds it, so nothing more is written (finding T8)', async () => {
+    await impersonating(rootA)
+    const [stale, staleStop] = [copyOf(rootA), copyOf(rootA)]
+    expect((await post(stopRoute, rootA, '/api/impersonation/stop', {})).status).toBe(303)
+    const accessRows = async () =>
+      asRole('system', async (c) =>
+        (await c.query<{ n: number }>(`select count(*)::int as n from audit_log where action = 'system.access' and actor_user_id = $1 and meta->>'reason' = 'super-admin: impersonation end'`, [rootA.userId])).rows[0]?.n ?? 0,
+      )
+    const before = await accessRows()
+    // a signed-out page request with the stale copy: nothing ended, the cookie expired
+    const answer = await endedBy(stale, '/account')
+    expect(answer.status).toBe(200)
+    stale.browser.keep(answer)
+    expect(holdsImpersonator(stale)).toBe(false)
+    expect(await accessRows()).toBe(before + 1)
+    for (const path of ['/account', '/sites', '/sign-in']) stale.browser.keep(await endedBy(stale, path))
+    expect(await accessRows()).toBe(before + 1)
+    // the stop button with a stale copy: 404, and the cookie expired too
+    expect((await post(stopRoute, staleStop, '/api/impersonation/stop', {})).status).toBe(404)
+    expect(holdsImpersonator(staleStop)).toBe(false)
+    expect(await accessRows()).toBe(before + 2)
+  })
+
   test('parallel requests after a view has expired end it once', async () => {
     const { owner, accountId } = await impersonating(rootB)
     await outlive(owner)
