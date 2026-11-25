@@ -6,7 +6,7 @@ parent folder as `"cloveconsent": "file:.."`. The library's own tooling, CI and 
 a change only here never releases the library.
 
 Stack: Node 24, Astro 7 (Node adapter, standalone, `output: 'server'`), React, Tailwind CSS 4, shadcn/ui,
-zod (environment), pino (logs), Postgres 17.
+zod (environment), pino (logs), Postgres 18.
 
 ## Development
 
@@ -22,7 +22,7 @@ cd cmp
 # 2. Install the app
 npm ci
 
-# 3. Postgres 17 and Mailpit (SMTP on localhost:1025, inbox at http://localhost:8025)
+# 3. Postgres 18 and Mailpit (SMTP on localhost:1025, inbox at http://localhost:8025)
 docker compose up -d
 
 # 4. Environment
@@ -38,8 +38,9 @@ npm run dev             # http://localhost:4321
 ```
 
 `docker compose down` stops the services; add `-v` to delete the database volume (then run step 5 again).
-A volume created before the three roles existed (superuser `cmp`) must be deleted once:
-`docker compose down -v && docker compose up -d`.
+Postgres 18 keeps its data in the `postgres18-data` volume (mounted at `/var/lib/postgresql`, where the
+18 image wants it). A `postgres-data` volume left from the earlier Postgres 17 setup is no longer used;
+delete it when you no longer need what is in it: `docker volume rm cloveconsent-cmp_postgres-data`.
 
 ## Environment
 
@@ -120,7 +121,7 @@ ships too. Use the typed functions: `import { m } from '@/paraglide/messages.js'
 
 ## Database
 
-Postgres 17 with Drizzle. Only `src/server/data/` talks to the database (lint rule `cmp/data-layer-only`);
+Postgres 18 with Drizzle. Only `src/server/data/` talks to the database (lint rule `cmp/data-layer-only`);
 the one exception is `authDatabase` (`src/server/data/auth-database.ts`), the handle for Better Auth's
 identity tables, importable only from `src/server/auth/`.
 

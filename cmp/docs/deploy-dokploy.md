@@ -20,7 +20,7 @@ applications on one server then share no container, volume or image.
 
 | Service | Image | Does |
 | --- | --- | --- |
-| `postgres` | `postgres:17.11-alpine` | The database. It is on an internal network only, with no published port. Data lives in the `postgres-data` volume. |
+| `postgres` | `postgres:18.7-alpine` | The database. It is on an internal network only, with no published port. Data lives in the `postgres-data` volume. |
 | `migrate` | `<IMAGE_NAME>` | Runs once per deploy, then exits. First `db:init`, as the superuser: it creates or updates the roles and the `cmp` database. Then the migrations, as `cmp_owner`. The app, the worker and the backup start only after it succeeds. |
 | `app` | `<IMAGE_NAME>` | The web app on port 4321, behind Traefik. |
 | `worker` | `<IMAGE_NAME>` | Background jobs: email, and cleanup of expired sessions. |
@@ -254,7 +254,7 @@ ssh <server> "docker cp <project>-backup-1:/backups/<file>.dump.age /tmp/" && sc
 # 2. the backup image, and a throwaway Postgres on its own network (no published port, no password)
 docker build -t cmp-backup <checkout>/cmp/backup
 docker network create cmp-restore-test
-docker run -d --name cmp-restore-db --network cmp-restore-test -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17.11-alpine
+docker run -d --name cmp-restore-db --network cmp-restore-test -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18.7-alpine
 
 # 3. restore and count, the key on stdin
 docker run --rm -i --network cmp-restore-test -e PGHOST=cmp-restore-db -e PGUSER=postgres -v "$PWD:/work:ro" \
