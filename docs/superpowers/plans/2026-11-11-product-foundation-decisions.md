@@ -9,14 +9,12 @@ Go through them, and mark any you want changed.
 
 ## Open questions only you can answer
 
-1. **How to finish the branch:** merge locally, push and open a pull request, or keep it as-is.
-2. **Broken library release.** `.github/workflows/release.yml` calls `scripts/version.mjs next`, but an earlier commit removed that command.
-   - This was already broken before plan 2a.
-   - Merging this branch touches library files, so the next push to `main` starts a release run that fails.
-   - Fix it before or after the merge, as its own small piece of work?
+1. **How to finish the branch. Resolved:** merged into `main` locally.
+2. **Broken library release. Resolved in `084427d`:** versions now come from the merged pull request's release label, a direct push releases nothing (a notice says so), and the workflow can be run by hand. To do on GitHub: create the four labels `release:major`, `release:minor`, `release:patch` and `release:none`.
+   What it was: `.github/workflows/release.yml` called `scripts/version.mjs next`, but an earlier commit removed that command.
 3. **Limit numbers** (decisions 21 and 22). Are they right for your customers?
 4. **Things left for later** (see the end). Which of them should be done before plan 2b?
-5. **The Dokploy steps** in `cmp/docs/deploy-dokploy.md` have not been run on a real server yet. When do you want to try a real deploy?
+5. **The Dokploy steps** in `cmp/docs/deploy-dokploy.md` have not been run on a real server yet. The first deploy target is `cmp.clovetek.com`.
 
 ## Your own decisions (for reference)
 
